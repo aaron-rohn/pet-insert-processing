@@ -1,20 +1,59 @@
 import numpy as np
 import tkinter as tk
+import flood as fld
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure, SubplotParams
 
-class Flood():
-    def update(self, data):
+class FloodHist():
+    def click(self, ev):
+        loc = np.array([ev.xdata, ev.ydata])
+        self.pts_active = np.zeros((self.npts, self.npts), dtype = bool)
+
+        if self.selection is None:
+            dst = np.linalg.norm(self.pts - loc, axis = 2)
+            self.selection = np.unravel_index(np.argmin(dst), dst.shape)
+            self.pts_active[self.selection[0],:] = True
+            self.pts_active[:,self.selection[1]] = True
+        else:
+            self.pts[self.selection[0],:,1] = loc[1]
+            self.pts[:,self.selection[1],0] = loc[0]
+            self.selection = None
+
+        self.redraw()
+
+    def redraw(self):
         self.plot.clear()
-        self.plot.hist2d(data['x1'], (data['y1'] + data['y2']) / 2.0, bins = 256, range = [[0,1],[0,1]])
+        self.plot.imshow(self.img.T)
+        self.plot.scatter(*self.pts[self.pts_active].T, s = 4, color = 'blue')
+        self.plot.scatter(*self.pts[~self.pts_active].T, s = 4, color = 'red')
         self.canvas.draw()
 
+    def update(self, data):
+        self.img,*_ = np.histogram2d(data['x1'],
+                                    (data['y1'] + data['y2']) / 2.0,
+                                    bins = self.img_size,
+                                    range = [[0,1],[0,1]])
+        f = fld.Flood(self.img)
+        self.pts = f.estimate_peaks().T.reshape(self.npts, self.npts, 2)
+        self.pts_active = np.zeros((self.npts, self.npts), dtype = bool)
+        self.redraw()
+
     def __init__(self, frame, **kwargs):
+        self.img_size = 512
+        self.npts = 19
+
         self.fig = Figure(subplotpars = SubplotParams(0,0,1,1))
         self.plot = self.fig.add_subplot(frame_on = False)
         self.canvas = FigureCanvasTkAgg(self.fig, master = frame)
         self.canvas.draw()
         self.canvas.get_tk_widget().grid(**kwargs)
+
+        self.selection = None
+        self.pts = np.zeros((self.npts, self.npts, 2))
+        self.pts_active = np.zeros((self.npts, self.npts), dtype = bool)
+
+        self.img = np.zeros((self.img_size,self.img_size))
+        self.canvas.mpl_connect('button_press_event', self.click)
 
 class ThresholdHist():
     def update(self, data, retain = False):

@@ -3,7 +3,7 @@ import numpy as np
 import tkinter as tk
 
 import petmr
-from figures import ThresholdHist, Flood
+from figures import ThresholdHist, FloodHist
 
 class App():
     def open_file(self):
@@ -75,7 +75,7 @@ class App():
         self.plt_frame.columnconfigure(0, weight = 1)
         self.plt_frame.columnconfigure(1, weight = 1)
         self.plt_frame.columnconfigure(2, weight = 1)
-        self.flood = Flood(self.plt_frame, column = 0, row = 0, sticky = 'EW')
+        self.flood = FloodHist(self.plt_frame, column = 0, row = 0, sticky = 'EW')
         self.energy = ThresholdHist(self.plt_frame, column = 1, row = 0, sticky = 'EW')
         self.doi = ThresholdHist(self.plt_frame, column = 2, row = 0, sticky = 'EW')
 

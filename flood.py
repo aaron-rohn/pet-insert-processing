@@ -10,16 +10,20 @@ class Flood():
         else:
             self.fld = f
 
+        self.fld0 = np.copy(self.fld)
+
         self.fld = self.fld.astype('double')
         self.fld = self.log_filter(ksize)
 
-        ta = self.edges(1, 10)
-        ax = self.edges(0, 10)
+        e0 = self.edges(1, 10)
+        e1 = self.edges(0, 10)
         mask = np.zeros(self.fld.shape)
-        mask[ta[0]-10:ta[1]+10,ax[0]-10:ax[1]+10] = 1
-        self.fld = self.fld * mask / ndimage.gaussian_filter(self.fld, 20)
-        self.fld = np.nan_to_num(self.fld, 0)
+        mask[e0[0]-10:e0[1]+10, e1[0]-10:e1[1]+10] = 1
 
+        with np.errstate(invalid='ignore'):
+            self.fld = self.fld * mask / ndimage.gaussian_filter(self.fld, 20)
+
+        self.fld = np.nan_to_num(self.fld, 0)
         self.correct_outliers()
 
     def sample(self, n):
@@ -91,22 +95,33 @@ class Flood():
         pks = lpk + [center_pk_idx] + rpk
         pks.sort()
 
-        #print(distance)
-
         return pks
 
     def estimate_peaks(self):
-        ta = self.find_1d_peaks(1)
-        ax = self.find_1d_peaks(0)
-        pks = np.array(np.meshgrid(ta, ax)).reshape(2,len(ta)*len(ax))
+        rows = self.find_1d_peaks(1)
+        cols = self.find_1d_peaks(0)[::-1]
+        pks = np.array(np.meshgrid(cols,rows)).reshape(2, len(rows)*len(cols))
 
         """
-        plt.imshow(self.fld.T)
+        plt.imshow(self.fld0)
         plt.scatter(*pks, s = 4, color = 'red')
         plt.show()
         """
 
         return pks
+
+    def nearest_peak(self, pks):
+        x,y = [np.arange(l) for l in self.fld.shape]
+        grid = np.array(np.meshgrid(y,x)).reshape(2, np.prod(self.fld.shape))
+
+        dst = np.linalg.norm(grid.T[:,None,:] - pks.T[None,:,:], axis = 2)
+        nearest = np.argmin(dst, axis = 1).reshape(self.fld.shape)
+
+        plt.imshow(nearest + self.fld0)
+        plt.gca().invert_xaxis()
+        plt.show()
+
+        return nearest
 
 if __name__ == "__main__":
     floods = glob.glob("/home/aaron/Downloads/block_*.raw")
@@ -114,3 +129,4 @@ if __name__ == "__main__":
         print(f)
         fld = Flood(f)
         pks = fld.estimate_peaks()
+        fld.nearest_peak(pks)

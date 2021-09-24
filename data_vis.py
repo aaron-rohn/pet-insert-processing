@@ -15,7 +15,7 @@ class App():
             self.file_indicator.config(text = str(e))
             return
 
-        cols = ['block', 'time', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
+        cols = ['block', 'time', 'A1', 'B1', 'C1', 'D1', 'A2', 'B2', 'C2', 'D2']
         d = []
 
         for f in fname:
@@ -26,16 +26,16 @@ class App():
         d = pd.concat(d, ignore_index = True)
         d.columns = cols
 
-        d = d.assign(e1 = d.loc[:,'A':'D'].sum(axis=1),
-                     e2 = d.loc[:,'E':'H'].sum(axis=1))
+        d = d.assign(e1 = d.loc[:,'A1':'D1'].sum(axis=1),
+                     e2 = d.loc[:,'A2':'D2'].sum(axis=1))
 
         d = d.query('e1 > 0 & e2 > 0')
 
         d = d.assign(e_sum = d['e1'] + d['e2'],
-                     x1 = (d['A'] + d['B']) / d['e1'],
-                     y1 = (d['B'] + d['C']) / d['e1'],
-                     x2 = (d['E'] + d['F']) / d['e2'],
-                     y2 = (d['F'] + d['G']) / d['e2'])
+                     x1 = (d['A1'] + d['B1']) / d['e1'],
+                     y1 = (d['A1'] + d['D1']) / d['e1'],
+                     x2 = (d['A2'] + d['B2']) / d['e2'],
+                     y2 = (d['A2'] + d['D2']) / d['e2'])
 
         d = d.assign(doi = d['e1'] / d['e_sum'])
 
@@ -46,9 +46,25 @@ class App():
     def plots_update(self, ev):
         blk = self.active_blocks_ind.get(tk.ANCHOR)
         self.d_blk = self.d.query('block == {}'.format(blk))
-        self.doi.update(self.d_blk['doi'])
-        self.energy.update(self.d_blk['e_sum'])
-        self.flood.update(self.d_blk)
+        self.energy.update(self.d_blk['e_sum'], retain = False)
+        self.doi_cb(retain = False)
+        self.flood_cb()
+
+    def flood_cb(self):
+        eth = self.energy.thresholds()
+        dth = self.doi.thresholds()
+        data_subset = self.d_blk.query('({} < e_sum < {}) & ({} < doi < {})'.format(*eth, *dth))
+        self.flood.update(data_subset)
+
+    def doi_cb(self, retain = True):
+        eth = self.energy.thresholds()
+        data_subset = self.d_blk.query('{} < e_sum < {}'.format(*eth))
+        self.doi.update(data_subset['doi'], retain)
+
+    def energy_cb(self, retain = True):
+        dth = self.doi.thresholds()
+        data_subset = self.d_blk.query('{} < doi < {}'.format(*dth))
+        self.energy.update(data_subset['e_sum'], retain)
 
     def __init__(self):
         self.root = tk.Tk()
@@ -76,16 +92,13 @@ class App():
         self.plt_frame.columnconfigure(1, weight = 1)
         self.plt_frame.columnconfigure(2, weight = 1)
         self.flood = FloodHist(self.plt_frame, column = 0, row = 0, sticky = 'EW')
-        self.energy = ThresholdHist(self.plt_frame, column = 1, row = 0, sticky = 'EW')
-        self.doi = ThresholdHist(self.plt_frame, column = 2, row = 0, sticky = 'EW')
+        self.energy = ThresholdHist(self.plt_frame, is_energy = True, column = 1, row = 0, sticky = 'EW')
+        self.doi = ThresholdHist(self.plt_frame, is_energy = False, column = 2, row = 0, sticky = 'EW')
 
-        flood_cb = lambda: self.flood.update(self.d_blk.query('({} < e_sum < {}) & ({} < doi < {})'.format(*self.energy.thresholds(), *self.doi.thresholds())))
-        energy_cb = lambda: self.doi.update(self.d_blk.query('{} < e_sum < {}'.format(*self.energy.thresholds()))['doi'], retain = True)
-        doi_cb = lambda: self.energy.update(self.d_blk.query('{} < doi < {}'.format(*self.doi.thresholds()))['e_sum'], retain = True)
-        self.energy.callback.append(flood_cb)
-        self.doi.callback.append(flood_cb)
-        self.energy.callback.append(energy_cb)
-        self.doi.callback.append(doi_cb)
+        self.energy.callback.append(self.flood_cb)
+        self.doi.callback.append(self.flood_cb)
+        self.energy.callback.append(self.doi_cb)
+        self.doi.callback.append(self.energy_cb)
 
 app = App()
 app.root.mainloop()

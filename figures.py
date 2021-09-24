@@ -22,17 +22,52 @@ class FloodHist():
         self.redraw()
 
     def redraw(self):
+        active = self.pts[self.pts_active].T
+        inactive = self.pts[~self.pts_active].T
+
+        """
+        Coordinate layout:
+        
+        'Animal' side
+        #########
+        #D     A#
+        #   0   #
+        #C     B#
+        #########
+        #########
+        #       #
+        #   1   #
+        #       #
+        #########
+        #########
+        #       #
+        #   2   #
+        #       #
+        #########
+        #########
+        #       #
+        #   4   #
+        #       #
+        #########
+        'Cabinet' side
+
+        View from rear SiPM array, looking inward
+        System is inserted through MRI cabinet in rear
+
+        """
+
         self.plot.clear()
-        self.plot.imshow(self.img.T)
-        self.plot.scatter(*self.pts[self.pts_active].T, s = 4, color = 'blue')
-        self.plot.scatter(*self.pts[~self.pts_active].T, s = 4, color = 'red')
+        self.plot.imshow(self.img)
+        self.plot.plot(*active, '.b', *inactive, '.r', ms = 3)
+        # Invert x axis to display origin (A channel) in top right
+        self.plot.invert_xaxis()
         self.canvas.draw()
 
     def update(self, data):
-        self.img,*_ = np.histogram2d(data['x1'],
-                                    (data['y1'] + data['y2']) / 2.0,
-                                    bins = self.img_size,
-                                    range = [[0,1],[0,1]])
+        # Image rows (1st coordinate) are the Y value ((A+D)/e)
+        # Image cols (2nd coordinate) are the X value ((A+B)/e)
+        self.img,*_ = np.histogram2d((data['y1']+data['y2'])/2.0, data['x1'],
+                                     bins = self.img_size, range = [[0,1],[0,1]])
         f = fld.Flood(self.img)
         self.pts = f.estimate_peaks().T.reshape(self.npts, self.npts, 2)
         self.pts_active = np.zeros((self.npts, self.npts), dtype = bool)
@@ -42,8 +77,8 @@ class FloodHist():
         self.img_size = 512
         self.npts = 19
 
-        self.fig = Figure(subplotpars = SubplotParams(0,0,1,1))
-        self.plot = self.fig.add_subplot(frame_on = False)
+        self.fig = Figure() #subplotpars = SubplotParams(0,0,1,1))
+        self.plot = self.fig.add_subplot() #frame_on = False)
         self.canvas = FigureCanvasTkAgg(self.fig, master = frame)
         self.canvas.draw()
         self.canvas.get_tk_widget().grid(**kwargs)
@@ -60,8 +95,15 @@ class ThresholdHist():
         last_rng = self.thresholds()
         self.plot.clear()
         rng = np.quantile(data, [0.01, 0.99])
-        self.plot.hist(data, bins = 512, range = rng)
-        self.init_lines(last_rng if retain else rng)
+        n,bins,_ = self.plot.hist(data, bins = 512, range = rng)
+
+        if retain:
+            rng = last_rng
+        elif self.is_energy:
+            pk = bins[np.argmax(bins[:-1] * n**2)]
+            rng = [(1-self.e_window)*pk, (1+self.e_window)*pk]
+
+        self.init_lines(rng)
         self.canvas.draw()
 
     def thresholds(self):
@@ -91,7 +133,10 @@ class ThresholdHist():
     def init_lines(self, lims = (0,1)):
         self.lines = [self.plot.axvline(x,linewidth=3,color='r') for x in lims]
 
-    def __init__(self, frame, **kwargs):
+    def __init__(self, frame, is_energy, **kwargs):
+        self.is_energy = is_energy
+        self.e_window = 0.2
+
         self.fig = Figure()
         self.plot = self.fig.add_subplot()
         self.init_lines()

@@ -3,6 +3,7 @@ import tkinter as tk
 import flood as fld
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure, SubplotParams
+from scipy.spatial import Voronoi, voronoi_plot_2d
 
 class FloodHist():
     def click(self, ev):
@@ -57,16 +58,26 @@ class FloodHist():
         """
 
         self.plot.clear()
-        self.plot.imshow(self.img)
-        self.plot.plot(*active, '.b', *inactive, '.r', ms = 3)
-        # Invert x axis to display origin (A channel) in top right
-        self.plot.invert_xaxis()
+
+        vor = Voronoi(self.pts.reshape(self.npts**2,2))
+        voronoi_plot_2d(vor, ax = self.plot, 
+                show_vertices = False, 
+                show_points = False, 
+                line_colors = 'grey',
+                line_alpha = 0.5)
+
+        self.plot.imshow(self.img, aspect = 'auto')
+        self.plot.plot(*active, '.b', *inactive, '.r', ms = 1)
+        # Invert Y axis to display A channel in Top right
+        self.plot.invert_yaxis()
+        self.plot.set_xlim(0,511)
+        self.plot.set_ylim(0,511)
         self.canvas.draw()
 
     def update(self, data):
         # Image rows (1st coordinate) are the Y value ((A+D)/e)
         # Image cols (2nd coordinate) are the X value ((A+B)/e)
-        self.img,*_ = np.histogram2d((data['y1']+data['y2'])/2.0, data['x1'],
+        self.img,*_ = np.histogram2d(data['y'], data['x1'],
                                      bins = self.img_size, range = [[0,1],[0,1]])
         f = fld.Flood(self.img)
         self.pts = f.estimate_peaks().T.reshape(self.npts, self.npts, 2)
@@ -77,8 +88,8 @@ class FloodHist():
         self.img_size = 512
         self.npts = 19
 
-        self.fig = Figure() #subplotpars = SubplotParams(0,0,1,1))
-        self.plot = self.fig.add_subplot() #frame_on = False)
+        self.fig = Figure(subplotpars = SubplotParams(0,0,1,1))
+        self.plot = self.fig.add_subplot(frame_on = False)
         self.canvas = FigureCanvasTkAgg(self.fig, master = frame)
         self.canvas.draw()
         self.canvas.get_tk_widget().grid(**kwargs)

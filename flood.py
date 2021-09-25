@@ -1,6 +1,7 @@
 import glob
 import numpy as np
 from scipy import ndimage, signal
+from scipy.spatial import Voronoi, voronoi_plot_2d, KDTree
 import matplotlib.pyplot as plt
 
 class Flood():
@@ -98,8 +99,8 @@ class Flood():
         return pks
 
     def estimate_peaks(self):
-        rows = self.find_1d_peaks(1)
-        cols = self.find_1d_peaks(0)[::-1]
+        rows = self.find_1d_peaks(1)[::-1]
+        cols = self.find_1d_peaks(0)
         pks = np.array(np.meshgrid(cols,rows)).reshape(2, len(rows)*len(cols))
 
         """
@@ -113,13 +114,15 @@ class Flood():
     def nearest_peak(self, pks):
         x,y = [np.arange(l) for l in self.fld.shape]
         grid = np.array(np.meshgrid(y,x)).reshape(2, np.prod(self.fld.shape))
+        tree = KDTree(pks.T)
+        _,nearest = tree.query(grid.T, workers = -1, distance_upper_bound = 30)
+        nearest = nearest.reshape(self.fld.shape)
 
-        dst = np.linalg.norm(grid.T[:,None,:] - pks.T[None,:,:], axis = 2)
-        nearest = np.argmin(dst, axis = 1).reshape(self.fld.shape)
-
-        plt.imshow(nearest + self.fld0)
-        plt.gca().invert_xaxis()
+        """
+        plt.imshow(nearest % 25 + self.fld)
+        plt.gca().invert_yaxis()
         plt.show()
+        """
 
         return nearest
 

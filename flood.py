@@ -11,8 +11,7 @@ class Flood():
         else:
             self.fld = f
 
-        self.fld0 = np.copy(self.fld)
-
+        #self.fld0 = np.copy(self.fld)
         self.fld = self.fld.astype('double')
         self.fld = self.log_filter(ksize)
 

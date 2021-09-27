@@ -70,8 +70,8 @@ class FloodHist():
         self.plot.plot(*active, '.b', *inactive, '.r', ms = 1)
         # Invert Y axis to display A channel in Top right
         self.plot.invert_yaxis()
-        self.plot.set_xlim(0,511)
-        self.plot.set_ylim(0,511)
+        self.plot.set_xlim(0,self.img_size-1)
+        self.plot.set_ylim(0,self.img_size-1)
         self.canvas.draw()
 
     def update(self, data):

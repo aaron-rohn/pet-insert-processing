@@ -3,17 +3,18 @@
 #include <iostream>
 #include <cinttypes>
 #include <cstdbool>
-#include <cstring>
 #include <vector>
-#include <tuple>
+#include "singles.h"
 
 #include <Python.h>
 #include <numpy/arrayobject.h>
 
-static PyObject *petmr_read(PyObject*, PyObject*);
+static PyObject *petmr_singles(PyObject*, PyObject*);
+static PyObject *petmr_coincidences(PyObject*, PyObject*);
 
 static PyMethodDef petmrMethods[] = {
-    {"read", petmr_read, METH_VARARGS, "read PET/MRI insert singles data"},
+    {"singles", petmr_singles, METH_VARARGS, "read PET/MRI insert singles data"},
+    {"coincidences", petmr_coincidences, METH_VARARGS, "read PET/MRI insert singles data, and sort coincidences"},
     {NULL, NULL, 0, NULL}
 };
 
@@ -28,141 +29,65 @@ PyInit_petmr(void)
     return PyModule_Create(&petmrmodule);
 }
 
-#define EV_SIZE 16
-#define BYTE_IS_HEADER(byte) ((byte >> 3) == 0x1F)
-#define DATA_FLAG(data) (data[0] & 0x4)
-#define DATA_BLK(data) (((data[0] << 4) | (data[1] >> 4)) & 0x3F)
-#define DATA_MOD(data) (((data[0] << 2) | (data[1] >> 6)) & 0xF)
-#define CLK_PER_TT 800000ULL
-
-uint64_t reader(FILE *f, uint8_t data[])
-{
-    if (fread(data, 1, EV_SIZE, f) != EV_SIZE)
-        return 0;
-
-    // ensure alignment of data stream
-    while (!BYTE_IS_HEADER(data[0]))
-    {
-        size_t n = EV_SIZE;
-        for (size_t i = 1; i < EV_SIZE; i++)
-        {
-            if (BYTE_IS_HEADER(data[i]))
-            {
-                std::cout << "Realign data stream\n";
-                std::memmove(data, data + i, EV_SIZE - i);
-                n = i;
-                break;
-            }
-        }
-
-        if (fread(data + (EV_SIZE - n), 1, n, f) != n)
-            return 0;
-    }
-
-    return ftello(f);
+void single_append(Single &s,
+        std::vector<std::vector<uint16_t>> &energies,
+        std::vector<uint8_t> &blocks,
+        std::vector<uint64_t> &times
+) {
+    for (size_t i = 0; i < energies.size(); i++)
+        energies[i].push_back(s.energies[i]);
+    blocks.push_back(s.block);
+    times.push_back(s.time);
 }
 
 static PyObject *
-petmr_read(PyObject *self, PyObject *args)
+petmr_singles(PyObject *self, PyObject *args)
 {
-    // parse arguments from python
-    int find_rst = 1;
     const char *fname;
-    if (!PyArg_ParseTuple(args, "s|p", &fname, &find_rst))
+    uint64_t max_events = 0;
+    if (!PyArg_ParseTuple(args, "s|K", &fname, &max_events))
         return NULL;
 
     // Open file and determine length
     std::cout << "Reading file " << fname << "\n";
-    FILE *file = fopen(fname, "rb");
-    if (!file) 
+    SinglesReader reader(fname);
+    if (!reader) 
     {
         PyErr_SetFromErrno(PyExc_IOError);
         return NULL;
     }
-    else
-    {
-        uint64_t file_length, file_elems;
-        fseek(file, 0L, SEEK_END);
-        file_length = ftell(file);
-        rewind(file);
 
-        file_elems = file_length / EV_SIZE;
-        std::cout << "Found " << std::to_string(file_elems) << " entries\n";
-    } 
+    std::cout << "Found " << std::to_string(reader.length()) << " entries\n";
 
-    uint64_t offset = 0;
-    uint8_t data[EV_SIZE] = {0};
-
-    // Scan for reset time tag
-    while (find_rst && (offset = reader(file, data)))
-    {
-        if (!DATA_FLAG(data))
-        {
-            uint64_t upper = (data[10] << 16) | (data[11] << 8) | data[12];
-            uint64_t lower = (data[13] << 16) | (data[14] << 8) | data[15];
-            uint64_t tt = (upper << 24) | lower;
-            if (tt == 0)
-            {
-                std::cout << "Found reset after " << std::to_string(offset / EV_SIZE) << " entries\n";
-                break;
-            }
-        }
-    }
-    
-    // Single event
-    // CRC | f |    b   |   E1   |    E2   |   E3    |   E4   |   E5    |   E6   |   E7    |   E8   |       TT
-    // { 5 , 1 , 2 }{ 4 , 4 }{ 8 }{ 8 }{ 4 , 4 }{ 8 }{ 8 }{ 4 , 4 }{ 8 }{ 8 }{ 4 , 4 }{ 8 }{ 8 }{ 4 , 4 }{ 8 }{ 8 }
-    //       0          1      2    3      4      5    6      7      8    9     10     11   12     13     14   15
-    
-    // Time tag
-    // CRC | f |    b   |                     0's                    |             TT
-    // { 5 , 1 , 2 }{ 4 , 4 }{ 8 }{ 8 }{ 8 }{ 8 }{ 8 }{ 8 }{ 8 }{ 8 }{ 8 }{ 8 }{ 8 }{ 8 }{ 8 }{ 8 }
-    //       0          1      2    3    4    5    6    7    8    9   10   11   12   13   14   15
-
+    // vectors to store output data
     std::vector<std::vector<uint16_t>> energies (8, std::vector<uint16_t>{});
     std::vector<uint8_t> blk;
     std::vector<uint64_t> TT;
 
-    // read file contents
-    uint64_t last_tt[16] = {0};
-    npy_intp n = 0;
-    while ((offset = reader(file, data)))
+    TimeTag last_tt[NMODULES];
+
+    // read file contents until EOF or max_events
+    while (reader.read())
     {
-        int mod = DATA_MOD(data);
+        if (max_events > 0 && reader.nsingles > max_events) break;
 
-        if (DATA_FLAG(data))
+        if (reader.entry_is_single)
         {
-            n++;
-            // Front energies
-            energies[0].push_back(((data[1] << 8) | data[2]) & 0xFFF); // A
-            energies[1].push_back((data[3] << 4) | (data[4] >> 4)); // B
-            energies[2].push_back(((data[4] << 8) | data[5]) & 0xFFF); // C
-            energies[3].push_back((data[6] << 4) | (data[7] >> 4)); // D
-
-            // Rear energies
-            energies[4].push_back(((data[7] << 8) | data[8]) & 0xFFF); // E
-            energies[5].push_back((data[9] << 4) | (data[10] >> 4)); // F
-            energies[6].push_back(((data[10] << 8) | data[11]) & 0xFFF); // G
-            energies[7].push_back((data[12] << 4) | (data[13] >> 4)); // H
-
-            blk.push_back(DATA_BLK(data));
-
-            uint64_t time = ((data[13] << 16) | (data[14] << 8) | data[15]) & 0xFFFFF;
-            TT.push_back(last_tt[mod] * CLK_PER_TT + time);
+            reader.entry.single.set_abs_time(last_tt[reader.mod]);
+            single_append(reader.entry.single, energies, blk, TT);
         }
         else
         {
-            uint64_t upper = (data[10] << 16) | (data[11] << 8) | data[12];
-            uint64_t lower = (data[13] << 16) | (data[14] << 8) | data[15];
-            last_tt[mod] = (upper << 24) | lower;
+            last_tt[reader.mod] = reader.entry.timetag;
         }
     }
 
-    // clean up and return data as numpy array
-    fclose(file);
+    // return data as numpy array
 
     PyObject *lst = PyList_New(energies.size() + 2);
     PyObject *arr = NULL;
+
+    long int n = reader.nsingles;
 
     if (!lst) goto cleanup;
 
@@ -190,6 +115,37 @@ cleanup:
     for (size_t i = 0; lst && (i < energies.size() + 1); i++)
         Py_XDECREF(PyList_GetItem(lst, i));
     Py_XDECREF(arr);
+    Py_XDECREF(lst);
+    PyErr_SetString(PyExc_Exception, "Failed to create numpy array");
+    return NULL;
+}
+
+static PyObject *
+petmr_coincidences(PyObject *self, PyObject *args)
+{
+    PyObject *file_list;
+    if (!PyArg_ParseTuple(args, "O", &file_list))
+        return NULL;
+
+    std::vector<std::string> cfile_list;
+    int nfiles = PyList_Size(file_list);
+    for (int i = 0; i < nfiles; i++)
+    {
+        PyObject *item = PyList_GetItem(file_list, i);
+        if (!PyUnicode_Check(item))
+        {
+            PyErr_SetString(PyExc_ValueError, "All list items must be strings");
+            return NULL;
+        }
+        PyObject *utf8 = PyUnicode_AsUTF8String(item);
+        cfile_list.push_back(PyBytes_AsString(utf8));
+    }
+
+    PyObject *lst = PyList_New(0);
+    if (!lst) goto cleanup;
+    return lst;
+
+cleanup:
     Py_XDECREF(lst);
     PyErr_SetString(PyExc_Exception, "Failed to create numpy array");
     return NULL;

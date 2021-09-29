@@ -15,6 +15,7 @@ flags = [
     '-std=c++17',
     '-xc++',
     '-I/usr/include/python3.9',
+    '-I./include',
     '-I' + np.get_include(),
     ]
 

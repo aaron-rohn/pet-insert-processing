@@ -1,5 +1,7 @@
+import pandas as pd
 import tkinter as tk
 from figures import ThresholdHist, FloodHist
+from petmr import singles
 
 class FileSelector():
     def __init__(self, root):
@@ -8,10 +10,35 @@ class FileSelector():
         self.button = tk.Button(self.frame, text = "Select file")
         self.label = tk.Label(self.frame, bg = 'white', text = '', anchor = 'w', relief = tk.SUNKEN, borderwidth = 1, height = 2) 
 
+        self.sort_coin = tk.IntVar()
+        self.coincidences = tk.Checkbutton(self.frame, text = "Sort Coincidences", variable = self.sort_coin)
+
     def pack(self):
         self.frame.pack(fill = tk.X, expand = True, padx = 10, pady = 10)
         self.button.pack(side = tk.LEFT, padx = 10, pady = 10)
         self.label.pack(side = tk.LEFT, fill = tk.X, expand = True, padx = 10, pady = 10)
+        self.coincidences.pack(side = tk.LEFT, padx = 10, pady = 10)
+
+    def load(self):
+        """ Load listmode data from one or more files and calculate necessary columns """
+        fname = tk.filedialog.askopenfilenames()
+        self.label.config(text = fname or "No file selected")
+
+        c = ['block', 'time', 'A1', 'B1', 'C1', 'D1', 'A2', 'B2', 'C2', 'D2']
+        d = [pd.DataFrame(dict(zip(c, singles(f)))) for f in fname]
+        d = (pd.concat(d, ignore_index = True)
+               .assign(e1  = lambda df: df.loc[:,'A1':'D1'].sum(axis=1),
+                       e2  = lambda df: df.loc[:,'A2':'D2'].sum(axis=1),
+                       es  = lambda df: df['e1'] + df['e2'],
+                       doi = lambda df: df['e1'] / df['es'],
+                       x1  = lambda df: (df['A1'] + df['B1']) / df['e1'],
+                       y1  = lambda df: (df['A1'] + df['D1']) / df['e1'],
+                       x2  = lambda df: (df['A2'] + df['B2']) / df['e2'],
+                       y2  = lambda df: (df['A2'] + df['D2']) / df['e2'],
+                       y   = lambda df: (df['y1'] + df['y2']) / 2.0)
+               .groupby('block'))
+
+        return d
 
     def set(self, text): self.label.config(text = text)
     def bind(self, cb): self.button.config(command = cb)

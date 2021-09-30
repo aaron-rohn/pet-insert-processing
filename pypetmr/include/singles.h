@@ -7,13 +7,9 @@
 #include <vector>
 #include <deque>
 
-#define BYTE_IS_HEADER(byte) ((byte >> 3) == 0x1F)
-#define DATA_FLAG(data) (data[0] & 0x4)
-#define DATA_BLK(data) (((data[0] << 4) | (data[1] >> 4)) & 0x3F)
-#define DATA_MOD(data) (((data[0] << 2) | (data[1] >> 6)) & 0xF)
-#define CLK_PER_TT 800000ULL
-
 struct TimeTag {
+    const static uint64_t clks_per_tt = 800'000;
+
     uint8_t mod;
     uint64_t value;
 
@@ -26,23 +22,32 @@ struct Single {
 
     uint16_t energies[nch] = {0};
     uint8_t block;
+    uint8_t mod;
     uint64_t time;
     uint64_t abs_time;
 
+    bool valid = true;
+
     Single(uint8_t[], TimeTag&);
-    Single() {}
-    bool operator<(const Single &rhs) { return abs_time < rhs.abs_time; }
+    Single(): valid(false) {}
+    bool operator<(const Single &rhs) const { return abs_time < rhs.abs_time; }
+
+    static inline bool is_header(uint8_t);
+    static inline uint8_t get_flag(uint8_t[]);
+    static inline uint8_t get_block(uint8_t[]);
+    static inline uint8_t get_module(uint8_t[]);
 };
 
 class SinglesReader
 {
     static const int event_size = 16;
 
+    std::string fname;
     FILE *f;
     uint8_t data[event_size];
-    uint64_t offset;
+    uint64_t offset = 1;
     std::vector<TimeTag> tt;
-    bool tt_aligned = true;
+    bool aligned = true;
 
     public:
 
@@ -56,8 +61,8 @@ class SinglesReader
     Single single;
     TimeTag timetag;
 
-    SinglesReader (const char*);
-    ~SinglesReader () { fclose(f); }
+    SinglesReader (std::string);
+    ~SinglesReader () { if (f) fclose(f); }
     operator bool() const {return f && offset;}
     uint64_t find_rst();
     uint64_t read();

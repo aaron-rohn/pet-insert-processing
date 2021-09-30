@@ -1,8 +1,9 @@
-#ifndef COINCIDENCE_H
-#define COINCIDENCE_H
+#ifndef MERGER_H
+#define MERGER_H
 
 #include <vector>
 #include <string>
+#include <deque>
 #include "singles.h"
 
 class SinglesMerger
@@ -12,16 +13,18 @@ class SinglesMerger
 
     std::vector<SinglesReader> singles;
     std::vector<std::deque<Single>> events;
-    void reload_curr_ev();
 
     public:
 
+    uint64_t nsingles = 0;
     uint64_t total_size = 0;
 
     SinglesMerger(std::vector<std::string>);
+    operator bool() const;
     void find_rst();
-    bool finished();
+    bool finished() const;
     int first_not_empty() const;
+    void reload();
 
     Single next_event();
 };

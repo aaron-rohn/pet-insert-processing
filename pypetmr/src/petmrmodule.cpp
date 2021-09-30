@@ -4,7 +4,10 @@
 #include <cinttypes>
 #include <cstdbool>
 #include <vector>
+
 #include "singles.h"
+#include "merger.h"
+#include "coincidence.h"
 
 #include <Python.h>
 #include <numpy/arrayobject.h>
@@ -49,15 +52,12 @@ petmr_singles(PyObject *self, PyObject *args)
         return NULL;
 
     // Open file and determine length
-    std::cout << "Reading file " << fname << "\n";
     SinglesReader reader(fname);
     if (!reader) 
     {
         PyErr_SetFromErrno(PyExc_IOError);
         return NULL;
     }
-
-    std::cout << "Found " << std::to_string(reader.file_elems) << " entries\n";
 
     // vectors to store output data
     std::vector<std::vector<uint16_t>> energies (Single::nch, std::vector<uint16_t>{});
@@ -67,7 +67,7 @@ petmr_singles(PyObject *self, PyObject *args)
     // read file contents until EOF or max_events
     while (reader.read())
     {
-        if (max_events > 0 && reader.nsingles > max_events) break;
+        if (max_events && reader.nsingles > max_events) break;
 
         if (reader.is_single)
         {
@@ -117,7 +117,8 @@ static PyObject *
 petmr_coincidences(PyObject *self, PyObject *args)
 {
     PyObject *file_list;
-    if (!PyArg_ParseTuple(args, "O", &file_list))
+    uint64_t max_events = 0;
+    if (!PyArg_ParseTuple(args, "O|K", &file_list, &max_events))
         return NULL;
 
     std::vector<std::string> cfile_list;
@@ -133,6 +134,25 @@ petmr_coincidences(PyObject *self, PyObject *args)
         PyObject *utf8 = PyUnicode_AsUTF8String(item);
         cfile_list.push_back(PyBytes_AsString(utf8));
     }
+
+    SinglesMerger merger (cfile_list);
+    if (!merger) 
+    {
+        PyErr_SetFromErrno(PyExc_IOError);
+        return NULL;
+    }
+
+    merger.find_rst();
+
+    CoincidenceSorter trues;
+    Single ev;
+
+    do
+    {
+        ev = merger.next_event();
+        auto c = trues.add_event(ev);
+    }
+    while (ev.valid && (max_events && merger.nsingles < max_events));
 
     PyObject *lst = PyList_New(0);
     if (!lst) goto cleanup;

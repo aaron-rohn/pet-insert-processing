@@ -4,9 +4,9 @@
 #include <cinttypes>
 #include <iostream>
 #include <cstring>
+#include <vector>
+#include <deque>
 
-#define EV_SIZE 16
-#define NMODULES 16
 #define BYTE_IS_HEADER(byte) ((byte >> 3) == 0x1F)
 #define DATA_FLAG(data) (data[0] & 0x4)
 #define DATA_BLK(data) (((data[0] << 4) | (data[1] >> 4)) & 0x3F)
@@ -22,41 +22,46 @@ struct TimeTag {
 };
 
 struct Single {
-    uint16_t energies[8] = {0};
+    static const int nch = 8;
+
+    uint16_t energies[nch] = {0};
     uint8_t block;
     uint64_t time;
     uint64_t abs_time;
 
-    Single(uint8_t[]);
-    void set_abs_time(TimeTag&);
-};
-
-union Entry
-{
-    struct TimeTag timetag;
-    struct Single single;
-    Entry(): timetag(TimeTag()) {};
+    Single(uint8_t[], TimeTag&);
+    Single() {}
+    bool operator<(const Single &rhs) { return abs_time < rhs.abs_time; }
 };
 
 class SinglesReader
 {
+    static const int event_size = 16;
+
     FILE *f;
-    uint8_t data[EV_SIZE];
+    uint8_t data[event_size];
+    uint64_t offset;
+    std::vector<TimeTag> tt;
+    bool tt_aligned = true;
 
     public:
 
-    uint64_t nsingles = 0, ntimetag = 0;
-    bool entry_is_single = false;
-    Entry entry;
+    static const int nmodules = 16;
+    static const int nblocks = 64;
+
+    uint64_t nsingles = 0, ntimetag = 0, file_size = 0, file_elems = 0;
     uint8_t mod;
 
-    SinglesReader (const char *fname) { f = fopen(fname, "rb"); }
+    bool is_single = false;
+    Single single;
+    TimeTag timetag;
+
+    SinglesReader (const char*);
     ~SinglesReader () { fclose(f); }
-    bool operator!() { return !f; }
-    void set_entry();
-    uint64_t length();
+    operator bool() const {return f && offset;}
     uint64_t find_rst();
     uint64_t read();
+    std::vector<std::deque<Single>> go_to_tt(uint64_t);
 };
 
 #endif

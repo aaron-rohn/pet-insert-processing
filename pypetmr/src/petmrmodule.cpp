@@ -57,28 +57,21 @@ petmr_singles(PyObject *self, PyObject *args)
         return NULL;
     }
 
-    std::cout << "Found " << std::to_string(reader.length()) << " entries\n";
+    std::cout << "Found " << std::to_string(reader.file_elems) << " entries\n";
 
     // vectors to store output data
-    std::vector<std::vector<uint16_t>> energies (8, std::vector<uint16_t>{});
+    std::vector<std::vector<uint16_t>> energies (Single::nch, std::vector<uint16_t>{});
     std::vector<uint8_t> blk;
     std::vector<uint64_t> TT;
-
-    TimeTag last_tt[NMODULES];
 
     // read file contents until EOF or max_events
     while (reader.read())
     {
         if (max_events > 0 && reader.nsingles > max_events) break;
 
-        if (reader.entry_is_single)
+        if (reader.is_single)
         {
-            reader.entry.single.set_abs_time(last_tt[reader.mod]);
-            single_append(reader.entry.single, energies, blk, TT);
-        }
-        else
-        {
-            last_tt[reader.mod] = reader.entry.timetag;
+            single_append(reader.single, energies, blk, TT);
         }
     }
 

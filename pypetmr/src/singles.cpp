@@ -13,7 +13,7 @@ TimeTag::TimeTag(uint8_t data[])
     value = (upper << 24) | lower;
 }
 
-Single::Single(uint8_t data[])
+Single::Single(uint8_t data[], TimeTag &tt)
 {
     // Single event
     // CRC | f |    b   |   E1   |    E2   |   E3    |   E4   |   E5    |   E6   |   E7    |   E8   |       TT
@@ -34,73 +34,90 @@ Single::Single(uint8_t data[])
 
     block = DATA_BLK(data);
     time = ((data[13] << 16) | (data[14] << 8) | data[15]) & 0xFFFFF;
-    //abs_time = time;
-    abs_time = 0;
+    abs_time = tt.value * CLK_PER_TT + time;
 }
 
-void Single::set_abs_time(TimeTag &last_tt)
+SinglesReader::SinglesReader (const char *fname):
+    tt(nblocks)
 {
-    abs_time = last_tt.value * CLK_PER_TT + time;
-}
-
-uint64_t SinglesReader::length()
-{
-    uint64_t file_length, file_elems;
+    f = fopen(fname, "rb");
     fseek(f, 0L, SEEK_END);
-    file_length = ftell(f);
+    file_size = ftell(f);
+    file_elems = file_size / event_size;
     rewind(f);
-    nsingles = 0;
-    ntimetag = 0;
-
-    file_elems = file_length / EV_SIZE;
-    return file_elems;
-}
-
-void SinglesReader::set_entry()
-{
-    entry_is_single = DATA_FLAG(data);
-    mod = DATA_MOD(data);
-    if (entry_is_single) {
-        entry.single = Single(data);
-        nsingles++;
-    } else {
-        entry.timetag = TimeTag(data);
-        ntimetag++;
-    }
 }
 
 uint64_t SinglesReader::find_rst()
 {
-    uint64_t offset;
-    while ((offset = read()))
+    while (read())
     {
-        if (!entry_is_single && entry.timetag.value == 0) break;
+        if (!is_single && timetag.value == 0) break;
     }
     return offset;
 }
 
 uint64_t SinglesReader::read()
 {
-    if (fread(data, 1, EV_SIZE, f) != EV_SIZE) return 0;
+    if (fread(data, 1, event_size, f) != event_size)
+    {
+        offset = 0;
+        return offset;
+    }
 
     // ensure alignment of data stream
     while (!BYTE_IS_HEADER(data[0]))
     {
-        size_t n = EV_SIZE;
-        for (size_t i = 1; i < EV_SIZE; i++)
+        size_t n = event_size;
+        for (size_t i = 1; i < event_size; i++)
         {
             if (BYTE_IS_HEADER(data[i]))
             {
-                std::memmove(data, data + i, EV_SIZE - i);
+                std::memmove(data, data + i, event_size - i);
                 n = i;
                 break;
             }
         }
 
-        if (fread(data + (EV_SIZE - n), 1, n, f) != n) return 0;
+        if (fread(data + (event_size - n), 1, n, f) != n)
+        {
+            offset = 0;
+            return offset;
+        }
     }
 
-    set_entry();
-    return ftello(f);
+    is_single = DATA_FLAG(data);
+    mod = DATA_MOD(data);
+
+    if (is_single)
+    {
+        single = Single(data, tt[mod]);
+        nsingles++;
+    }
+    else
+    {
+        TimeTag new_tt = TimeTag(data);
+        tt_aligned = (tt[mod].value + 1 == new_tt.value);
+        timetag = new_tt;
+        tt[mod] = new_tt;
+        ntimetag++;
+    }
+
+    offset = ftello(f);
+    return offset;
 }
 
+std::vector<std::deque<Single>> 
+SinglesReader::go_to_tt(uint64_t target)
+{
+    std::vector<std::deque<Single>> events (SinglesReader::nblocks);
+
+    while (read() && (!tt_aligned || timetag.value < target))
+    {
+        if (is_single)
+        {
+            events[single.block].push_back(single);
+        }
+    }
+
+    return events;
+}

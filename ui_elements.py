@@ -1,14 +1,16 @@
-import pandas as pd
+import threading
+import queue
 import tkinter as tk
 from figures import ThresholdHist, FloodHist
-from petmr import singles
+from data_loader import DataLoaderPopup
 
-class FileSelector():
-    def __init__(self, root):
+class FileSelector:
+    def __init__(self, root, cb):
         self.root = root
+        self.cb = cb
         self.frame = tk.Frame(self.root)
-        self.button = tk.Button(self.frame, text = "Select file")
-        self.label = tk.Label(self.frame, bg = 'white', text = '', anchor = 'w', relief = tk.SUNKEN, borderwidth = 1, height = 2) 
+        self.button = tk.Button(self.frame, text = "Select file", command = self.load)
+        self.label = tk.Label(self.frame, bg = 'white', text = '', anchor = 'w', relief = tk.SUNKEN, borderwidth = 1, height = 2)
 
         self.sort_coin = tk.IntVar()
         self.coincidences = tk.Checkbutton(self.frame, text = "Sort Coincidences", variable = self.sort_coin)
@@ -20,30 +22,15 @@ class FileSelector():
         self.coincidences.pack(side = tk.LEFT, padx = 10, pady = 10)
 
     def load(self):
-        """ Load listmode data from one or more files and calculate necessary columns """
         fname = tk.filedialog.askopenfilenames()
-        self.label.config(text = fname or "No file selected")
-
-        c = ['block', 'time', 'A1', 'B1', 'C1', 'D1', 'A2', 'B2', 'C2', 'D2']
-        d = [pd.DataFrame(dict(zip(c, singles(f)))) for f in fname]
-        d = (pd.concat(d, ignore_index = True)
-               .assign(e1  = lambda df: df.loc[:,'A1':'D1'].sum(axis=1),
-                       e2  = lambda df: df.loc[:,'A2':'D2'].sum(axis=1),
-                       es  = lambda df: df['e1'] + df['e2'],
-                       doi = lambda df: df['e1'] / df['es'],
-                       x1  = lambda df: (df['A1'] + df['B1']) / df['e1'],
-                       y1  = lambda df: (df['A1'] + df['D1']) / df['e1'],
-                       x2  = lambda df: (df['A2'] + df['B2']) / df['e2'],
-                       y2  = lambda df: (df['A2'] + df['D2']) / df['e2'],
-                       y   = lambda df: (df['y1'] + df['y2']) / 2.0)
-               .groupby('block'))
-
-        return d
+        if fname:
+            coin = self.sort_coin.get()
+            self.label.config(text = fname)
+            self.popup = DataLoaderPopup(self.root, self.button, list(fname), bool(coin), self.cb)
 
     def set(self, text): self.label.config(text = text)
-    def bind(self, cb): self.button.config(command = cb)
 
-class ScrolledListbox():
+class ScrolledListbox:
     def __init__(self, root):
         self.root = root
         self.frame = tk.Frame(self.root)
@@ -61,7 +48,7 @@ class ScrolledListbox():
     def set(self, blks): return self.active_var.set(blks)
     def bind(self, cb): self.active.bind('<<ListboxSelect>>', cb)
 
-class Plots():
+class Plots:
     def __init__(self, root, data, block):
         self.data = data    # callback to get the current data frame
         self.block = block  # callback to get the selected block

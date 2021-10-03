@@ -13,7 +13,7 @@ TimeTag::TimeTag(uint8_t data[])
     value = (upper << 24) | lower;
 }
 
-Single::Single(uint8_t data[], TimeTag &tt)
+Single::Single(uint8_t data[], const TimeTag &tt)
 {
     // Single event
     // CRC | f |    b   |   E1   |    E2   |   E3    |   E4   |   E5    |   E6   |   E7    |   E8   |       TT
@@ -38,57 +38,65 @@ Single::Single(uint8_t data[], TimeTag &tt)
     abs_time = tt.value * TimeTag::clks_per_tt + time;
 }
 
-bool Single::is_header(uint8_t byte) { return ((byte >> 3) == 0x1F); }
-uint8_t Single::get_flag(uint8_t data[]) { return (data[0] & 0x4); }
-uint8_t Single::get_block(uint8_t data[]) { return (((data[0] << 4) | (data[1] >> 4)) & 0x3F); }
-uint8_t Single::get_module(uint8_t data[]) { return (((data[0] << 2) | (data[1] >> 6)) & 0xF); }
+bool Single::is_header(uint8_t byte) {
+    return (byte >> 3) == 0x1F;
+}
+
+bool Single::is_single(uint8_t data[]) {
+    return data[0] & 0x4;
+}
+
+uint8_t Single::get_block(uint8_t data[]) {
+    return ((data[0] << 4) | (data[1] >> 4)) & 0x3F;
+}
+
+uint8_t Single::get_module(uint8_t data[]) {
+    return ((data[0] << 2) | (data[1] >> 6)) & 0xF;
+}
 
 SinglesReader::SinglesReader (std::string fname):
     fname(fname),
+    f(fname, std::ios::binary),
     tt(nmodules)
 {
-    f = fopen(fname.c_str(), "rb");
-    if (!f) return;
+    if (!f.good()) return;
 
-    fseek(f, 0L, SEEK_END);
-    file_size = ftell(f);
+    f.seekg(0, std::ios::end);
+    file_size = f.tellg();
     file_elems = file_size / event_size;
-    rewind(f);
+    f.seekg(0, std::ios::beg);
 
     std::cout << fname << ": " <<
         file_elems << " entries" << std::endl;
 }
 
-uint64_t SinglesReader::read()
+void SinglesReader::align()
 {
-    if (fread(data, 1, event_size, f) != event_size)
-    {
-        offset = 0;
-        return offset;
-    }
-
-    // ensure alignment of data stream
-    while (!Single::is_header(data[0]))
+    while (f.good() && !Single::is_header(data[0]))
     {
         size_t n = event_size;
         for (size_t i = 1; i < event_size; i++)
         {
             if (Single::is_header(data[i]))
             {
+                std::cout << fname << ": Realign data stream (0x" <<
+                    std::hex << f.tellg() << std::dec << ")\n";
+
                 std::memmove(data, data + i, event_size - i);
                 n = i;
                 break;
             }
         }
-
-        if (fread(data + (event_size - n), 1, n, f) != n)
-        {
-            offset = 0;
-            return offset;
-        }
+        f.read((char*)(data + (event_size - n)), n);
     }
+}
 
-    is_single = Single::get_flag(data);
+bool SinglesReader::read()
+{
+    f.read((char*)data, event_size);
+    align();
+
+    is_single = Single::is_single(data);
     mod = Single::get_module(data);
 
     if (is_single)
@@ -99,45 +107,41 @@ uint64_t SinglesReader::read()
     else
     {
         TimeTag new_tt (data);
-        aligned = (tt[mod].value + 1 == new_tt.value);
-        timetag = new_tt;
+        tt_aligned = (tt[mod].value + 1 == new_tt.value);
         tt[mod] = new_tt;
         ntimetag++;
     }
 
-    offset = ftello(f);
-    return offset;
+    return f.good();
 }
 
-uint64_t SinglesReader::find_rst()
+bool SinglesReader::find_rst()
 {
     while (read())
     {
-        if (!is_single && timetag.value == 0) break;
+        if (!is_single && tt[mod].value == 0) break;
     }
 
     std::cout << fname << ": Found reset at offset 0x" <<
-        std::hex << offset << std::dec << std::endl;
+        std::hex << f.tellg() << std::dec << std::endl;
 
-    return offset;
+    return f.good();
 }
 
 std::vector<std::deque<Single>> 
 SinglesReader::go_to_tt(uint64_t target)
 {
-    // assume that events within each module are time-sorted
-    // only allocate as many deques as there are modules (as opposed to blocks)
     std::vector<std::deque<Single>> events (nmodules);
 
     while (read())
     {
         if (is_single)
         {
-            events[mod].push_back(single);
+            events[single.mod].push_back(single);
         }
         else
         {
-            if (aligned && timetag.value >= target) break;
+            if (tt_aligned && tt[mod].value >= target) break;
         }
     }
 

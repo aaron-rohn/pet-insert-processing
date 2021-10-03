@@ -1,5 +1,6 @@
 #include "singles.h"
 #include "merger.h"
+#include <algorithm>
 
 SinglesMerger::SinglesMerger(std::vector<std::string> fnames):
     events(SinglesReader::nmodules)
@@ -11,71 +12,61 @@ SinglesMerger::SinglesMerger(std::vector<std::string> fnames):
     }
 }
 
-SinglesMerger::operator bool() const {
-    for (const SinglesReader &sgl : singles)
-        if (!sgl) return false;
-    return true;
+SinglesMerger::operator bool() const
+{
+    return std::all_of(singles.begin(), singles.end(),
+            [](const SinglesReader &s){ return bool(s); });
 }
 
 bool SinglesMerger::finished() const
 {
-    for (const SinglesReader &sgl : singles)
-        if (sgl) return false;
-    return true;
+    return std::none_of(singles.begin(), singles.end(),
+            [](const SinglesReader &s){ return bool(s); });
 }
 
 void SinglesMerger::find_rst()
 {
-    for (SinglesReader &sgl : singles)
-        sgl.find_rst();
+    for (SinglesReader &sgl : singles) sgl.find_rst();
     expected_tt = 0;
 }
 
-int SinglesMerger::first_not_empty() const
+std::vector<std::deque<Single>>::iterator
+SinglesMerger::first_not_empty()
 {
-    for (size_t i = 0; i < events.size(); i++)
-        if (!events[i].empty()) return i;
-    return -1;
+    return std::find_if_not(events.begin(), events.end(),
+            [](std::deque<Single> d){ return d.empty(); });
 }
 
 void SinglesMerger::reload()
 {
     expected_tt += tt_incr;
-
     for (SinglesReader &s : singles)
     {
-        auto new_ev = s.go_to_tt(expected_tt);
-        for (size_t i = 0; i < events.size(); i++)
-        {
-            events[i].insert(events[i].end(), 
-                             new_ev[i].begin(),
-                             new_ev[i].end());
-        }
+        auto new_events = s.go_to_tt(expected_tt);
+        auto e = events.begin(), n = new_events.begin();
+        for (; e != events.end() && n != new_events.end(); ++e, ++n)
+            e->insert(e->end(), n->begin(), n->end());
     }
 }
 
 Single SinglesMerger::next_event()
 {
-    Single e;
-    int earliest = first_not_empty();
-
-    while (earliest == -1)
+    auto fst = first_not_empty();
+    while (fst == events.end())
     {
-        if (finished()) return e;
+        if (finished()) return Single();
         reload();
-        earliest = first_not_empty();
+        fst = first_not_empty();
     }
 
-    for (size_t i = earliest + 1; i < events.size(); i++)
+    for (auto nxt = fst + 1; nxt != events.end(); ++nxt)
     {
-        auto &ev = events[i];
-
-        if (!ev.empty() && ev.front() < events[earliest].front())
-            earliest = i;
+        if (!nxt->empty() && nxt->front() < fst->front())
+            fst = nxt;
     }
 
     nsingles++;
-    e = events[earliest].front();
-    events[earliest].pop_front();
+    Single e = fst->front();
+    fst->pop_front();
     return e;
 }

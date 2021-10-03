@@ -16,16 +16,13 @@ class SinglesMerger
 
     public:
 
-    uint64_t nsingles = 0;
-    uint64_t total_size = 0;
-
+    uint64_t total_size = 0, nsingles = 0;
     SinglesMerger(std::vector<std::string>);
-    operator bool() const;
     void find_rst();
+    operator bool() const;
     bool finished() const;
-    int first_not_empty() const;
     void reload();
-
+    std::vector<std::deque<Single>>::iterator first_not_empty();
     Single next_event();
 };
 

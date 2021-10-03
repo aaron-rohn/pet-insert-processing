@@ -14,7 +14,6 @@ std::deque<Coincidence> CoincidenceSorter::add_event(Single new_ev)
 {
     std::deque<Coincidence> new_coins;
     auto ev = window.begin();
-
     for (; ev != window.end(); ++ev)
     {
         if (new_ev.abs_time - ev->abs_time > width) break;
@@ -23,7 +22,7 @@ std::deque<Coincidence> CoincidenceSorter::add_event(Single new_ev)
             new_coins.emplace_back(new_ev,*ev);
     }
 
-    total_counts += new_coins.size();
+    counts += new_coins.size();
     window.erase(ev, window.end());
     new_ev.abs_time += delay;
     window.push_front(new_ev);

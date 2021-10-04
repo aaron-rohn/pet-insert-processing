@@ -32,6 +32,17 @@ PyInit_petmr(void)
     return PyModule_Create(&petmrmodule);
 }
 
+char *py_to_str(PyObject *obj)
+{
+    if (!PyUnicode_Check(obj))
+    {
+        PyErr_SetString(PyExc_ValueError, "Object is not a unicode string");
+        return NULL;
+    }
+    PyObject *utf8 = PyUnicode_AsUTF8String(obj);
+    return PyBytes_AsString(utf8);
+}
+
 std::vector<std::string>
 pylist_to_strings(PyObject *file_list)
 {
@@ -41,13 +52,7 @@ pylist_to_strings(PyObject *file_list)
     for (int i = 0; i < nfiles; i++)
     {
         PyObject *item = PyList_GetItem(file_list, i);
-        if (!PyUnicode_Check(item))
-        {
-            PyErr_SetString(PyExc_ValueError, "All list items must be strings");
-            break;
-        }
-        PyObject *utf8 = PyUnicode_AsUTF8String(item);
-        cfile_list.push_back(PyBytes_AsString(utf8));
+        cfile_list.push_back(py_to_str(item));
     }
     return cfile_list;
 }
@@ -158,10 +163,20 @@ petmr_singles(PyObject *self, PyObject *args)
 static PyObject *
 petmr_coincidences(PyObject *self, PyObject *args)
 {
-    PyObject *queue, *terminate, *file_list;
+    PyObject *status_queue, *terminate, *file_list, *output_file;
     uint64_t max_events = 0;
-    if (!PyArg_ParseTuple(args, "OOO|K", &terminate, &queue, &file_list, &max_events))
-        return NULL;
+    if (!PyArg_ParseTuple(args, "OOOO|K", &terminate,
+                                          &status_queue,
+                                          &file_list,
+                                          &output_file,
+                                          &max_events)) return NULL;
+
+    char *output_file_str = NULL;
+    if (output_file != Py_None)
+    {
+        output_file_str = py_to_str(output_file);
+        if (PyErr_Occurred()) return NULL;
+    }
 
     auto cfile_list = pylist_to_strings(file_list);
     if (PyErr_Occurred()) return NULL;
@@ -176,8 +191,8 @@ petmr_coincidences(PyObject *self, PyObject *args)
     merger.find_rst();
 
     EventRecords a, b;
-    CoincidenceSorter trues;
     Single ev;
+    CoincidenceSorter trues (output_file_str);
 
     uint64_t processed_bytes = 0;
 
@@ -186,11 +201,17 @@ petmr_coincidences(PyObject *self, PyObject *args)
     {
         ev = merger.next_event();
         auto c_all = trues.add_event(ev);
-
-        for (const auto &c : c_all)
+        if (!trues.file_open())
         {
-            a.append(c.a);
-            b.append(c.b);
+            for (const auto &c : c_all)
+            {
+                a.append(c.a);
+                b.append(c.b);
+            }
+        }
+        else
+        {
+            trues.write_events(c_all);
         }
 
         processed_bytes += SinglesReader::event_size;
@@ -199,7 +220,7 @@ petmr_coincidences(PyObject *self, PyObject *args)
         {
             PyEval_RestoreThread(_save);
             PyObject *term = PyObject_CallMethod(terminate, "is_set", "");
-            PyObject_CallMethod(queue, "put", "((dK))", perc, trues.counts);
+            PyObject_CallMethod(status_queue, "put", "((dK))", perc, trues.counts);
             _save = PyEval_SaveThread();
             if (term == Py_True) break;
         }

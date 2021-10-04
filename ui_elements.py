@@ -1,34 +1,51 @@
+import os
 import threading
 import queue
 import tkinter as tk
 from figures import ThresholdHist, FloodHist
-from data_loader import DataLoaderPopup
+from data_loader import DataLoaderPopup, coincidence_filetypes
+
+class WrappingLabel(tk.Label):
+    def __init__(self, master = None, **kwargs):
+        super().__init__(master, **kwargs)
+        self.bind('<Configure>', lambda e: self.config(wraplength = self.winfo_width()))
 
 class FileSelector:
     def __init__(self, root, cb):
         self.root = root
         self.cb = cb
         self.frame = tk.Frame(self.root)
-        self.button = tk.Button(self.frame, text = "Select file", command = self.load)
-        self.label = tk.Label(self.frame, bg = 'white', text = '', anchor = 'w', relief = tk.SUNKEN, borderwidth = 1, height = 2)
+        self.load_button = tk.Button(self.frame, text = "Select file", command = self.load)
+        self.label = WrappingLabel(self.frame, bg = 'white', text = '', anchor = 'w', relief = tk.SUNKEN, borderwidth = 1, height = 2)
 
         self.sort_coin = tk.IntVar()
         self.coincidences = tk.Checkbutton(self.frame, text = "Sort Coincidences", variable = self.sort_coin)
 
+        self.lower_frame = tk.Frame(self.root)
+        self.store_button = tk.Button(self.lower_frame, text = "Store sorted coincidences", command = self.store, state = tk.DISABLED)
+
     def pack(self):
         self.frame.pack(fill = tk.X, expand = True, padx = 10, pady = 10)
-        self.button.pack(side = tk.LEFT, padx = 10, pady = 10)
+        self.load_button.pack(side = tk.LEFT, padx = 10, pady = 10)
         self.label.pack(side = tk.LEFT, fill = tk.X, expand = True, padx = 10, pady = 10)
         self.coincidences.pack(side = tk.LEFT, padx = 10, pady = 10)
 
-    def load(self):
-        fname = tk.filedialog.askopenfilenames()
-        if fname:
-            coin = self.sort_coin.get()
-            self.label.config(text = fname)
-            self.popup = DataLoaderPopup(self.root, self.button, list(fname), bool(coin), self.cb)
+        self.lower_frame.pack(fill = tk.X, expand = True, padx = 10, pady = 10)
+        self.store_button.pack()
 
-    def set(self, text): self.label.config(text = text)
+    def load(self):
+        try:
+            DataLoaderPopup(self.root, self, self.cb)
+        except ValueError as err:
+            tk.messagebox.showerror(message = str(err))
+
+    def store(self):
+        output_file = tk.filedialog.asksaveasfilename(
+                title = "Output file",
+                initialdir = os.path.expanduser('~'),
+                filetypes = coincidence_filetypes)
+        if output_file:
+            pass
 
 class ScrolledListbox:
     def __init__(self, root):

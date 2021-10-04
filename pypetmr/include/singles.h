@@ -40,6 +40,12 @@ struct Single {
     static inline uint8_t get_module(uint8_t[]);
 };
 
+struct SingleData {
+    double x1, y1, x2, y2, x, y;
+    uint16_t e1, e2;
+    SingleData(const Single&);
+};
+
 class SinglesReader
 {
     public:

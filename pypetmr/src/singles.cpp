@@ -54,6 +54,21 @@ uint8_t Single::get_module(uint8_t data[]) {
     return ((data[0] << 2) | (data[1] >> 6)) & 0xF;
 }
 
+SingleData::SingleData(const Single &s)
+{
+    for (int i = 0; i < 4; i++)
+    {
+        e1 += s.energies[i];
+        e2 += s.energies[i + 4];
+    }
+    x1 = (double)(s.energies[0] + s.energies[1]) / e1;
+    y1 = (double)(s.energies[0] + s.energies[3]) / e1;
+    x2 = (double)(s.energies[4] + s.energies[5]) / e2;
+    y2 = (double)(s.energies[4] + s.energies[7]) / e2;
+    x = x1;
+    y = (y1 + y2) / 2.0;
+}
+
 SinglesReader::SinglesReader (std::string fname):
     fname(fname),
     f(fname, std::ios::binary),

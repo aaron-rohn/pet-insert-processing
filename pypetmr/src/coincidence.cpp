@@ -4,26 +4,20 @@
 
 #include "coincidence.h"
 #include <cmath>
+#include <tuple>
 #include <numpy/ndarraytypes.h>
 #include <numpy/arrayobject.h>
 
-Coincidence::Coincidence(Single ev1, Single ev2) {
-    if (ev1.block < ev2.block) {
-        a = ev1;
-        b = ev2;
-    } else {
-        a = ev2;
-        b = ev1;
-    }
-}
-
 SingleData::SingleData(const Single &s)
 {
+    e1 = 0;
+    e2 = 0;
     for (int i = 0; i < 4; i++)
     {
         e1 += s.energies[i];
         e2 += s.energies[i + 4];
     }
+
     x1 = (double)(s.energies[0] + s.energies[1]) / e1;
     y1 = (double)(s.energies[0] + s.energies[3]) / e1;
     x2 = (double)(s.energies[4] + s.energies[5]) / e2;
@@ -34,17 +28,20 @@ SingleData::SingleData(const Single &s)
     
 CoincidenceData::CoincidenceData(const Single &a, const Single &b)
 {
-    auto sda = SingleData(a), sdb = SingleData(b);
-    blk(a.block, b.block);
-    tdiff((int64_t)a.abs_time - b.abs_time);
-    e_a1(sda.e1);
-    e_a2(sda.e2);
-    e_b1(sdb.e1);
-    e_b2(sdb.e2);
-    x_a(std::round(sda.x * scale));
-    y_a(std::round(sda.y * scale));
-    x_b(std::round(sdb.x * scale));
-    y_b(std::round(sdb.y * scale));
+    const auto &[ev1, ev2] = a.block < b.block ?
+        std::tie(a, b) : std::tie(b, a);
+
+    SingleData sd1(ev1), sd2(ev2);
+    blk(ev1.block, ev2.block);
+    tdiff((int64_t)ev1.abs_time - ev2.abs_time);
+    e_a1(sd1.e1);
+    e_a2(sd1.e2);
+    e_b1(sd2.e1);
+    e_b2(sd2.e2);
+    x_a(std::round(sd1.x * scale));
+    y_a(std::round(sd1.y * scale));
+    x_b(std::round(sd2.x * scale));
+    y_b(std::round(sd2.y * scale));
 }
 
 std::vector<CoincidenceData>
@@ -72,25 +69,23 @@ void CoincidenceData::write(
         std::ofstream &f,
         const std::vector<CoincidenceData> &cd
 ) {
-    auto begin = f.tellp();
     f.write((char*)cd.data(), cd.size()*sizeof(CoincidenceData));
-    std::cout << "Wrote " << f.tellp() - begin << " bytes to file" << std::endl;
 }
 
 PyObject *CoincidenceData::to_py_data(
         const std::vector<CoincidenceData> &cd
 ) {
     PyObject *acols[ncol], *bcols[ncol];
-    npy_intp nr = cd.size(), nrows[] = {nr};
+    npy_intp nrow = cd.size();
     for (size_t i = 0; i < ncol-1; i++)
     {
-        acols[i] = PyArray_SimpleNew(1, nrows, NPY_UINT16);
-        bcols[i] = PyArray_SimpleNew(1, nrows, NPY_UINT16);
+        acols[i] = PyArray_SimpleNew(1, &nrow, NPY_UINT16);
+        bcols[i] = PyArray_SimpleNew(1, &nrow, NPY_UINT16);
     }
-    acols[ncol-1] = PyArray_SimpleNew(1, nrows, NPY_INT16);
-    bcols[ncol-1] = PyArray_SimpleNew(1, nrows, NPY_INT16);
+    acols[ncol-1] = PyArray_SimpleNew(1, &nrow, NPY_INT16);
+    bcols[ncol-1] = PyArray_SimpleNew(1, &nrow, NPY_INT16);
 
-    for (npy_int i = 0; i < nr; i++)
+    for (npy_int i = 0; i < nrow; i++)
     {
         *((uint16_t*)PyArray_GETPTR1(acols[0], i)) = cd[i].blka();
         *((uint16_t*)PyArray_GETPTR1(acols[1], i)) = cd[i].e_a1();
@@ -110,22 +105,13 @@ PyObject *CoincidenceData::to_py_data(
     PyObject *a = PyList_New(ncol), *b = PyList_New(ncol);
     for (size_t i = 0; i < ncol; i++)
     {
-        Py_INCREF(acols[i]);
-        Py_INCREF(bcols[i]);
-
-        // block, e1, e2, x, y
+        // block, e1, e2, x, y, tdiff
         PyList_SetItem(a, i, acols[i]);
         PyList_SetItem(b, i, bcols[i]);
     }
-
-    Py_INCREF(a);
-    Py_INCREF(b);
-
     PyObject *out = PyTuple_New(2);
     PyTuple_SetItem(out, 0, a);
     PyTuple_SetItem(out, 1, b);
-    Py_INCREF(out);
-
     return out;
 }
 
@@ -133,60 +119,78 @@ std::vector<CoincidenceData>
 CoincidenceData::from_py_data(PyObject *obj)
 {
     std::vector<CoincidenceData> cd;
-    if (!PyTuple_Check(obj) || PyTuple_Size(obj) != 2)
-    {
-        PyErr_SetString(PyExc_ValueError, "Object is not a tuple");
-        return cd;
-    }
+    PyObject *a, *b;
+    size_t ncola = 0, ncolb = 0;
+    PyObject *acols[ncol] = {NULL}, *bcols[ncol] = {NULL};
+    npy_intp *ashape, *bshape;
+    npy_intp nrow = 0;
 
-    PyObject *a_df = PyTuple_GetItem(obj, 0);
-    PyObject *b_df = PyTuple_GetItem(obj, 1);
+    // Input must be a tuple with 2 items
+    if (!PyTuple_Check(obj) || PyTuple_Size(obj) != 2) goto error;
 
-    if (!PyList_Check(a_df) || !PyList_Check(b_df))
-    {
-        PyErr_SetString(PyExc_ValueError, "Member of tuple is not a list");
-        return cd;
-    }
+    a = PyTuple_GetItem(obj, 0);
+    b = PyTuple_GetItem(obj, 1);
 
-    size_t ncol_actual = PyList_Size(a_df);
-    std::cout << "Columns: " << ncol_actual << std::endl;
+    // Each tuple member must be a list
+    if (!PyList_Check(a) || !PyList_Check(b)) goto error;
 
-    // Numpy array must be uint16 and contiguous
-    PyObject *acols[ncol], *bcols[ncol];
+    ncola = PyList_Size(a);
+    ncolb = PyList_Size(b);
+
+    // Each list must have 6 members
+    if (ncola != ncol || ncolb != ncol) goto error;
+
     for (size_t i = 0; i < ncol; i++)
     {
-        acols[i] = PyList_GetItem(a_df, i);
-        bcols[i] = PyList_GetItem(b_df, i);
+        acols[i] = PyList_GetItem(a, i);
+        bcols[i] = PyList_GetItem(b, i);
+
+        // Each list item must be a numpy array with one dimension
+        if (PyArray_NDIM(acols[i]) != 1 || PyArray_NDIM(bcols[i]) != 1) goto error;
+
+        ashape = PyArray_DIMS(acols[i]);
+        bshape = PyArray_DIMS(bcols[i]);
+        if (i == 0) nrow = ashape[0];
+
+        // Each array must have the same number of items
+        if (ashape[0] != nrow || bshape[0] != nrow) goto error;
+
+        // The first five items must be uint16, the sixth must be int16
+        if (i < ncol - 1)
+        {
+            if (PyArray_TYPE(acols[i]) != NPY_UINT16 ||
+                PyArray_TYPE(bcols[i]) != NPY_UINT16) goto error;
+        }
+        else
+        {
+            if (PyArray_TYPE(acols[i]) != NPY_INT16 ||
+                PyArray_TYPE(bcols[i]) != NPY_INT16) goto error;
+        }
     }
 
-    // List of arrays must have the shape of a dataframe
-    // All columns must have equal length
-    npy_intp *shape = PyArray_DIMS(acols[0]);
-    int nrow = shape[0];
-    std::cout << "Rows: " << nrow << std::endl;
-
+    std::cout << "Number of coincidences: " << nrow << std::endl;
     cd.resize(nrow);
     
-    for (int i = 0; i < nrow; i++)
+    for (npy_intp i = 0; i < nrow; i++)
     {
-        cd[i].blk(*((uint16_t*)PyArray_GETPTR1(acols[0], i)),
-                  *((uint16_t*)PyArray_GETPTR1(bcols[0], i)));
-
-        cd[i].e_a1(*((uint16_t*)PyArray_GETPTR1(acols[1], i)));
-        cd[i].e_a2(*((uint16_t*)PyArray_GETPTR1(acols[2], i)));
-
-        cd[i].e_b1(*((uint16_t*)PyArray_GETPTR1(bcols[1], i)));
-        cd[i].e_b2(*((uint16_t*)PyArray_GETPTR1(bcols[2], i)));
-
-        cd[i].x_a(*((uint16_t*)PyArray_GETPTR1(acols[3], i)));
-        cd[i].y_a(*((uint16_t*)PyArray_GETPTR1(acols[4], i)));
-
-        cd[i].x_b(*((uint16_t*)PyArray_GETPTR1(bcols[3], i)));
-        cd[i].y_b(*((uint16_t*)PyArray_GETPTR1(bcols[4], i)));
-
-        cd[i].tdiff(*(( int16_t*)PyArray_GETPTR1(acols[5], i)));
+        cd[i].blk(*(uint16_t*)PyArray_GETPTR1(acols[0],i),
+                  *(uint16_t*)PyArray_GETPTR1(bcols[0],i));
+        cd[i].e_a1(*(uint16_t*)PyArray_GETPTR1(acols[1],i));
+        cd[i].e_a2(*(uint16_t*)PyArray_GETPTR1(acols[2],i));
+        cd[i].e_b1(*(uint16_t*)PyArray_GETPTR1(bcols[1],i));
+        cd[i].e_b2(*(uint16_t*)PyArray_GETPTR1(bcols[2],i));
+        cd[i].x_a(*(uint16_t*)PyArray_GETPTR1(acols[3],i));
+        cd[i].y_a(*(uint16_t*)PyArray_GETPTR1(acols[4],i));
+        cd[i].x_b(*(uint16_t*)PyArray_GETPTR1(bcols[3],i));
+        cd[i].y_b(*(uint16_t*)PyArray_GETPTR1(bcols[4],i));
+        cd[i].tdiff(*(int16_t*)PyArray_GETPTR1(acols[5],i));
     }
 
+    return cd;
+
+error:
+
+    PyErr_SetString(PyExc_ValueError, "Invalid format for coincidence data");
     return cd;
 }
 

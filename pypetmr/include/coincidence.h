@@ -2,21 +2,15 @@
 #define COINCIDENCE_H
 
 #include <deque>
-#include <utility>
 #include "singles.h"
 #include "merger.h"
 
 #include <Python.h>
 
-struct Coincidence
-{
-    Single a, b;
-    Coincidence(Single, Single);
-};
-
 struct SingleData {
     double x1, y1, x2, y2, x, y;
-    uint16_t e1, e2;
+    uint16_t e1 = 0, e2 = 0;
+    SingleData() {};
     SingleData(const Single&);
 };
 
@@ -28,8 +22,6 @@ struct CoincidenceData {
     uint16_t data[vals_per_ev] = {0};
 
     CoincidenceData() {};
-    CoincidenceData(const Coincidence& c):
-        CoincidenceData(c.a, c.b) {}
     CoincidenceData(const Single&, const Single&);
 
     static std::vector<CoincidenceData> read(std::string);
@@ -50,7 +42,7 @@ struct CoincidenceData {
     inline uint16_t x_b()  const { return data[8]; }
     inline uint16_t y_b()  const { return data[9]; }
 
-    inline void blk(uint8_t a, uint8_t b) { data[0] = a << 8 | b; }
+    inline void blk(uint16_t a, uint16_t b) { data[0] = (a << 8) | b; }
     inline void tdiff(int16_t t)   { data[1] = *((uint16_t*)(&t)); }
     inline void e_a1(uint16_t val) { data[2] = val; }
     inline void e_a2(uint16_t val) { data[3] = val; }

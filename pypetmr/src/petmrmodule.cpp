@@ -37,6 +37,10 @@ PyInit_petmr(void)
     return PyModule_Create(&petmrmodule);
 }
 
+/*
+ * Helpers to load and store data
+ */
+
 char *py_to_str(PyObject *obj)
 {
     if (!PyUnicode_Check(obj))
@@ -107,6 +111,11 @@ struct EventRecords
     }
 };
 
+/*
+ * Load singles data from several files,
+ * provided in a python list
+ */
+
 static PyObject *
 petmr_singles(PyObject *self, PyObject *args)
 {
@@ -153,6 +162,10 @@ petmr_singles(PyObject *self, PyObject *args)
     return records_list;
 }
 
+/*
+ * Sort coincidences between one or more singles data files
+ */
+
 static PyObject *
 petmr_coincidences(PyObject *self, PyObject *args)
 {
@@ -184,7 +197,7 @@ petmr_coincidences(PyObject *self, PyObject *args)
     merger.find_rst();
 
     Single ev;
-    std::vector<CoincidenceData> coin_data;
+    std::vector<CoincidenceData> coincidence_data;
     CoincidenceSorter trues (output_file_str);
 
     uint64_t processed_bytes = 0;
@@ -193,14 +206,14 @@ petmr_coincidences(PyObject *self, PyObject *args)
     do
     {
         ev = merger.next_event();
-        auto c_all = trues.add_event(ev);
+        auto new_ev = trues.add_event(ev);
 
-        if (c_all.size() > 0)
+        if (new_ev.size() > 0)
         {
             if (!trues.file_open())
-                coin_data.insert(coin_data.end(), c_all.begin(), c_all.end());
+                coincidence_data.insert(coincidence_data.end(), new_ev.begin(), new_ev.end());
             else
-                CoincidenceData::write(trues.output_file, c_all);
+                CoincidenceData::write(trues.output_file, new_ev);
         }
 
         processed_bytes += SinglesReader::event_size;
@@ -218,7 +231,7 @@ petmr_coincidences(PyObject *self, PyObject *args)
     PyEval_RestoreThread(_save);
 
     std::cout << "Number of coincidences: " << trues.counts << std::endl;
-    return CoincidenceData::to_py_data(coin_data);
+    return CoincidenceData::to_py_data(coincidence_data);
 }
 
 static PyObject*

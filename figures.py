@@ -77,7 +77,7 @@ class FloodHist():
     def update(self, data):
         # Image rows (1st coordinate) are the Y value ((A+D)/e)
         # Image cols (2nd coordinate) are the X value ((A+B)/e)
-        self.img,*_ = np.histogram2d(data['y'], data['x1'],
+        self.img,*_ = np.histogram2d(data['y'], data['x'],
                                      bins = self.img_size, range = [[0,1],[0,1]])
         f = fld.Flood(self.img)
         self.pts = f.estimate_peaks().T.reshape(self.npts, self.npts, 2)

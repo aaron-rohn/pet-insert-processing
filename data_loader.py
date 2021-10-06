@@ -1,19 +1,19 @@
 import os
 import threading
 import queue
+import petmr
 import pandas as pd
 import tkinter as tk
+import numpy as np
 from tkinter.ttk import Progressbar
-from petmr import singles, coincidences
 
 singles_filetypes = [("Singles",".SGL")]
 coincidence_filetypes = [("Coincidences",".COIN")]
-col_names = ['block', 'time', 'A1', 'B1', 'C1', 'D1', 'A2', 'B2', 'C2', 'D2']
 
 class DataLoaderPopup:
-    def __init__(self, root, fileselector, callback):
+    def __init__(self, root, fileselector, update_data_cb):
         self.fileselector = fileselector
-        self.callback = callback 
+        self.update_data_cb = update_data_cb 
         self.terminate = threading.Event()
         self.data_queue = queue.Queue()
         self.stat_queue = queue.Queue()
@@ -28,24 +28,27 @@ class DataLoaderPopup:
         _, ext = os.path.splitext(self.input_files[0])
         self.allow_store = False
 
-        if self.fileselector.sort_coin.get():
-            if ext != ".SGL": raise ValueError("Input files must be singles " 
-                                               "when sorting coincidences")
-            self.output_file = tk.filedialog.asksaveasfilename(
-                    title = "Output file, or none",
-                    initialdir = os.path.expanduser('~'),
-                    filetypes = coincidence_filetypes) or None
-            self.bg = threading.Thread(target = self.coincidences)
-            self.allow_store = True
+        if ext == '.COIN':
+            # Just load the coincidences, regardless of coincidence sorting checkbox
+            self.bg = threading.Thread(target = self.load_coincidences)
+
+        elif ext == '.SGL':
+            if self.fileselector.sort_coin.get():
+                # Sort singles to coincidences
+                self.output_file = tk.filedialog.asksaveasfilename(
+                        title = "Output file, or none",
+                        initialdir = os.path.expanduser('~'),
+                        filetypes = coincidence_filetypes) or None
+                self.bg = threading.Thread(target = self.sort_coincidences)
+                self.allow_store = not bool(self.output_file)
+            else:
+                # Just load the singles
+                self.bg = threading.Thread(target = self.load_singles)
 
         else:
-            if ext == ".SGL":
-                self.bg = threading.Thread(target = self.load_singles)
-            elif ext == ".COIN":
-                raise ValueError("Not implemented")
-            else:
-                raise ValueError("Unsupported file type")
-
+            # Got an invalid filetype
+            raise ValueError("Unsupported file type")
+        
         self.popup = tk.Toplevel(root)
         self.popup.title('Progress')
         self.popup.attributes('-type', 'dialog')
@@ -64,7 +67,7 @@ class DataLoaderPopup:
     def check(self):
         while not self.stat_queue.empty():
             perc, counts = self.stat_queue.get()
-            self.counts_label.config(text = 'Counts: ' + f'{counts:,}')
+            self.counts_label.config(text = f'Counts: {counts:,}')
             self.progbar['value'] = perc
 
         if self.bg.is_alive():
@@ -72,7 +75,9 @@ class DataLoaderPopup:
         else:
             if not self.data_queue.empty():
                 d = self.data_queue.get()
-                self.callback(d)
+                self.update_data_cb(d)
+            else:
+                raise RuntimeError("Data loading failed")
 
             self.popup.destroy()
             self.fileselector.store_button.config(
@@ -84,25 +89,39 @@ class DataLoaderPopup:
         self.bg.join()
         self.check()
 
-    def coincidences(self):
-        d = coincidences(self.terminate, self.stat_queue, self.input_files, self.output_file)
-        d = [pd.DataFrame(dict(zip(col_names,di))) for di in d]
-        d = [self.add_cols(di) for di in d]
-        self.data_queue.put(d)
-
     def load_singles(self):
-        d = singles(self.input_files)
-        d = pd.DataFrame(dict(zip(col_names, d)))
-        d = self.add_cols(d)
+        names = ['block', 'time', 'A1', 'B1', 'C1', 'D1', 'A2', 'B2', 'C2', 'D2']
+        d = petmr.singles(self.input_files)
+        d = pd.DataFrame(dict(zip(names, d)))
+        d = d.assign(e1  = lambda df: df.loc[:,'A1':'D1'].sum(axis=1),
+                     e2  = lambda df: df.loc[:,'A2':'D2'].sum(axis=1),
+                     es  = lambda df: df['e1'] + df['e2'],
+                     doi = lambda df: df['e1'] / df['es'],
+                     x1  = lambda df: (df['A1'] + df['B1']) / df['e1'],
+                     y1  = lambda df: (df['A1'] + df['D1']) / df['e1'],
+                     x2  = lambda df: (df['A2'] + df['B2']) / df['e2'],
+                     y2  = lambda df: (df['A2'] + df['D2']) / df['e2'],
+                     x   = lambda df: df['x1'],
+                     y   = lambda df: (df['y1'] + df['y2']) / 2.0)
         self.data_queue.put(d)
 
-    def add_cols(self, d):
-        return d.assign(e1  = lambda df: df.loc[:,'A1':'D1'].sum(axis=1),
-                        e2  = lambda df: df.loc[:,'A2':'D2'].sum(axis=1),
-                        es  = lambda df: df['e1'] + df['e2'],
-                        doi = lambda df: df['e1'] / df['es'],
-                        x1  = lambda df: (df['A1'] + df['B1']) / df['e1'],
-                        y1  = lambda df: (df['A1'] + df['D1']) / df['e1'],
-                        x2  = lambda df: (df['A2'] + df['B2']) / df['e2'],
-                        y2  = lambda df: (df['A2'] + df['D2']) / df['e2'],
-                        y   = lambda df: (df['y1'] + df['y2']) / 2.0)
+    def sort_coincidences(self):
+        ab = petmr.coincidences(self.terminate, self.stat_queue, self.input_files, self.output_file)
+        d = self.prepare_coincidences(ab)
+        self.data_queue.put((ab, d))
+
+    def load_coincidences(self):
+        d = [petmr.load(f) for f in self.input_files];
+        d = [self.prepare_coincidences(di) for di in d]
+        d = pd.concat(d, ignore_index = True)
+        self.data_queue.put(d)
+
+    def prepare_coincidences(self, ab):
+        names = ['block', 'e1', 'e2', 'x', 'y', 'tdiff']
+        d = [pd.DataFrame(np.column_stack(a), columns = names) for a in ab]
+        d = pd.concat(d, ignore_index = True)
+        d = d.assign(x   = lambda df: df['x'] / 511,
+                     y   = lambda df: df['y'] / 511,
+                     es  = lambda df: df['e1'] + df['e2'],
+                     doi = lambda df: df['e1'] / df['es'])
+        return d

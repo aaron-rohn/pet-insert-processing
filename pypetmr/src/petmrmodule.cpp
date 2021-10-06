@@ -1,4 +1,5 @@
 #define PY_SSIZE_T_CLEAN
+#define PY_ARRAY_UNIQUE_SYMBOL petmr_ARRAY_API
 
 #include <iostream>
 #include <cinttypes>
@@ -14,10 +15,14 @@
 
 static PyObject *petmr_singles(PyObject*, PyObject*);
 static PyObject *petmr_coincidences(PyObject*, PyObject*);
+static PyObject *petmr_load(PyObject*, PyObject*);
+static PyObject *petmr_store(PyObject*, PyObject*);
 
 static PyMethodDef petmrMethods[] = {
     {"singles", petmr_singles, METH_VARARGS, "read PET/MRI insert singles data"},
     {"coincidences", petmr_coincidences, METH_VARARGS, "read PET/MRI insert singles data, and sort coincidences"},
+    {"load", petmr_load, METH_VARARGS, "Load coincidence listmode data"},
+    {"store", petmr_store, METH_VARARGS, "Store coincidence listmode data"},
     {NULL, NULL, 0, NULL}
 };
 
@@ -81,36 +86,24 @@ struct EventRecords
         PyObject *lst = PyList_New(energies.size() + 2);
         PyObject *arr = NULL;
 
-        long int nl = n;
-
-        if (!lst) goto cleanup;
+        long nl = n;
 
         arr = PyArray_SimpleNew(1, &nl, NPY_UINT8);
-        if (!arr) goto cleanup;
         std::memcpy(PyArray_DATA(arr), blk.data(), nl*sizeof(uint8_t));
         PyList_SetItem(lst, 0, arr);
 
         arr = PyArray_SimpleNew(1, &nl, NPY_UINT64);
-        if (!arr) goto cleanup;
         std::memcpy(PyArray_DATA(arr), TT.data(), nl*sizeof(uint64_t));
         PyList_SetItem(lst, 1, arr);
 
         for (size_t i = 0; i < energies.size(); i++)
         {
             arr = PyArray_SimpleNew(1, &nl, NPY_UINT16);
-            if (!arr) goto cleanup;
             std::memcpy(PyArray_DATA(arr), energies[i].data(), nl*sizeof(uint16_t));
             PyList_SetItem(lst, 2 + i, arr);
         }
 
         return lst;
-
-cleanup:
-        for (size_t i = 0; lst && (i < energies.size() + 1); i++)
-            Py_XDECREF(PyList_GetItem(lst, i));
-        Py_XDECREF(arr);
-        Py_XDECREF(lst);
-        return NULL;
     }
 };
 
@@ -190,8 +183,8 @@ petmr_coincidences(PyObject *self, PyObject *args)
 
     merger.find_rst();
 
-    EventRecords a, b;
     Single ev;
+    std::vector<CoincidenceData> coin_data;
     CoincidenceSorter trues (output_file_str);
 
     uint64_t processed_bytes = 0;
@@ -201,17 +194,13 @@ petmr_coincidences(PyObject *self, PyObject *args)
     {
         ev = merger.next_event();
         auto c_all = trues.add_event(ev);
-        if (!trues.file_open())
+
+        if (c_all.size() > 0)
         {
-            for (const auto &c : c_all)
-            {
-                a.append(c.a);
-                b.append(c.b);
-            }
-        }
-        else
-        {
-            trues.write_events(c_all);
+            if (!trues.file_open())
+                coin_data.insert(coin_data.end(), c_all.begin(), c_all.end());
+            else
+                CoincidenceData::write(trues.output_file, c_all);
         }
 
         processed_bytes += SinglesReader::event_size;
@@ -229,19 +218,36 @@ petmr_coincidences(PyObject *self, PyObject *args)
     PyEval_RestoreThread(_save);
 
     std::cout << "Number of coincidences: " << trues.counts << std::endl;
+    return CoincidenceData::to_py_data(coin_data);
+}
 
-    PyObject *a_lst = a.to_list();
-    PyObject *b_lst = b.to_list();
-    PyObject *ab = PyTuple_New(2);
-    if (!a_lst || !b_lst || !ab)
-    {
-        Py_XDECREF(a_lst);
-        Py_XDECREF(b_lst);
-        PyErr_SetString(PyExc_Exception, "Failed to create numpy array");
+static PyObject*
+petmr_load(PyObject *self, PyObject *args)
+{
+    const char *fname;
+    if (!PyArg_ParseTuple(args, "s", &fname))
         return NULL;
-    }
 
-    PyTuple_SetItem(ab, 0, a_lst);
-    PyTuple_SetItem(ab, 1, b_lst);
-    return ab;
+    auto cd = CoincidenceData::read(std::string(fname));
+    PyObject *df = CoincidenceData::to_py_data(cd);
+    if (PyErr_Occurred()) return NULL;
+
+    return df;
+}
+
+static PyObject*
+petmr_store(PyObject *self, PyObject *args)
+{
+    const char *fname;
+    PyObject *df;
+    if (!PyArg_ParseTuple(args, "sO", &fname, &df))
+        return NULL;
+
+    auto cd = CoincidenceData::from_py_data(df);
+    if (PyErr_Occurred()) return NULL;
+
+    std::ofstream f(fname);
+    CoincidenceData::write(f, cd);
+
+    Py_RETURN_NONE;
 }

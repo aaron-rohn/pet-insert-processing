@@ -1,6 +1,5 @@
 import os
-import threading
-import queue
+import petmr
 import tkinter as tk
 from figures import ThresholdHist, FloodHist
 from data_loader import DataLoaderPopup, coincidence_filetypes
@@ -11,9 +10,10 @@ class WrappingLabel(tk.Label):
         self.bind('<Configure>', lambda e: self.config(wraplength = self.winfo_width()))
 
 class FileSelector:
-    def __init__(self, root, cb):
+    def __init__(self, root, get_data_cb, update_data_cb):
         self.root = root
-        self.cb = cb
+        self.get_data_cb = get_data_cb
+        self.update_data_cb = update_data_cb 
         self.frame = tk.Frame(self.root)
         self.load_button = tk.Button(self.frame, text = "Select file", command = self.load)
         self.label = WrappingLabel(self.frame, bg = 'white', text = '', anchor = 'w', relief = tk.SUNKEN, borderwidth = 1, height = 2)
@@ -35,17 +35,20 @@ class FileSelector:
 
     def load(self):
         try:
-            DataLoaderPopup(self.root, self, self.cb)
-        except ValueError as err:
-            tk.messagebox.showerror(message = str(err))
+            DataLoaderPopup(self.root, self, self.update_data_cb)
+        except (ValueError, RuntimeError) as err:
+            tk.messagebox.showerror(message = f'{type(err).__name__}: {" ".join(err.args)}')
 
     def store(self):
         output_file = tk.filedialog.asksaveasfilename(
                 title = "Output file",
                 initialdir = os.path.expanduser('~'),
                 filetypes = coincidence_filetypes)
-        if output_file:
-            pass
+
+        d = self.get_data_cb(original = True)
+
+        if output_file and d:
+            petmr.store(output_file, d)
 
 class ScrolledListbox:
     def __init__(self, root):
@@ -63,7 +66,7 @@ class ScrolledListbox:
 
     def get(self): return self.active.get(tk.ANCHOR)
     def set(self, blks): return self.active_var.set(blks)
-    def bind(self, cb): self.active.bind('<<ListboxSelect>>', cb)
+    def bind(self, new_block_cb): self.active.bind('<<ListboxSelect>>', new_block_cb)
 
 class Plots:
     def __init__(self, root, data, block):

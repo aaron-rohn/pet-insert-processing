@@ -55,13 +55,12 @@ char *py_to_str(PyObject *obj)
 std::vector<std::string>
 pylist_to_strings(PyObject *file_list)
 {
-    PyErr_Clear();
     std::vector<std::string> cfile_list;
     int nfiles = PyList_Size(file_list);
     for (int i = 0; i < nfiles; i++)
     {
         PyObject *item = PyList_GetItem(file_list, i);
-        cfile_list.push_back(py_to_str(item));
+        cfile_list.emplace_back(py_to_str(item));
     }
     return cfile_list;
 }
@@ -119,36 +118,29 @@ struct EventRecords
 static PyObject *
 petmr_singles(PyObject *self, PyObject *args)
 {
-    PyObject *file_list;
+    const char *fname;
     uint64_t max_events = 0;
-    if (!PyArg_ParseTuple(args, "O|K", &file_list, &max_events))
+    if (!PyArg_ParseTuple(args, "s|K", &fname, &max_events))
         return NULL;
-
-    auto cfile_list = pylist_to_strings(file_list);
-    if (PyErr_Occurred()) return NULL;
 
     EventRecords records;
 
-    Py_BEGIN_ALLOW_THREADS
-    for (auto fname : cfile_list)
+    SinglesReader reader(fname);
+    if (!reader) 
     {
-        // Open file and determine length
-        SinglesReader reader(fname);
-        if (!reader) 
-        {
-            PyErr_SetFromErrno(PyExc_IOError);
-            return NULL;
-        }
+        PyErr_SetFromErrno(PyExc_IOError);
+        return NULL;
+    }
 
-        // read file contents until EOF or max_events
-        while (reader.read())
-        {
-            if (max_events && reader.nsingles > max_events) break;
+    Py_BEGIN_ALLOW_THREADS
+    // read file contents until EOF or max_events
+    while (reader.read())
+    {
+        if (max_events && reader.nsingles > max_events) break;
 
-            if (reader.is_single)
-            {
-                records.append(reader.single);
-            }
+        if (reader.is_single)
+        {
+            records.append(reader.single);
         }
     }
     Py_END_ALLOW_THREADS
@@ -242,10 +234,7 @@ petmr_load(PyObject *self, PyObject *args)
         return NULL;
 
     auto cd = CoincidenceData::read(std::string(fname));
-    PyObject *df = CoincidenceData::to_py_data(cd);
-    if (PyErr_Occurred()) return NULL;
-
-    return df;
+    return CoincidenceData::to_py_data(cd);
 }
 
 static PyObject*

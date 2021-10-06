@@ -10,6 +10,17 @@ from tkinter.ttk import Progressbar
 singles_filetypes = [("Singles",".SGL")]
 coincidence_filetypes = [("Coincidences",".COIN")]
 
+def coincidence_to_df(lst_of_arrays):
+    names = ['block', 'e1', 'e2', 'x', 'y', 'tdiff']
+    return pd.DataFrame(np.column_stack(lst_of_arrays), columns = names)
+
+def prepare_coincidences(d):
+    """ Add the columns necessary for plotting to the coincidence dataframe """
+    return d.assign(x   = lambda df: df['x'] / 511,
+                    y   = lambda df: df['y'] / 511,
+                    es  = lambda df: df['e1'] + df['e2'],
+                    doi = lambda df: df['e1'] / df['es'])
+
 class DataLoaderPopup:
     def __init__(self, root, fileselector, update_data_cb):
         self.fileselector = fileselector
@@ -60,39 +71,55 @@ class DataLoaderPopup:
 
         self.fileselector.label.config(text = self.input_files)
         self.fileselector.load_button.config(state = tk.DISABLED)
-        self.fileselector.store_button.config(state = tk.DISABLED)
+        self.fileselector.store_coincidence_data.config(state = tk.DISABLED)
         self.bg.start()
         self.check()
 
-    def check(self):
+    def check(self, interval = 1000):
+        """ Check (in the UI thread) if the data loader thread has
+        completed. When implemented, update the status information
+        in the popup.
+        Once the thread is completed, retrieve the result from the
+        data queue, return it to the caller via the provided callback,
+        update UI elements to reflect the exit state, and finish
+        """
         while not self.stat_queue.empty():
             perc, counts = self.stat_queue.get()
             self.counts_label.config(text = f'Counts: {counts:,}')
             self.progbar['value'] = perc
 
         if self.bg.is_alive():
-            self.popup.after(1000, self.check)
+            self.popup.after(interval, self.check)
         else:
             if not self.data_queue.empty():
                 d = self.data_queue.get()
                 self.update_data_cb(d)
             else:
-                raise RuntimeError("Data loading failed")
+                self.update_data_cb(RuntimeError("Data loading failed"))
+                self.allow_store = False
 
             self.popup.destroy()
-            self.fileselector.store_button.config(
+            self.fileselector.store_coincidence_data.config(
                     state = tk.NORMAL if self.allow_store else tk.DISABLED)
             self.fileselector.load_button.config(state = tk.NORMAL)
 
     def on_close(self):
+        """ If the popup is asked to close before the background thread has completed,
+        ask the background thread to exit gracefully, then check for any output data
+        before returning
+        """
         self.terminate.set()
         self.bg.join()
         self.check()
 
     def load_singles(self):
+        """ Load singles data from one or more .SGL files. If multiple files are provided,
+        the data will be concatenated into a single dataframe
+        """
         names = ['block', 'time', 'A1', 'B1', 'C1', 'D1', 'A2', 'B2', 'C2', 'D2']
-        d = petmr.singles(self.input_files)
-        d = pd.DataFrame(dict(zip(names, d)))
+        d = [petmr.singles(f) for f in self.input_files]
+        d = [pd.DataFrame(dict(zip(names, di))) for di in d]
+        d = pd.concat(d, ignore_index = True)
         d = d.assign(e1  = lambda df: df.loc[:,'A1':'D1'].sum(axis=1),
                      e2  = lambda df: df.loc[:,'A2':'D2'].sum(axis=1),
                      es  = lambda df: df['e1'] + df['e2'],
@@ -106,22 +133,29 @@ class DataLoaderPopup:
         self.data_queue.put(d)
 
     def sort_coincidences(self):
+        """ Load coincicdence data by sorting the events in one or more singles files. If
+        multiple files are provided, they must be time-aligned from a single acquisition
+        """
+        # (a,b) -> [a_df, b_df] -> ab_df
         ab = petmr.coincidences(self.terminate, self.stat_queue, self.input_files, self.output_file)
-        d = self.prepare_coincidences(ab)
+        d = [coincidence_to_df(c) for c in ab]
+        d = pd.concat(d, ignore_index = True)
+        d = prepare_coincidences(d)
         self.data_queue.put((ab, d))
 
     def load_coincidences(self):
+        """ Load coincidence data from a file on disk. If multiple file are provided,
+        the dataframes will be concatenated
+        """
         d = [petmr.load(f) for f in self.input_files];
-        d = [self.prepare_coincidences(di) for di in d]
+
+        # change lists of np arrays to dataframes
+        for idx, elem in enumerate(d):
+            d[idx] = tuple(coincidence_to_df(a_or_b) for a_or_b in elem)
+
+        # [(a,b), (a,b), ...] -> [(a,a,...), (b,b,...)] -> [a_all, b_all] -> ab_all
+        d = [pd.concat(all_a_or_b) for all_a_or_b in zip(*d)]
         d = pd.concat(d, ignore_index = True)
+        d = prepare_coincidences(d)
         self.data_queue.put(d)
 
-    def prepare_coincidences(self, ab):
-        names = ['block', 'e1', 'e2', 'x', 'y', 'tdiff']
-        d = [pd.DataFrame(np.column_stack(a), columns = names) for a in ab]
-        d = pd.concat(d, ignore_index = True)
-        d = d.assign(x   = lambda df: df['x'] / 511,
-                     y   = lambda df: df['y'] / 511,
-                     es  = lambda df: df['e1'] + df['e2'],
-                     doi = lambda df: df['e1'] / df['es'])
-        return d

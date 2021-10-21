@@ -18,6 +18,9 @@ class FloodHist():
         else:
             self.pts[self.selection[0],:,1] = loc[1]
             self.pts[:,self.selection[1],0] = loc[0]
+            self.pts.sort(0)
+            self.pts.sort(1)
+            self.pts = np.flip(self.pts, (0,1))
             self.selection = None
 
         self.redraw()
@@ -59,7 +62,7 @@ class FloodHist():
 
         self.plot.clear()
 
-        vor = Voronoi(self.pts.reshape(self.npts**2,2))
+        vor = Voronoi(self.pts.reshape(-1,2))
         voronoi_plot_2d(vor, ax = self.plot, 
                 show_vertices = False, 
                 show_points = False, 
@@ -79,8 +82,8 @@ class FloodHist():
         # Image cols (2nd coordinate) are the X value ((A+B)/e)
         self.img,*_ = np.histogram2d(data['y'], data['x'],
                                      bins = self.img_size, range = [[0,1],[0,1]])
-        f = fld.Flood(self.img)
-        self.pts = f.estimate_peaks().T.reshape(self.npts, self.npts, 2)
+        self.f = fld.Flood(self.img)
+        self.pts = self.f.estimate_peaks().T.reshape(self.npts, self.npts, 2)
         self.pts_active = np.zeros((self.npts, self.npts), dtype = bool)
         self.redraw()
 
@@ -98,6 +101,7 @@ class FloodHist():
         self.pts = np.zeros((self.npts, self.npts, 2))
         self.pts_active = np.zeros((self.npts, self.npts), dtype = bool)
 
+        self.f = None
         self.img = np.zeros((self.img_size,self.img_size))
         self.canvas.mpl_connect('button_press_event', self.click)
 
@@ -111,8 +115,8 @@ class ThresholdHist():
         if retain:
             rng = last_rng
         elif self.is_energy:
-            pk = bins[np.argmax(bins[:-1] * n**2)]
-            rng = [(1-self.e_window)*pk, (1+self.e_window)*pk]
+            self.peak = bins[np.argmax(bins[:-1] * n**2)]
+            rng = [(1-self.e_window)*self.peak, (1+self.e_window)*self.peak]
 
         self.init_lines(rng)
         self.canvas.draw()
@@ -147,6 +151,7 @@ class ThresholdHist():
     def __init__(self, frame, is_energy, **kwargs):
         self.is_energy = is_energy
         self.e_window = 0.2
+        self.peak = None
 
         self.fig = Figure()
         self.plot = self.fig.add_subplot()

@@ -1,8 +1,13 @@
 import os
 import petmr
+import threading
+import numpy as np
 import tkinter as tk
+from flood import nearest_peak
 from figures import ThresholdHist, FloodHist
 from data_loader import DataLoaderPopup, coincidence_filetypes
+
+import time
 
 class WrappingLabel(tk.Label):
     def __init__(self, master = None, **kwargs):
@@ -12,30 +17,25 @@ class WrappingLabel(tk.Label):
 class FileSelector:
     def __init__(self, root, get_data_cb, update_data_cb):
         self.root = root
+        self.sort_coin = tk.IntVar()
+
+        """ callbacks to get the reference data from the caller,
+        or to set the reference data held by the caller """
         self.get_data_cb = get_data_cb
         self.update_data_cb = update_data_cb 
-        self.sort_coin = tk.IntVar()
 
         self.frame = tk.Frame(self.root)
         self.load_button = tk.Button(self.frame, text = "Select file", command = self.load)
         self.label = WrappingLabel(self.frame, bg = 'white', text = '', anchor = 'w', relief = tk.SUNKEN, borderwidth = 1, height = 5)
         self.coincidences = tk.Checkbutton(self.frame, text = "Sort Coincidences", variable = self.sort_coin)
-
-        self.lower_frame = tk.Frame(self.root)
-        self.store_coincidence_data = tk.Button(self.lower_frame, text = "Store sorted coincidences", command = self.store, state = tk.DISABLED)
-        self.store_this_flood = tk.Button(self.lower_frame, text = "Store this flood", command = lambda: None)
-        self.store_all_floods = tk.Button(self.lower_frame, text = "Store all floods", command = lambda: None)
+        self.store_coincidence_data = tk.Button(self.frame, text = "Store sorted coincidences", command = self.store, state = tk.DISABLED)
 
     def pack(self):
         self.frame.pack(fill = tk.X, expand = True, padx = 10, pady = 10)
         self.load_button.pack(side = tk.LEFT, padx = 5, pady = 10)
         self.label.pack(side = tk.LEFT, fill = tk.X, expand = True, padx = 5, pady = 10)
         self.coincidences.pack(side = tk.LEFT, padx = 5, pady = 10)
-
-        self.lower_frame.pack();
         self.store_coincidence_data.pack(side = tk.LEFT, padx = 5)
-        self.store_this_flood.pack(side = tk.LEFT, padx = 5)
-        self.store_all_floods.pack(side = tk.LEFT, padx = 5)
 
     def loading_error(self, err):
         tk.messagebox.showerror(message = f'{type(err).__name__}: {" ".join(err.args)}')
@@ -77,27 +77,37 @@ class ScrolledListbox:
     def __init__(self, root):
         self.root = root
         self.frame = tk.Frame(self.root)
-        self.active_var = tk.StringVar()
-        self.active = tk.Listbox(self.frame, listvariable = self.active_var)
+        self.active_var = tk.Variable()
+        self.active = tk.Listbox(self.frame, listvariable = self.active_var, exportselection = False)
         self.scroll = tk.Scrollbar(self.frame, orient = tk.VERTICAL, command = self.active.yview)
         self.active.config(yscrollcommand = self.scroll.set)
 
     def pack(self):
-        self.frame.pack(fill = tk.X, expand = True, padx = 10, pady = 10)
+        self.frame.pack(fill = tk.X, expand = True, padx = 10)
         self.active.pack(fill = tk.X, expand = True, side = tk.LEFT)
         self.scroll.pack(fill = tk.Y, side = tk.RIGHT)
 
-    def get(self): return self.active.get(tk.ANCHOR)
+    def get(self, selected = True):
+        return self.active.get(tk.ANCHOR) if selected else self.active_var.get()
+
     def set(self, blks): return self.active_var.set(blks)
-    def bind(self, new_block_cb): self.active.bind('<<ListboxSelect>>', new_block_cb)
+    def bind(self, new_block_cb):
+        self.active.bind('<<ListboxSelect>>', new_block_cb)
 
 class Plots:
-    def __init__(self, root, data, block):
+    def __init__(self, root, data, get_block):
         self.data = data    # callback to get the current data frame
-        self.block = block  # callback to get the selected block
+        self.get_block = get_block  # callback to get the selected block
+
+        self.button_frame = tk.Frame(root)
+        self.store_this_flood = tk.Button(self.button_frame, text = "Store this flood", command = self.store_this_flood_cb)
+        self.store_all_floods = tk.Button(self.button_frame, text = "Store all floods", command = self.store_all_floods_cb)
+        self.button_frame.pack(pady = 10);
+        self.store_this_flood.pack(side = tk.LEFT, padx = 5)
+        self.store_all_floods.pack(side = tk.LEFT, padx = 5)
 
         self.frame = tk.Frame(root)
-        self.frame.pack(side = tk.TOP, fill = tk.BOTH, expand = True, padx = 10, pady = 10)
+        self.frame.pack()
         self.frame.columnconfigure(0, weight = 1)
         self.frame.columnconfigure(1, weight = 1)
         self.frame.columnconfigure(2, weight = 1)
@@ -113,9 +123,9 @@ class Plots:
         self.doi.callback.append(self.flood_cb)
         self.doi.callback.append(self.energy_cb)
 
-    def plots_update(self, ev):
+    def plots_update(self, *args):
         """ Update all plots when new data is available """
-        self.d = self.data().get_group(self.block())
+        self.d = self.data().get_group(self.get_block())
 
         self.energy.update(self.d['es'], retain = False)
         self.doi_cb(retain = False)
@@ -139,3 +149,26 @@ class Plots:
         dth = self.doi.thresholds()
         data_subset = self.d.query('{} < doi < {}'.format(*dth))
         self.energy.update(data_subset['es'], retain)
+
+    def store_this_flood_cb(self, output_dir = None):
+        if self.flood.f is not None:
+
+            if output_dir is None:
+                output_dir = tk.filedialog.askdirectory(
+                        title = "Configuration data directory",
+                        initialdir = os.path.expanduser('~'))
+
+            if output_dir:
+                lut = nearest_peak((self.flood.img_size,)*2,
+                        self.flood.pts.reshape(-1,2))
+                blk = self.get_block()
+                fname = os.path.join(output_dir, f'block{blk}.lut')
+                lut.astype(np.intc).tofile(fname)
+
+    def store_all_floods_cb(self):
+        output_dir = tk.filedialog.askdirectory(
+                title = "Configuration data directory",
+                initialdir = os.path.expanduser('~'))
+
+        if output_dir:
+            pass

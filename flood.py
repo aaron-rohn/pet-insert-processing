@@ -4,14 +4,21 @@ from scipy import ndimage, signal
 from scipy.spatial import Voronoi, voronoi_plot_2d, KDTree
 import matplotlib.pyplot as plt
 
+def nearest_peak(shape, pks):
+    tree = KDTree(pks)
+    x,y = [np.arange(l) for l in shape]
+    grid = np.array(np.meshgrid(y,x)).reshape(2, np.prod(shape))
+    _,nearest = tree.query(grid.T, workers = -1, distance_upper_bound = 30)
+    nearest = nearest.reshape(shape)
+    return nearest
+
 class Flood():
     def __init__(self, f, ksize = 1):
         if isinstance(f, str):
             self.fld = np.fromfile(f, 'int32').reshape((512,512))
         else:
-            self.fld = f
+            self.fld = np.copy(f)
 
-        #self.fld0 = np.copy(self.fld)
         self.fld = self.fld.astype('double')
         self.fld = self.log_filter(ksize)
 
@@ -101,34 +108,12 @@ class Flood():
         rows = self.find_1d_peaks(1)[::-1]
         cols = self.find_1d_peaks(0)
         pks = np.array(np.meshgrid(cols,rows)).reshape(2, len(rows)*len(cols))
-
-        """
-        plt.imshow(self.fld0)
-        plt.scatter(*pks, s = 4, color = 'red')
-        plt.show()
-        """
-
         return pks
 
-    def nearest_peak(self, pks):
-        x,y = [np.arange(l) for l in self.fld.shape]
-        grid = np.array(np.meshgrid(y,x)).reshape(2, np.prod(self.fld.shape))
-        tree = KDTree(pks.T)
-        _,nearest = tree.query(grid.T, workers = -1, distance_upper_bound = 30)
-        nearest = nearest.reshape(self.fld.shape)
-
-        """
-        plt.imshow(nearest % 25 + self.fld)
-        plt.gca().invert_yaxis()
-        plt.show()
-        """
-
-        return nearest
 
 if __name__ == "__main__":
     floods = glob.glob("/home/aaron/Downloads/block_*.raw")
     for f in floods:
         print(f)
         fld = Flood(f)
-        pks = fld.estimate_peaks()
-        fld.nearest_peak(pks)
+        fld.estimate_peaks()

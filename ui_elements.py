@@ -10,9 +10,13 @@ from data_loader import DataLoaderPopup, coincidence_filetypes
 import time
 
 class WrappingLabel(tk.Label):
+    def reconfig(self, *args, **kwds):
+        width = self.winfo_width()
+        self.config(wraplength = width)
+
     def __init__(self, master = None, **kwargs):
         super().__init__(master, **kwargs)
-        self.bind('<Configure>', lambda e: self.config(wraplength = self.winfo_width()))
+        self.bind('<Configure>', self.reconfig)
 
 class FileSelector:
     def __init__(self, root, get_data_cb, update_data_cb):
@@ -87,17 +91,30 @@ class ScrolledListbox:
         self.active.pack(fill = tk.X, expand = True, side = tk.LEFT)
         self.scroll.pack(fill = tk.Y, side = tk.RIGHT)
 
-    def get(self, selected = True):
-        return self.active.get(tk.ANCHOR) if selected else self.active_var.get()
+    def get_active(self, all_blocks = False):
+        all_items = self.active_var.get()
+        if all_blocks: return all_items
 
-    def set(self, blks): return self.active_var.set(blks)
+        sel = self.active.curselection()
+        return sel[0] if len(sel) == 1 else None
+
+    def set_active(self, position = None):
+        self.active.select_clear(0, tk.END)
+        if position is not None:
+            self.active.selection_set(position)
+            self.active.activate(position)
+
+    def set(self, blks):
+        return self.active_var.set(blks)
+
     def bind(self, new_block_cb):
         self.active.bind('<<ListboxSelect>>', new_block_cb)
 
 class Plots:
-    def __init__(self, root, data, get_block):
-        self.data = data    # callback to get the current data frame
-        self.get_block = get_block  # callback to get the selected block
+    def __init__(self, root, data, get_block, set_block):
+        self.data = data           # callback to get the current data frame
+        self.get_block = get_block # callback to get the selected block
+        self.set_block = set_block # callback to set the selected block
 
         self.button_frame = tk.Frame(root)
         self.store_this_flood = tk.Button(self.button_frame, text = "Store this flood", command = self.store_this_flood_cb)
@@ -125,7 +142,8 @@ class Plots:
 
     def plots_update(self, *args):
         """ Update all plots when new data is available """
-        self.d = self.data().get_group(self.get_block())
+        blk = self.get_block()
+        self.d = self.data().get_group(blk)
 
         self.energy.update(self.d['es'], retain = False)
         self.doi_cb(retain = False)
@@ -151,24 +169,36 @@ class Plots:
         self.energy.update(data_subset['es'], retain)
 
     def store_this_flood_cb(self, output_dir = None):
-        if self.flood.f is not None:
+        if self.flood.f is None: return
 
-            if output_dir is None:
-                output_dir = tk.filedialog.askdirectory(
-                        title = "Configuration data directory",
-                        initialdir = os.path.expanduser('~'))
+        if output_dir is None:
+            output_dir = tk.filedialog.askdirectory(
+                    title = "Configuration data directory",
+                    initialdir = os.path.expanduser('~'))
 
-            if output_dir:
-                lut = nearest_peak((self.flood.img_size,)*2,
-                        self.flood.pts.reshape(-1,2))
-                blk = self.get_block()
-                fname = os.path.join(output_dir, f'block{blk}.lut')
-                lut.astype(np.intc).tofile(fname)
+        if not output_dir: return
+
+        lut = nearest_peak((self.flood.img_size,)*2,
+                self.flood.pts.reshape(-1,2))
+
+        blk = self.get_block()
+        fname = os.path.join(output_dir, f'block{blk}.lut')
+        lut.astype(np.intc).tofile(fname)
 
     def store_all_floods_cb(self):
         output_dir = tk.filedialog.askdirectory(
                 title = "Configuration data directory",
                 initialdir = os.path.expanduser('~'))
+        if not output_dir: return
 
-        if output_dir:
-            pass
+        all_blocks = self.get_block(all_blocks = True)
+        sel_idx = self.get_block() or 0
+
+        for idx,blk in enumerate(all_blocks):
+
+            if idx < sel_idx: continue
+
+            self.set_block(idx)
+            self.plots_update()
+            self.frame.update()
+            self.store_this_flood_cb(output_dir)

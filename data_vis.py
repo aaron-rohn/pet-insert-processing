@@ -26,8 +26,8 @@ class App():
 
     """ Allow member elements to query the current data or selected block """
     def return_data(self, original = False): return self.original if original else self.d
-    def return_block(self, *args, **kwds): return self.block.get(*args, **kwds)
-    #def set_block(self, *args, **kwds): return self.block.set_active(*args, **kwds)
+    def return_block(self, *args, **kwds): return self.block.get_active(*args, **kwds)
+    def set_block(self, *args, **kwds): return self.block.set_active(*args, **kwds)
 
     def __init__(self, root):
         self.original = None
@@ -37,7 +37,7 @@ class App():
         self.block = ScrolledListbox(root)
         self.file.pack()
         self.block.pack()
-        self.plots = Plots(root, self.return_data, self.return_block) #, self.set_block)
+        self.plots = Plots(root, self.return_data, self.return_block, self.set_block)
         self.block.bind(self.plots.plots_update)
 
 root = tk.Tk()

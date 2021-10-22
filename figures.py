@@ -115,8 +115,12 @@ class ThresholdHist():
         if retain:
             rng = last_rng
         elif self.is_energy:
+            # search for the photopeak
             self.peak = bins[np.argmax(bins[:-1] * n**2)]
             rng = [(1-self.e_window)*self.peak, (1+self.e_window)*self.peak]
+        else:
+            # DOI histogram - take 50% central counts
+            rng = np.quantile(data, [0.1, 0.9])
 
         self.init_lines(rng)
         self.canvas.draw()

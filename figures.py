@@ -7,6 +7,8 @@ from scipy.spatial import Voronoi, voronoi_plot_2d
 
 class FloodHist():
     def click(self, ev):
+        if self.pts is None: return
+
         loc = np.array([ev.xdata, ev.ydata])
         self.pts_active = np.zeros((self.npts, self.npts), dtype = bool)
 
@@ -26,6 +28,10 @@ class FloodHist():
         self.redraw()
 
     def redraw(self):
+        self.plot.clear()
+
+        if self.pts is None: return
+
         active = self.pts[self.pts_active].T
         inactive = self.pts[~self.pts_active].T
 
@@ -59,8 +65,6 @@ class FloodHist():
         System is inserted through MRI cabinet in rear
 
         """
-
-        self.plot.clear()
 
         vor = Voronoi(self.pts.reshape(-1,2))
         voronoi_plot_2d(vor, ax = self.plot, 
@@ -97,12 +101,12 @@ class FloodHist():
         self.canvas.draw()
         self.canvas.get_tk_widget().grid(**kwargs)
 
-        self.selection = None
-        self.pts = np.zeros((self.npts, self.npts, 2))
-        self.pts_active = np.zeros((self.npts, self.npts), dtype = bool)
-
-        self.f = None
         self.img = np.zeros((self.img_size,self.img_size))
+        self.f = None
+        self.selection = None
+        self.pts = None
+        self.pts_active = None
+
         self.canvas.mpl_connect('button_press_event', self.click)
 
 class ThresholdHist():
@@ -112,11 +116,15 @@ class ThresholdHist():
         rng = np.quantile(data, [0.01, 0.99])
         n,bins,_ = self.plot.hist(data, bins = 512, range = rng)
 
+        # search for the photopeak
+        self.peak = (
+                bins[np.argmax(bins[:-1] * n**2)] if self.is_energy
+                else bins[np.argmax(n)])
+
         if retain:
             rng = last_rng
         elif self.is_energy:
-            # search for the photopeak
-            self.peak = bins[np.argmax(bins[:-1] * n**2)]
+            # Energy histogram - take % window around peak
             rng = [(1-self.e_window)*self.peak, (1+self.e_window)*self.peak]
         else:
             # DOI histogram - take 50% central counts
@@ -155,7 +163,7 @@ class ThresholdHist():
     def __init__(self, frame, is_energy, **kwargs):
         self.is_energy = is_energy
         self.e_window = 0.2
-        self.peak = None
+        self.peak = 0
 
         self.fig = Figure()
         self.plot = self.fig.add_subplot()

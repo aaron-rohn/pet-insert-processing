@@ -1,6 +1,7 @@
 import os
 import petmr
 import threading
+import json
 import numpy as np
 import tkinter as tk
 from flood import nearest_peak
@@ -8,6 +9,7 @@ from figures import ThresholdHist, FloodHist
 from data_loader import DataLoaderPopup, coincidence_filetypes
 
 import time
+
 
 class WrappingLabel(tk.Label):
     def reconfig(self, *args, **kwds):
@@ -96,7 +98,7 @@ class ScrolledListbox:
         if all_blocks: return all_items
 
         sel = self.active.curselection()
-        return sel[0] if len(sel) == 1 else None
+        return all_items[sel[0]] if len(sel) == 1 else None
 
     def set_active(self, position = None):
         self.active.select_clear(0, tk.END)
@@ -112,16 +114,15 @@ class ScrolledListbox:
 
 class Plots:
     def __init__(self, root, data, get_block, set_block):
+        self.d    = None
         self.data = data           # callback to get the current data frame
         self.get_block = get_block # callback to get the selected block
         self.set_block = set_block # callback to set the selected block
 
         self.button_frame = tk.Frame(root)
         self.store_this_flood = tk.Button(self.button_frame, text = "Store this flood", command = self.store_this_flood_cb)
-        self.store_all_floods = tk.Button(self.button_frame, text = "Store all floods", command = self.store_all_floods_cb)
         self.button_frame.pack(pady = 10);
         self.store_this_flood.pack(side = tk.LEFT, padx = 5)
-        self.store_all_floods.pack(side = tk.LEFT, padx = 5)
 
         self.frame = tk.Frame(root)
         self.frame.pack()
@@ -140,65 +141,77 @@ class Plots:
         self.doi.callback.append(self.flood_cb)
         self.doi.callback.append(self.energy_cb)
 
+        self.output_dir = None
+
     def plots_update(self, *args):
         """ Update all plots when new data is available """
         blk = self.get_block()
-        self.d = self.data().get_group(blk)
+        all_data = self.data()
 
-        self.energy.update(self.d['es'], retain = False)
-        self.doi_cb(retain = False)
-        self.flood_cb()
+        if all_data is not None:
+            self.d = all_data.get_group(blk)
+            self.energy.update(self.d['es'], retain = False)
+            self.doi_cb(retain = False)
+            self.flood_cb()
+        else:
+            self.d = None
 
     def flood_cb(self):
         """ Update the flood according to energy and DOI thresholds """
         eth = self.energy.thresholds()
         dth = self.doi.thresholds()
-        data_subset = self.d.query('({} < es < {}) & ({} < doi < {})'.format(*eth, *dth))
-        self.flood.update(data_subset)
+        if self.d is not None:
+            data_subset = self.d.query('({} < es < {}) & ({} < doi < {})'.format(*eth, *dth))
+            self.flood.update(data_subset)
 
     def doi_cb(self, retain = True):
         """ Update the DOI according to the energy thresholds """
         eth = self.energy.thresholds()
-        data_subset = self.d.query('{} < es < {}'.format(*eth))
-        self.doi.update(data_subset['doi'], retain)
+        if self.d is not None:
+            data_subset = self.d.query('{} < es < {}'.format(*eth))
+            self.doi.update(data_subset['doi'], retain)
 
     def energy_cb(self, retain = True):
         """ Update the energy according to the DOI thresholds """
         dth = self.doi.thresholds()
-        data_subset = self.d.query('{} < doi < {}'.format(*dth))
-        self.energy.update(data_subset['es'], retain)
+        if self.d is not None:
+            data_subset = self.d.query('{} < doi < {}'.format(*dth))
+            self.energy.update(data_subset['es'], retain)
 
-    def store_this_flood_cb(self, output_dir = None):
-        if self.flood.f is None: return
-
-        if output_dir is None:
-            output_dir = tk.filedialog.askdirectory(
-                    title = "Configuration data directory",
-                    initialdir = os.path.expanduser('~'))
-
-        if not output_dir: return
-
-        lut = nearest_peak((self.flood.img_size,)*2,
-                self.flood.pts.reshape(-1,2))
-
-        blk = self.get_block()
-        fname = os.path.join(output_dir, f'block{blk}.lut')
-        lut.astype(np.intc).tofile(fname)
-
-    def store_all_floods_cb(self):
-        output_dir = tk.filedialog.askdirectory(
+    def store_this_flood_cb(self):
+        self.output_dir = self.output_dir or tk.filedialog.askdirectory(
                 title = "Configuration data directory",
                 initialdir = os.path.expanduser('~'))
-        if not output_dir: return
 
-        all_blocks = self.get_block(all_blocks = True)
-        sel_idx = self.get_block() or 0
+        if not self.output_dir or self.flood.f is None: return
 
-        for idx,blk in enumerate(all_blocks):
+        blk = self.get_block()
 
-            if idx < sel_idx: continue
+        """ store the LUT for this block to the specified directory """
+        lut_fname = os.path.join(self.output_dir, f'block{blk}.lut')
+        lut = nearest_peak((self.flood.img_size,)*2,
+                self.flood.pts.reshape(-1,2))
+        lut.astype(np.intc).tofile(lut_fname)
 
-            self.set_block(idx)
+        """ update json file with photopeak position for this block """
+
+        config_file = os.path.join(self.output_dir, 'conig.json')
+
+        try:
+            with open(config_file, 'r') as f:
+                cfg = json.load(f)
+        except FileNotFoundError: cfg = {}
+
+        if blk not in cfg: cfg[blk] = {}
+        cfg[blk]['photopeak'] = self.energy.peak
+
+        with open(config_file, 'w') as f:
+            json.dump(cfg, f)
+
+        """ increment the active block and update the UI """
+
+        all_blks = self.get_block(all_blocks = True)
+        try: 
+            self.set_block(all_blks.index(blk) + 1)
             self.plots_update()
-            self.frame.update()
-            self.store_this_flood_cb(output_dir)
+        except KeyError: pass

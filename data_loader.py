@@ -66,7 +66,7 @@ class DataLoaderPopup:
         self.popup.protocol("WM_DELETE_WINDOW", self.on_close)
         self.progbar = Progressbar(self.popup, length = 500)
         self.progbar.pack(fill = tk.X, expand = True, padx = 10, pady = 10)
-        self.counts_label = tk.Label(self.popup, text = 'Counts: 0')
+        self.counts_label = tk.Label(self.popup, text = '')
         self.counts_label.pack(pady = 10)
 
         self.fileselector.label.config(text = self.input_files)
@@ -84,8 +84,10 @@ class DataLoaderPopup:
         update UI elements to reflect the exit state, and finish
         """
         while not self.stat_queue.empty():
-            perc, counts = self.stat_queue.get()
-            self.counts_label.config(text = f'Counts: {counts:,}')
+            perc, counts, *label = self.stat_queue.get()
+            label = label[0] if label else 'Counts'
+
+            self.counts_label.config(text = f'{label}: {counts:,}')
             self.progbar['value'] = perc
 
         if self.bg.is_alive():
@@ -117,7 +119,15 @@ class DataLoaderPopup:
         the data will be concatenated into a single dataframe
         """
         names = ['block', 'time', 'A1', 'B1', 'C1', 'D1', 'A2', 'B2', 'C2', 'D2']
-        d = [petmr.singles(f) for f in self.input_files]
+
+        d = []
+        for i,f in enumerate(self.input_files):
+            d.append(petmr.singles(f))
+            perc = float(i + 1) / len(self.input_files) * 100
+            self.stat_queue.put((perc, i + 1, "Completed"))
+        
+        #d = [petmr.singles(f) for f in self.input_files]
+
         d = [pd.DataFrame(dict(zip(names, di))) for di in d]
         d = pd.concat(d, ignore_index = True)
         d = d.assign(e1  = lambda df: df.loc[:,'A1':'D1'].sum(axis=1),
@@ -137,7 +147,12 @@ class DataLoaderPopup:
         multiple files are provided, they must be time-aligned from a single acquisition
         """
         # (a,b) -> [a_df, b_df] -> ab_df
-        ab = petmr.coincidences(self.terminate, self.stat_queue, self.input_files, self.output_file)
+        ab = petmr.coincidences(
+                self.terminate,
+                self.stat_queue,
+                self.input_files,
+                self.output_file)
+
         d = [coincidence_to_df(c) for c in ab]
         d = pd.concat(d, ignore_index = True)
         d = prepare_coincidences(d)

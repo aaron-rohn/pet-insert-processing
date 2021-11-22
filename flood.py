@@ -20,24 +20,21 @@ class Flood():
             self.fld = np.copy(f)
 
         self.fld = self.fld.astype('double')
-        self.fld = self.log_filter(ksize)
+        self.blur = ndimage.gaussian_filter(self.fld, 5)
 
         e0 = self.edges(1, 10)
         e1 = self.edges(0, 10)
-        mask = np.zeros(self.fld.shape)
-        mask[e0[0]-10:e0[1]+10, e1[0]-10:e1[1]+10] = 1
+        mask = np.ones(self.fld.shape, dtype = bool)
+        mask[e0[0]:e0[1], e1[0]:e1[1]] = False
+        self.fld[mask] = 0
+
+        self.fld = self.log_filter(ksize)
 
         with np.errstate(invalid='ignore'):
-            self.fld = self.fld * mask / ndimage.gaussian_filter(self.fld, 20)
+            self.fld /= ndimage.gaussian_filter(self.fld, 20)
 
         self.fld = np.nan_to_num(self.fld, 0)
         self.correct_outliers()
-
-    def sample(self, n):
-        flat = self.fld.flatten() / np.sum(self.fld)
-        sample_idx = np.random.choice(flat.size, size = int(n), p = flat)
-        idx = np.unravel_index(sample_idx, self.fld.shape)
-        return np.array(idx)
 
     def log_filter(self, ksize = 1):
         f = ndimage.gaussian_laplace(self.fld, ksize)
@@ -46,7 +43,7 @@ class Flood():
         return f
 
     def edges(self, axis = 0, threshold = 10):
-        p = np.sum(self.fld, axis)
+        p = np.sum(self.blur, axis)
         thresh = np.max(p) / threshold
         ledge = np.argmax(p > thresh)
         redge = len(p) - np.argmax(p[::-1] > thresh)
@@ -64,28 +61,37 @@ class Flood():
     def find_1d_peaks(self, axis = 0):
         s = np.sum(self.fld, axis)
         cog = np.average(np.arange(len(s)), weights = s)
+
         distance = 10
         n = 19
         n_side = 9
 
+        # Find up to 19 peaks satisfying a large min. distance between peaks
         main_pks,_ = signal.find_peaks(s, distance = distance)
         main_order = s[main_pks].argsort()
         main_pks = main_pks[main_order[::-1]][:n]
 
+        # Pick a center peak based on the flood COG, then take up to 9 peaks on L and R
         center_pk_idx = main_pks[np.argmin(np.abs(main_pks - cog))]
         lpk = list(main_pks[main_pks < center_pk_idx])[:n_side]
         rpk = list(main_pks[main_pks > center_pk_idx])[:n_side]
 
+        # If 9 peaks were not found on the L or R, decrease the min. distance and repeat
         while len(lpk) < n_side or len(rpk) < n_side:
             distance -= 1
 
+            # Find peaks satisfying the new min, distance, and remove original peaks
             other_pks,_ = signal.find_peaks(s, distance = distance)
             other_pks = list(set(other_pks) - set(main_pks))
+
+            # If no new peaks are found, just continue to reduce the min distance again
             if len(other_pks) == 0: continue
 
+            # Sort newly found peaks by height
             other_order = s[other_pks].argsort()
             other_pks = np.array(other_pks)[other_order[::-1]]
 
+            # Add to L or R peaks from newly found peaks, as needed
             other_lpk = other_pks[other_pks < center_pk_idx]
             other_rpk = other_pks[other_pks > center_pk_idx]
             lpk += list(other_lpk[:(n_side-len(lpk))])

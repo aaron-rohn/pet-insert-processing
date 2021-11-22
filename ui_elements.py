@@ -2,14 +2,17 @@ import os
 import petmr
 import threading
 import json
+import pandas as pd
 import numpy as np
 import tkinter as tk
+import matplotlib.pyplot as plt
 from flood import nearest_peak
 from figures import ThresholdHist, FloodHist
 from data_loader import DataLoaderPopup, coincidence_filetypes
 
 import time
 
+pd.options.mode.chained_assignment = None
 
 class WrappingLabel(tk.Label):
     def reconfig(self, *args, **kwds):
@@ -119,10 +122,15 @@ class Plots:
         self.get_block = get_block # callback to get the selected block
         self.set_block = set_block # callback to set the selected block
 
+        self.save_xtal_photopeak = tk.IntVar()
+
         self.button_frame = tk.Frame(root)
         self.store_this_flood = tk.Button(self.button_frame, text = "Store this flood", command = self.store_this_flood_cb)
+        self.save_xtal = tk.Checkbutton(self.button_frame, text = "Store crystal photopeak", variable = self.save_xtal_photopeak)
+
         self.button_frame.pack(pady = 10);
         self.store_this_flood.pack(side = tk.LEFT, padx = 5)
+        self.save_xtal.pack(side = tk.LEFT, padx = 5)
 
         self.frame = tk.Frame(root)
         self.frame.pack()
@@ -194,7 +202,6 @@ class Plots:
         lut.astype(np.intc).tofile(lut_fname)
 
         """ update json file with photopeak position for this block """
-
         config_file = os.path.join(self.output_dir, 'conig.json')
 
         try:
@@ -203,8 +210,35 @@ class Plots:
         except FileNotFoundError: cfg = {}
 
         if blk not in cfg: cfg[blk] = {}
-        cfg[blk]['photopeak'] = self.energy.peak
+        cfg[blk]['block'] = self.energy.peak
 
+        """ if requested, add the photopeak position for each LUT value """
+        if self.save_xtal_photopeak.get():
+            # create df grouped by LUT number
+
+            lut_df = pd.DataFrame({
+                'x'  : np.tile(np.arange(lut.shape[1]), lut.shape[0]),
+                'y'  : np.repeat(np.arange(lut.shape[0]), lut.shape[1]),
+                'lut': lut.flat
+            })
+
+            self.d.loc[:,['x','y']] *= 511.0
+            self.d = self.d.astype({'x': int, 'y': int})
+            self.d = self.d.merge(lut_df, on = ['x', 'y'])
+            self.d = self.d.groupby(['lut'])
+
+            # find the photopeak for each crystal
+            def groupfun(grp):
+                n,bins = np.histogram(grp['es'].values, bins = 100)
+                return round(bins[np.argmax(bins[:-1] * n**2)])
+
+            pks = self.d.apply(groupfun)
+
+            # record the crystal photopeak
+            for lut,pk in pks.iteritems():
+                cfg[blk][str(lut)] = pk
+
+        # save the config file
         with open(config_file, 'w') as f:
             json.dump(cfg, f)
 

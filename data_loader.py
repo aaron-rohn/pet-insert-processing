@@ -1,4 +1,5 @@
 import os
+import gc
 import threading
 import queue
 import petmr
@@ -16,10 +17,13 @@ def coincidence_to_df(lst_of_arrays):
 
 def prepare_coincidences(d):
     """ Add the columns necessary for plotting to the coincidence dataframe """
-    return d.assign(x   = lambda df: df['x'] / 511,
-                    y   = lambda df: df['y'] / 511,
-                    es  = lambda df: df['e1'] + df['e2'],
-                    doi = lambda df: df['e1'] / df['es'])
+    d['x'] /= 511
+    d['y'] /= 511
+    d.insert(len(d.columns), 'es',  d['e1'] + d['e2'])
+    d.insert(len(d.columns), 'doi', d['e1'] / d['es'])
+    del d['e1']
+    del d['e2']
+    return d
 
 class DataLoaderPopup:
     def __init__(self, root, fileselector, update_data_cb):
@@ -94,8 +98,7 @@ class DataLoaderPopup:
             self.popup.after(interval, self.check)
         else:
             if not self.data_queue.empty():
-                d = self.data_queue.get()
-                self.update_data_cb(d)
+                self.update_data_cb(self.data_queue.get())
             else:
                 self.update_data_cb(RuntimeError("Data loading failed"))
                 self.allow_store = False
@@ -113,6 +116,7 @@ class DataLoaderPopup:
         self.terminate.set()
         self.bg.join()
         self.check()
+        gc.collect()
 
     def load_singles(self):
         """ Load singles data from one or more .SGL files. If multiple files are provided,
@@ -162,15 +166,13 @@ class DataLoaderPopup:
         """ Load coincidence data from a file on disk. If multiple file are provided,
         the dataframes will be concatenated
         """
-        d = [petmr.load(f) for f in self.input_files];
 
-        # change lists of np arrays to dataframes
-        for idx, elem in enumerate(d):
-            d[idx] = tuple(coincidence_to_df(a_or_b) for a_or_b in elem)
-
-        # [(a,b), (a,b), ...] -> [(a,a,...), (b,b,...)] -> [a_all, b_all] -> ab_all
-        d = [pd.concat(all_a_or_b) for all_a_or_b in zip(*d)]
+        d = petmr.load(self.input_files[0])
+        d = [coincidence_to_df(di) for di in d]
         d = pd.concat(d, ignore_index = True)
         d = prepare_coincidences(d)
+
+        d.info(memory_usage = 'deep')
+
         self.data_queue.put(d)
 

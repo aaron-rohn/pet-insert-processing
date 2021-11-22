@@ -17,11 +17,11 @@ class App():
         """
         if isinstance(d, tuple):
             self.original, self.d = d
+            self.d = self.d.groupby('block')
         else:
             self.original = None
-            self.d = d
+            self.d = d.groupby('block')
 
-        self.d = self.d.groupby('block')
         self.block.set(list(self.d.groups.keys()))
 
     """ Allow member elements to query the current data or selected block """

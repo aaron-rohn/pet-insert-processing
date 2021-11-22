@@ -56,11 +56,15 @@ CoincidenceData::read(std::string fname)
 
     std::ifstream f(fname, std::ios::binary);
     uint64_t count = fsize / sizeof(CoincidenceData);
+    count = count > 100'000'000 ? 100'000'000 : count;
+
     std::cout << "Reading " << count << " entries from coincidence file: " <<
         fname << std::endl;
 
     std::vector<CoincidenceData> cd(count);
-    f.read((char*)cd.data(), fsize);
+    f.read((char*)cd.data(), count * sizeof(CoincidenceData));
+
+    std::cout << "Finished reading" << std::endl;
 
     return cd;
 }
@@ -77,6 +81,10 @@ PyObject *CoincidenceData::to_py_data(
 ) {
     PyObject *acols[ncol], *bcols[ncol];
     npy_intp nrow = cd.size();
+
+    std::cout << "Begin creating python objects: 2x" <<
+        ncol << "x" << nrow << std::endl;
+
     for (size_t i = 0; i < ncol-1; i++)
     {
         acols[i] = PyArray_SimpleNew(1, &nrow, NPY_UINT16);
@@ -112,6 +120,9 @@ PyObject *CoincidenceData::to_py_data(
     PyObject *out = PyTuple_New(2);
     PyTuple_SetItem(out, 0, a);
     PyTuple_SetItem(out, 1, b);
+
+    std::cout << "Finished creating python objects" << std::endl;
+
     return out;
 }
 

@@ -205,22 +205,109 @@ error:
     return cd;
 }
 
-std::vector<CoincidenceData>
-CoincidenceSorter::add_event(Single new_ev)
-{
-    std::vector<CoincidenceData> new_coins;
-    auto ev = window.begin();
-    for (; ev != window.end(); ++ev)
-    {
-        if (new_ev.abs_time - ev->abs_time > width) break;
+/*
+ * Search a singles file for time tags, and provide the
+ * file offset to a calling thread
+ */
 
-        if (new_ev.mod != ev->mod)
-            new_coins.emplace_back(new_ev,*ev);
+void find_tt_offset(
+        std::string fname,
+        std::mutex &l,
+        std::condition_variable_any &cv,
+        std::queue<std::streampos> &q
+) {
+    uint64_t tt_target = 0, tt_incr = 1000;
+    std::ifstream f (fname, std::ios::in | std::ios::binary);
+
+    while (Single::go_to_tt(f, tt_target))
+    {
+        tt_target += tt_incr;
+
+        {
+            std::lock_guard<std::mutex> lg(l);
+            q.push(f.tellg() - std::streamoff(Single::event_size));
+        }
+        cv.notify_all();
     }
 
-    counts += new_coins.size();
-    window.erase(ev, window.end());
-    new_ev.abs_time += delay;
-    window.push_front(new_ev);
-    return new_coins;
+    {
+        std::lock_guard<std::mutex> lg(l);
+        q.push(-1);
+    }
+    cv.notify_all();
+}
+
+/*
+ * Sort coincidences between multiple singles data files
+ * given a start and end position for each file
+ */
+
+sorted_values sort_span(
+        std::vector<std::string> fnames,
+        std::vector<std::streampos> start_pos,
+        std::vector<std::streampos> end_pos
+) {
+    auto n = fnames.size();
+
+    // Initialize input files
+    std::vector<std::ifstream> files;
+    for (auto &fn : fnames)
+        files.emplace_back(fn, std::ios::in | std::ios::binary);
+
+    // Calculate the approximate number of singles in the data stream
+    std::streampos fsize_to_process = 0;
+    for (size_t i = 0; i < n; i++)
+        fsize_to_process += (end_pos[i] - start_pos[i]);
+    size_t approx_singles = fsize_to_process / Single::event_size;
+
+    // Allocate storage to load all the singles
+    std::vector<Single> singles;
+    singles.reserve(approx_singles);
+
+    uint8_t data[Single::event_size];
+    std::vector<TimeTag> last_tt (Single::nmodules);
+
+    // Load all the singles from each file
+    for (size_t i = 0; i < n; i++)
+    {
+        auto &f = files[i];
+        f.seekg(start_pos[i]);
+
+        while (f.tellg() < end_pos[i])
+        {
+            f.read((char*)data, Single::event_size);
+            Single::align(f, data);
+
+            auto mod = Single::get_module(data);
+
+            if (Single::is_single(data))
+            {
+                // Create single and heap sort by absolute time
+                singles.emplace_back(data, last_tt[mod]);
+                std::push_heap(singles.begin(), singles.end());
+            }
+            else
+            {
+                // Update latest time tag for appropriate module
+                last_tt[mod] = TimeTag(data);
+            }
+        }
+    }
+
+    // sort heap with ascending absolute time
+    std::sort_heap(singles.begin(), singles.end());
+
+    uint64_t width = 10;
+    std::vector<CoincidenceData> coincidences;
+
+    for (auto a = singles.begin(); a != singles.end(); ++a)
+    {
+        for (auto b = a + 1; b != singles.end() && (b->abs_time - a->abs_time < width); ++b)
+        {
+            if (a->mod != b->mod)
+                coincidences.emplace_back(*a, *b);
+        }
+    }
+
+    return std::tie(end_pos, coincidences);
 }

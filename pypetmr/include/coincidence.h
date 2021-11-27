@@ -2,8 +2,10 @@
 #define COINCIDENCE_H
 
 #include <deque>
+#include <queue>
+#include <future>
+#include <algorithm>
 #include "singles.h"
-#include "merger.h"
 
 #include <Python.h>
 
@@ -54,22 +56,20 @@ struct CoincidenceData {
     inline void  y_b(uint16_t val) { data[9] = val; }
 };
 
-class CoincidenceSorter
-{
-    const uint64_t delay;
-    const uint64_t width;
-    std::deque<Single> window;
+void find_tt_offset(
+        std::string,
+        std::mutex&,
+        std::condition_variable_any&,
+        std::queue<std::streampos>&
+);
 
-    public:
-    std::ofstream output_file;
-    uint64_t counts = 0;
-    CoincidenceSorter (const char *fname = NULL, uint64_t delay = 0, uint64_t width = 10):
-        delay(delay), width(width), output_file(fname, std::ios::out | std::ios::binary) {
-            if (fname) std::cout << "Output file: " << fname << std::endl;
-    };
+using sorted_values = std::tuple<std::vector<std::streampos>,
+                                 std::vector<CoincidenceData>>;
 
-    std::vector<CoincidenceData> add_event (Single);
-    inline bool file_open() const { return bool(output_file); }
-};
+sorted_values sort_span(
+        std::vector<std::string>,
+        std::vector<std::streampos>,
+        std::vector<std::streampos>
+);
 
 #endif

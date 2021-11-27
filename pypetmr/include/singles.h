@@ -9,8 +9,8 @@
 #include <fstream>
 
 struct TimeTag {
-    //const static uint64_t clks_per_tt = 0xFFFFF;
-    const static uint64_t clks_per_tt = 800'000;
+    const static uint64_t clks_per_tt = 0xFFFFF;
+    //const static uint64_t clks_per_tt = 800'000;
 
     uint8_t mod;
     uint64_t value;
@@ -21,6 +21,9 @@ struct TimeTag {
 
 struct Single {
     static const int nch = 8;
+    static const int event_size = 16;
+    static const int nmodules = 16;
+    static const int nblocks = 64;
 
     uint16_t energies[nch] = {0};
     uint8_t block;
@@ -32,40 +35,24 @@ struct Single {
 
     Single(uint8_t[], const TimeTag&);
     Single(): valid(false) {}
-    bool operator<(const Single &rhs) const { return abs_time < rhs.abs_time; }
 
-    static inline bool is_header(uint8_t);
-    static inline bool is_single(uint8_t[]);
-    static inline uint8_t get_block(uint8_t[]);
-    static inline uint8_t get_module(uint8_t[]);
-};
+    bool operator<(const Single &rhs) const
+    { return abs_time < rhs.abs_time; }
 
-class SinglesReader
-{
-    public:
+    static inline bool is_header(uint8_t b)
+    { return (b >> 3) == 0x1F; };
 
-    static const int event_size = 16;
-    static const int nmodules = 16;
-    static const int nblocks = 64;
+    static inline bool is_single(uint8_t d[])
+    { return d[0] & 0x4; };
 
-    std::string fname;
-    std::ifstream f;
-    uint8_t data[event_size];
-    std::vector<TimeTag> tt;
-    bool tt_aligned = true;
-    void align();
+    static inline uint8_t get_block(uint8_t d[])
+    { return ((d[0] << 4) | (d[1] >> 4)) & 0x3F; };
 
-    uint64_t nsingles = 0, ntimetag = 0, file_size = 0, file_elems = 0;
-    uint8_t mod;
+    static inline uint8_t get_module(uint8_t d[])
+    { return ((d[0] << 2) | (d[1] >> 6)) & 0xF; };
 
-    bool is_single = false;
-    Single single;
-
-    SinglesReader (std::string);
-    operator bool() const {return f.good();}
-    bool find_rst();
-    bool read();
-    std::vector<std::deque<Single>> go_to_tt(uint64_t);
+    static void align(std::ifstream&, uint8_t[]);
+    static bool go_to_tt(std::ifstream&, uint64_t);
 };
 
 #endif

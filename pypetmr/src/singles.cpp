@@ -38,112 +38,39 @@ Single::Single(uint8_t data[], const TimeTag &tt)
     abs_time = tt.value * TimeTag::clks_per_tt + time;
 }
 
-bool Single::is_header(uint8_t byte) {
-    return (byte >> 3) == 0x1F;
-}
-
-bool Single::is_single(uint8_t data[]) {
-    return data[0] & 0x4;
-}
-
-uint8_t Single::get_block(uint8_t data[]) {
-    return ((data[0] << 4) | (data[1] >> 4)) & 0x3F;
-}
-
-uint8_t Single::get_module(uint8_t data[]) {
-    return ((data[0] << 2) | (data[1] >> 6)) & 0xF;
-}
-
-SinglesReader::SinglesReader (std::string fname):
-    fname(fname),
-    f(fname, std::ios::binary),
-    tt(nmodules)
-{
-    if (!f.good()) return;
-
-    f.seekg(0, std::ios::end);
-    file_size = f.tellg();
-    file_elems = file_size / event_size;
-    f.seekg(0, std::ios::beg);
-
-    std::cout << fname << ": " <<
-        file_elems << " entries" << std::endl;
-}
-
-void SinglesReader::align()
+void Single::align(std::ifstream &f, uint8_t data[])
 {
     while (f.good() && !Single::is_header(data[0]))
     {
-        size_t n = event_size;
-        for (size_t i = 1; i < event_size; i++)
+        size_t n = Single::event_size;
+        for (size_t i = 1; i < Single::event_size; i++)
         {
             if (Single::is_header(data[i]))
             {
-                std::cout << fname << ": Realign data stream (0x" <<
-                    std::hex << f.tellg() << std::dec << ")\n";
-
-                std::memmove(data, data + i, event_size - i);
+                std::memmove(data, data + i, Single::event_size - i);
                 n = i;
                 break;
             }
         }
-        f.read((char*)(data + (event_size - n)), n);
+        f.read((char*)(data + (Single::event_size - n)), n);
     }
 }
 
-bool SinglesReader::read()
+bool Single::go_to_tt(std::ifstream &f, uint64_t value)
 {
-    f.read((char*)data, event_size);
-    align();
+    uint8_t data[Single::event_size];
 
-    is_single = Single::is_single(data);
-    mod = Single::get_module(data);
-
-    if (is_single)
+    while(f.good())
     {
-        single = Single(data, tt[mod]);
-        nsingles++;
-    }
-    else
-    {
-        TimeTag new_tt (data);
-        tt_aligned = (tt[mod].value + 1 == new_tt.value);
-        tt[mod] = new_tt;
-        ntimetag++;
-    }
+        f.read((char*)data, Single::event_size);
+        Single::align(f, data);
 
-    return f.good();
-}
-
-bool SinglesReader::find_rst()
-{
-    while (read())
-    {
-        if (!is_single && tt[mod].value == 0) break;
-    }
-
-    std::cout << fname << ": Found reset at offset 0x" <<
-        std::hex << f.tellg() << std::dec << std::endl;
-
-    return f.good();
-}
-
-std::vector<std::deque<Single>> 
-SinglesReader::go_to_tt(uint64_t target)
-{
-    std::vector<std::deque<Single>> events (nmodules);
-
-    while (read())
-    {
-        if (is_single)
+        if (!Single::is_single(data))
         {
-            events[single.mod].push_back(single);
-        }
-        else
-        {
-            if (tt_aligned && tt[mod].value >= target) break;
+            TimeTag tt (data);
+            if (tt.value >= value) break;
         }
     }
 
-    return events;
+    return f.good();
 }

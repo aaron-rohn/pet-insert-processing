@@ -139,32 +139,13 @@ void Michelogram::add_event(const CoincidenceData &c)
 void Michelogram::write_to(std::string fname)
 {
     std::ofstream f(fname, std::ios::out | std::ios::binary);
+    for (auto &s : *this)
+        s.write_to(f);
+}
 
-    /*
-     * Store the michelogram by iterating over increading segments.
-     * Start with segment 0 - direct planes, moving from plane 0 to 76
-     * Then segment +1, segment -1, ... always in the same direction
-     */
-
-    // iterate increasing segment number (ring difference)
-    for (int rd = 0; rd < nring; rd++)
-    {
-        // iterate lower (bottom right) and upper (top left) halves
-        for (auto &upper: {false, true})
-        {
-            // iterate each sinogram within the segment
-            // starting from the bottom left, moving toward the rop right
-            for (int r0 = rd; r0 < nring; r0++)
-            {
-                int r1 = r0 - rd;
-
-                // flip coordinates to index the upper half of the michelogram
-                auto &s = upper ? (*this)(r1, r0) : (*this)(r0, r1);
-                s.write_to(f);
-            }
-
-            // no upper segment for segment 0
-            if (rd == 0) break;
-        }
-    }
+void Michelogram::read_from(std::string fname)
+{
+    std::ifstream f(fname, std::ios::in | std::ios::binary);
+    for (auto &s : *this)
+        s.read_from(f);
 }

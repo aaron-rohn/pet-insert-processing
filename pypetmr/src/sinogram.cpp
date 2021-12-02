@@ -4,7 +4,7 @@
 void Sinogram::add_event(int idx1, int idx2)
 {
     int theta = (idx1 + idx2) % npix;
-    int r = idx1 > idx2 ? idx1 - idx2 : idx2 - idx1;
+    int r = std::abs(idx1 - idx2);
     if (idx1 + idx2 >= npix) r = npix - r;
     (*this)(theta, r/2)++;
 }
@@ -125,11 +125,11 @@ void Michelogram::add_event(const CoincidenceData &c)
 
     // Calculate index along the ring
 
+    // crystals are indexed in the opposite direction from increasing module number
+    int cola = (ncrystals_per_block - 1) - (xa % ncrystals_per_block);
+    int colb = (ncrystals_per_block - 1) - (xb % ncrystals_per_block);
+
     int moda = ba >> 2, modb = bb >> 2;
-
-    int cola = (ncrystals_per_block - 1) - xa % ncrystals_per_block;
-    int colb = (ncrystals_per_block - 1) - xb % ncrystals_per_block;
-
     int idx1 = cola + (ncrystals_per_block * moda);
     int idx2 = colb + (ncrystals_per_block * modb);
 
@@ -140,13 +140,25 @@ void Michelogram::write_to(std::string fname)
 {
     std::ofstream f(fname, std::ios::out | std::ios::binary);
 
+    /*
+     * Store the michelogram by iterating over increading segments.
+     * Start with segment 0 - direct planes, moving from plane 0 to 76
+     * Then segment +1, segment -1, ... always in the same direction
+     */
+
+    // iterate increasing segment number (ring difference)
     for (int rd = 0; rd < nring; rd++)
     {
+        // iterate lower (bottom right) and upper (top left) halves
         for (auto &upper: {false, true})
         {
+            // iterate each sinogram within the segment
+            // starting from the bottom left, moving toward the rop right
             for (int r0 = rd; r0 < nring; r0++)
             {
                 int r1 = r0 - rd;
+
+                // flip coordinates to index the upper half of the michelogram
                 auto &s = upper ? (*this)(r1, r0) : (*this)(r0, r1);
                 s.write_to(f);
             }

@@ -13,15 +13,19 @@ class Geometry
 {
     public:
     static const int ncrystals_per_block = 19;
+
     static const int nblocks_per_ring = 16;
+    static const int nblocks_axial = 4;
+    static const int nring = nblocks_axial * ncrystals_per_block;
+
     static const int npix  = ncrystals_per_block * nblocks_per_ring;
     static const int dim_theta = npix;
     static const int dim_r     = npix / 2;
+
     static const int lut_pix = 512;
-    static const int nblocks_axial = 4;
     static const int xtal_max = ncrystals_per_block * ncrystals_per_block;
-    static const int nring = nblocks_axial * ncrystals_per_block;
-    static constexpr double energy_window = 0.2;
+
+    static constexpr double energy_window = 0.15;
 };
 
 class Sinogram: Geometry

@@ -9,9 +9,13 @@
 #include <algorithm>
 #include <numeric>
 #include <future>
+#include <map>
+#include <filesystem>
+#include <regex>
 
 #include "singles.h"
 #include "coincidence.h"
+#include "sinogram.h"
 
 #include <Python.h>
 #include <numpy/arrayobject.h>
@@ -20,12 +24,14 @@ static PyObject *petmr_singles(PyObject*, PyObject*);
 static PyObject *petmr_coincidences(PyObject*, PyObject*);
 static PyObject *petmr_load(PyObject*, PyObject*);
 static PyObject *petmr_store(PyObject*, PyObject*);
+static PyObject *petmr_sinogram(PyObject*, PyObject*);
 
 static PyMethodDef petmrMethods[] = {
     {"singles", petmr_singles, METH_VARARGS, "read PET/MRI insert singles data"},
     {"coincidences", petmr_coincidences, METH_VARARGS, "read PET/MRI insert singles data, and sort coincidences"},
     {"load", petmr_load, METH_VARARGS, "Load coincidence listmode data"},
     {"store", petmr_store, METH_VARARGS, "Store coincidence listmode data"},
+    {"sinogram", petmr_sinogram, METH_VARARGS, "Sort coincidence data into a sinogram"},
     {NULL, NULL, 0, NULL}
 };
 
@@ -83,7 +89,7 @@ struct EventRecords
         n++;
         for (size_t i = 0; i < energies.size(); i++)
             energies[i].push_back(s.energies[i]);
-        blk.push_back(s.block);
+        blk.push_back(s.blk);
         TT.push_back(s.time);
     }
 
@@ -136,20 +142,20 @@ petmr_singles(PyObject *self, PyObject *args)
     }
 
     uint64_t nevents = 0;
-    uint8_t data[Single::event_size];
-    std::vector<TimeTag> last_tt (Single::nmodules);
+    uint8_t data[Record::event_size];
+    std::vector<TimeTag> last_tt (Record::nmodules);
 
     Py_BEGIN_ALLOW_THREADS
     while (f.good())
     {
         if (max_events > 0 && nevents > max_events) break;
 
-        f.read((char*)data, Single::event_size);
-        Single::align(f, data);
+        f.read((char*)data, Record::event_size);
+        Record::align(f, data);
 
-        auto mod = Single::get_module(data);
+        auto mod = Record::get_module(data);
 
-        if (Single::is_single(data))
+        if (Record::is_single(data))
         {
             records.append(Single(data, last_tt[mod]));
         }
@@ -168,6 +174,10 @@ petmr_singles(PyObject *self, PyObject *args)
     }
     return records_list;
 }
+
+/*
+ * Sort coincidence data from multiple provided singles files
+ */
 
 static PyObject *
 petmr_coincidences(PyObject *self, PyObject *args)
@@ -209,6 +219,7 @@ petmr_coincidences(PyObject *self, PyObject *args)
     std::vector<std::mutex> all_lock (n);
     std::vector<std::condition_variable_any> all_cv (n);
     std::vector<std::queue<std::streampos>> all_pos (n);
+    std::atomic_bool stop = false;
 
     std::vector<std::thread> tt_scan;
 
@@ -219,7 +230,8 @@ petmr_coincidences(PyObject *self, PyObject *args)
                              file_list[i],
                              std::ref(all_lock[i]),
                              std::ref(all_cv[i]),
-                             std::ref(all_pos[i]));
+                             std::ref(all_pos[i]),
+                             std::ref(stop));
     }
 
     std::vector<std::streampos> start_pos(n), end_pos(n);
@@ -233,10 +245,10 @@ petmr_coincidences(PyObject *self, PyObject *args)
         all_pos[i].pop();
     }
 
-    // Verify that each thread found a reset
     if (std::any_of(start_pos.begin(), start_pos.end(),
-                [](std::streampos i){ return i == -1; }))
+                [](std::streampos p){ return p == -1; }))
     {
+        stop = true;
         for (auto &th : tt_scan) th.join();
         std::cout << "Failed to find reset" << std::endl;
         PyErr_SetString(PyExc_RuntimeError, "One or more files did not contain a reset");
@@ -250,33 +262,30 @@ petmr_coincidences(PyObject *self, PyObject *args)
 
     PyThreadState *_save = PyEval_SaveThread();
 
-    bool done = false;
-
-    while (!done || workers.size() > 0)
+    while (!stop || workers.size() > 0)
     {
         // Get next time-tag increment to read until, for each file
-        for (size_t i = 0; !done && i < n; i++)
+        for (size_t i = 0; !stop && i < n; i++)
         {
             std::unique_lock<std::mutex> lck(all_lock[i]);
             all_cv[i].wait(lck, [&]{ return !all_pos[i].empty(); });
-
             end_pos[i] = all_pos[i].front();
             all_pos[i].pop();
 
-            done = (end_pos[i] == -1);
+            if (end_pos[i] == -1) stop = true;
         }
 
         // If no file has completed yet, create a new worker to sort singles
-        if (!done)
+        if (!stop)
         {
             workers.push_back(std::async(std::launch::async,
-                            &sort_span, file_list, start_pos, end_pos));
+                &sort_span, file_list, start_pos, end_pos, std::ref(stop)));
 
             start_pos = end_pos;
         }
 
         // If a file is completed or there are sufficient workers, collect results
-        if (done || workers.size() >= sorter_threads)
+        if (stop || workers.size() >= sorter_threads)
         {
             auto [pos, new_cd] = workers.front().get();
             workers.pop_front();
@@ -293,27 +302,31 @@ petmr_coincidences(PyObject *self, PyObject *args)
 
             // update the UI and interact with python
             PyEval_RestoreThread(_save);
+
             PyObject *term = PyObject_CallMethod(terminate, "is_set", "");
             PyObject_CallMethod(status_queue, "put", "((dK))", perc, ncoin);
+
             _save = PyEval_SaveThread();
 
-            // determine if stop is requested
-            if (term == Py_True)
-                done = true;
-
-            // determine if maximum events exceeded
-            if (max_events > 0 && ncoin > max_events)
-                done = true;
+            if ((term == Py_True) || (max_events > 0 && ncoin > max_events))
+            {
+                stop = true;
+            }
         }
     }
 
     PyEval_RestoreThread(_save);
 
+    stop = true;
     for (auto &scanner : tt_scan)
         scanner.join();
 
     return CoincidenceData::to_py_data(cd);
 }
+
+/*
+ * Load listmode coincidence data and return a dataframe-like object
+ */
 
 static PyObject*
 petmr_load(PyObject *self, PyObject *args)
@@ -322,9 +335,13 @@ petmr_load(PyObject *self, PyObject *args)
     if (!PyArg_ParseTuple(args, "s", &fname))
         return NULL;
 
-    auto cd = CoincidenceData::read(std::string(fname));
+    auto cd = CoincidenceData::read(fname, 100'000'000);
     return CoincidenceData::to_py_data(cd);
 }
+
+/*
+ * Store a dataframe-like object as listmode coincidence data
+ */
 
 static PyObject*
 petmr_store(PyObject *self, PyObject *args)
@@ -339,6 +356,36 @@ petmr_store(PyObject *self, PyObject *args)
 
     std::ofstream f(fname);
     CoincidenceData::write(f, cd);
+
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+petmr_sinogram(PyObject *self, PyObject *args)
+{
+    const char *coincidence_file, *lut_dir;
+    if (!PyArg_ParseTuple(args, "ss", &coincidence_file, &lut_dir))
+        return NULL;
+
+    Michelogram m (lut_dir);
+
+    auto cd = CoincidenceData::read(coincidence_file);
+    auto incr = cd.size() / 100, perc = 0UL, last_perc = 0UL;
+
+    for (uint64_t i = 0; i < cd.size(); i++)
+    {
+        auto c = cd[i];
+        m.add_event(c);
+
+        perc = i / incr;
+        if (perc != last_perc)
+        {
+            std::cout << perc << std::endl;
+        }
+        last_perc = perc;
+    }
+
+    m.write_to("sinogram.raw");
 
     Py_RETURN_NONE;
 }

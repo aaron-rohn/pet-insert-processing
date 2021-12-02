@@ -28,11 +28,11 @@ SingleData::SingleData(const Single &s)
     
 CoincidenceData::CoincidenceData(const Single &a, const Single &b)
 {
-    const auto &[ev1, ev2] = a.block < b.block ?
+    const auto &[ev1, ev2] = a.blk < b.blk ?
         std::tie(a, b) : std::tie(b, a);
 
     SingleData sd1(ev1), sd2(ev2);
-    blk(ev1.block, ev2.block);
+    blk(ev1.blk, ev2.blk);
     tdiff((int64_t)ev1.abs_time - ev2.abs_time);
     e_a1(sd1.e1);
     e_a2(sd1.e2);
@@ -45,7 +45,7 @@ CoincidenceData::CoincidenceData(const Single &a, const Single &b)
 }
 
 std::vector<CoincidenceData>
-CoincidenceData::read(std::string fname)
+CoincidenceData::read(std::string fname, uint64_t max_events)
 {
     std::streampos fsize;
 
@@ -56,7 +56,7 @@ CoincidenceData::read(std::string fname)
 
     std::ifstream f(fname, std::ios::binary);
     uint64_t count = fsize / sizeof(CoincidenceData);
-    count = count > 100'000'000 ? 100'000'000 : count;
+    count = max_events > 0 && count > max_events ? max_events : count;
 
     std::cout << "Reading " << count << " entries from coincidence file: " <<
         fname << std::endl;
@@ -214,18 +214,19 @@ void find_tt_offset(
         std::string fname,
         std::mutex &l,
         std::condition_variable_any &cv,
-        std::queue<std::streampos> &q
+        std::queue<std::streampos> &q,
+        std::atomic_bool &stop
 ) {
     uint64_t tt_target = 0, tt_incr = 1000;
     std::ifstream f (fname, std::ios::in | std::ios::binary);
 
-    while (Single::go_to_tt(f, tt_target))
+    while (!stop && Record::go_to_tt(f, tt_target, stop))
     {
         tt_target += tt_incr;
 
         {
             std::lock_guard<std::mutex> lg(l);
-            q.push(f.tellg() - std::streamoff(Single::event_size));
+            q.push(f.tellg() - std::streamoff(Record::event_size));
         }
         cv.notify_all();
     }
@@ -234,6 +235,7 @@ void find_tt_offset(
         std::lock_guard<std::mutex> lg(l);
         q.push(-1);
     }
+
     cv.notify_all();
 }
 
@@ -245,7 +247,8 @@ void find_tt_offset(
 sorted_values sort_span(
         std::vector<std::string> fnames,
         std::vector<std::streampos> start_pos,
-        std::vector<std::streampos> end_pos
+        std::vector<std::streampos> end_pos,
+        std::atomic_bool &stop
 ) {
     auto n = fnames.size();
 
@@ -258,29 +261,29 @@ sorted_values sort_span(
     std::streampos fsize_to_process = 0;
     for (size_t i = 0; i < n; i++)
         fsize_to_process += (end_pos[i] - start_pos[i]);
-    size_t approx_singles = fsize_to_process / Single::event_size;
+    size_t approx_singles = fsize_to_process / Record::event_size;
 
     // Allocate storage to load all the singles
     std::vector<Single> singles;
     singles.reserve(approx_singles);
 
-    uint8_t data[Single::event_size];
-    std::vector<TimeTag> last_tt (Single::nmodules);
+    uint8_t data[Record::event_size];
+    std::vector<TimeTag> last_tt (Record::nmodules);
 
     // Load all the singles from each file
-    for (size_t i = 0; i < n; i++)
+    for (size_t i = 0; !stop && i < n; i++)
     {
         auto &f = files[i];
         f.seekg(start_pos[i]);
 
-        while (f.tellg() < end_pos[i])
+        while (!stop && f.good() && f.tellg() < end_pos[i])
         {
-            f.read((char*)data, Single::event_size);
-            Single::align(f, data);
+            Record::read(f, data);
+            Record::align(f, data);
 
-            auto mod = Single::get_module(data);
+            auto mod = Record::get_module(data);
 
-            if (Single::is_single(data))
+            if (Record::is_single(data))
             {
                 // Create single and heap sort by absolute time
                 singles.emplace_back(data, last_tt[mod]);
@@ -297,10 +300,10 @@ sorted_values sort_span(
     // sort heap with ascending absolute time
     std::sort_heap(singles.begin(), singles.end());
 
-    uint64_t width = 10;
+    uint64_t width = 5;
     std::vector<CoincidenceData> coincidences;
 
-    for (auto a = singles.begin(); a != singles.end(); ++a)
+    for (auto a = singles.begin(); !stop && a != singles.end(); ++a)
     {
         for (auto b = a + 1; b != singles.end() && (b->abs_time - a->abs_time < width); ++b)
         {

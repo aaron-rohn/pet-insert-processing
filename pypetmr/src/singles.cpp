@@ -1,4 +1,5 @@
 #include "singles.h"
+#include <thread>
 
 TimeTag::TimeTag(uint8_t data[])
 {
@@ -7,7 +8,8 @@ TimeTag::TimeTag(uint8_t data[])
     // { 5 , 1 , 2 }{ 4 , 4 }{ 8 }{ 8 }{ 8 }{ 8 }{ 8 }{ 8 }{ 8 }{ 8 }{ 8 }{ 8 }{ 8 }{ 8 }{ 8 }{ 8 }
     //       0          1      2    3    4    5    6    7    8    9   10   11   12   13   14   15
 
-    mod = Single::get_module(data);
+    mod = Record::get_module(data);
+
     uint64_t upper = (data[10] << 16) | (data[11] << 8) | data[12];
     uint64_t lower = (data[13] << 16) | (data[14] << 8) | data[15];
     value = (upper << 24) | lower;
@@ -19,6 +21,9 @@ Single::Single(uint8_t data[], const TimeTag &tt)
     // CRC | f |    b   |   E1   |    E2   |   E3    |   E4   |   E5    |   E6   |   E7    |   E8   |       TT
     // { 5 , 1 , 2 }{ 4 , 4 }{ 8 }{ 8 }{ 4 , 4 }{ 8 }{ 8 }{ 4 , 4 }{ 8 }{ 8 }{ 4 , 4 }{ 8 }{ 8 }{ 4 , 4 }{ 8 }{ 8 }
     //       0          1      2    3      4      5    6      7      8    9     10     11   12     13     14   15
+
+    blk = Record::get_block(data);
+    mod = Record::get_module(data);
 
     // Front energies
     energies[0] = ((data[1] << 8) | data[2]) & 0xFFF;   // A
@@ -32,45 +37,44 @@ Single::Single(uint8_t data[], const TimeTag &tt)
     energies[6] = ((data[10] << 8) | data[11]) & 0xFFF; // G
     energies[7] = (data[12] << 4) | (data[13] >> 4);    // H
 
-    block = get_block(data);
-    mod = get_module(data);
     time = ((data[13] << 16) | (data[14] << 8) | data[15]) & 0xFFFFF;
     abs_time = tt.value * TimeTag::clks_per_tt + time;
 }
 
-void Single::align(std::ifstream &f, uint8_t data[])
+void Record::align(std::ifstream &f, uint8_t data[])
 {
-    while (f.good() && !Single::is_header(data[0]))
+    while (f.good() && !is_header(data[0]))
     {
-        size_t n = Single::event_size;
-        for (size_t i = 1; i < Single::event_size; i++)
+        size_t n = event_size;
+        for (size_t i = 1; i < event_size; i++)
         {
-            if (Single::is_header(data[i]))
+            if (is_header(data[i]))
             {
-                std::memmove(data, data + i, Single::event_size - i);
+                std::memmove(data, data + i, event_size - i);
                 n = i;
                 break;
             }
         }
-        f.read((char*)(data + (Single::event_size - n)), n);
+        f.read((char*)(data + event_size - n), n);
     }
 }
 
-bool Single::go_to_tt(std::ifstream &f, uint64_t value)
-{
-    uint8_t data[Single::event_size];
-
-    while(f.good())
+bool Record::go_to_tt(
+        std::ifstream &f,
+        uint64_t value,
+        std::atomic_bool &stop
+) {
+    uint8_t data[event_size];
+    while(f.good() && !stop)
     {
-        f.read((char*)data, Single::event_size);
-        Single::align(f, data);
-
-        if (!Single::is_single(data))
+        read(f, data);
+        align(f, data);
+        
+        if (!is_single(data) && TimeTag(data).value >= value)
         {
-            TimeTag tt (data);
-            if (tt.value >= value) break;
+            break;
         }
     }
 
-    return f.good();
+    return f.good() && !stop;
 }

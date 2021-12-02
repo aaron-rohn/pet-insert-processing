@@ -1,5 +1,6 @@
 import pandas as pd
 import tkinter as tk
+from tkinter import ttk
 from ui_elements import FileSelector, ScrolledListbox, Plots
 
 class App():
@@ -33,11 +34,18 @@ class App():
         self.original = None
         self.d = None
 
-        self.file = FileSelector(root, self.return_data, self.collect_data)
-        self.block = ScrolledListbox(root)
+        self.base = ttk.Notebook(root)
+        self.listmode_frame = tk.Frame(self.base)
+        self.sinogram_frame = tk.Frame(self.base)
+        self.base.add(self.listmode_frame, text = "Listmode Processing")
+        self.base.add(self.sinogram_frame, text = "Sinogram Processing")
+        self.base.pack()
+
+        self.file = FileSelector(self.listmode_frame, self.return_data, self.collect_data)
+        self.block = ScrolledListbox(self.listmode_frame)
         self.file.pack()
         self.block.pack()
-        self.plots = Plots(root, self.return_data, self.return_block, self.set_block)
+        self.plots = Plots(self.listmode_frame, self.return_data, self.return_block, self.set_block)
         self.block.bind(self.plots.plots_update)
 
 root = tk.Tk()

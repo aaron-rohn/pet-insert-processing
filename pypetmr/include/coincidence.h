@@ -5,6 +5,7 @@
 #include <queue>
 #include <future>
 #include <algorithm>
+#include <tuple>
 #include "singles.h"
 
 #include <Python.h>
@@ -26,7 +27,7 @@ struct CoincidenceData {
     CoincidenceData() {};
     CoincidenceData(const Single&, const Single&);
 
-    static std::vector<CoincidenceData> read(std::string);
+    static std::vector<CoincidenceData> read(std::string, uint64_t=0);
     static void write(std::ofstream&, const std::vector<CoincidenceData>&);
 
     static PyObject *to_py_data(const std::vector<CoincidenceData>&);
@@ -54,13 +55,23 @@ struct CoincidenceData {
     inline void  y_a(uint16_t val) { data[7] = val; }
     inline void  x_b(uint16_t val) { data[8] = val; }
     inline void  y_b(uint16_t val) { data[9] = val; }
+
+    inline std::tuple<uint8_t,uint8_t> blk() const
+    { return std::make_tuple(blka(), blkb()); };
+
+    inline std::tuple<uint16_t,uint16_t> e_sum() const
+    { return std::make_tuple(e_a1()+e_a2(), e_b1()+e_b2()); };
+    
+    inline std::tuple<uint16_t,uint16_t,uint16_t,uint16_t> pos() const
+    { return std::make_tuple(x_a(),y_a(),x_b(),y_b()); };
 };
 
 void find_tt_offset(
         std::string,
         std::mutex&,
         std::condition_variable_any&,
-        std::queue<std::streampos>&
+        std::queue<std::streampos>&,
+        std::atomic_bool&
 );
 
 using sorted_values = std::tuple<std::vector<std::streampos>,
@@ -69,7 +80,8 @@ using sorted_values = std::tuple<std::vector<std::streampos>,
 sorted_values sort_span(
         std::vector<std::string>,
         std::vector<std::streampos>,
-        std::vector<std::streampos>
+        std::vector<std::streampos>,
+        std::atomic_bool&
 );
 
 #endif

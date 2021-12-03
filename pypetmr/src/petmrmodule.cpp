@@ -24,14 +24,18 @@ static PyObject *petmr_singles(PyObject*, PyObject*);
 static PyObject *petmr_coincidences(PyObject*, PyObject*);
 static PyObject *petmr_load(PyObject*, PyObject*);
 static PyObject *petmr_store(PyObject*, PyObject*);
-static PyObject *petmr_sinogram(PyObject*, PyObject*);
+static PyObject *petmr_sort_sinogram(PyObject*, PyObject*);
+static PyObject *petmr_load_sinogram(PyObject*, PyObject*);
+static PyObject *petmr_save_sinogram(PyObject*, PyObject*);
 
 static PyMethodDef petmrMethods[] = {
     {"singles", petmr_singles, METH_VARARGS, "read PET/MRI insert singles data"},
     {"coincidences", petmr_coincidences, METH_VARARGS, "read PET/MRI insert singles data, and sort coincidences"},
     {"load", petmr_load, METH_VARARGS, "Load coincidence listmode data"},
     {"store", petmr_store, METH_VARARGS, "Store coincidence listmode data"},
-    {"sinogram", petmr_sinogram, METH_VARARGS, "Sort coincidence data into a sinogram"},
+    {"sort_sinogram", petmr_sort_sinogram, METH_VARARGS, "Sort coincidence data into a sinogram"},
+    {"load_sinogram", petmr_load_sinogram, METH_VARARGS, "Load a sinogram from disk"},
+    {"save_sinogram", petmr_save_sinogram, METH_VARARGS, "Save a sinogram to disk"},
     {NULL, NULL, 0, NULL}
 };
 
@@ -361,7 +365,7 @@ petmr_store(PyObject *self, PyObject *args)
 }
 
 static PyObject*
-petmr_sinogram(PyObject *self, PyObject *args)
+petmr_sort_sinogram(PyObject *self, PyObject *args)
 {
     const char *coincidence_file, *lut_dir;
     if (!PyArg_ParseTuple(args, "ss", &coincidence_file, &lut_dir))
@@ -385,7 +389,31 @@ petmr_sinogram(PyObject *self, PyObject *args)
         last_perc = perc;
     }
 
-    m.write_to("sinogram.raw");
+    return m.to_py_data();
+}
+
+static PyObject*
+petmr_load_sinogram(PyObject* self, PyObject* args)
+{
+    const char *sinogram_file;
+    if (!PyArg_ParseTuple(args, "s", &sinogram_file))
+        return NULL;
+
+    Michelogram m;
+    m.read_from(sinogram_file);
+    return m.to_py_data();
+}
+
+static PyObject*
+petmr_save_sinogram(PyObject* self, PyObject* args)
+{
+    const char *sinogram_file;
+    PyObject *arr;
+    if (!PyArg_ParseTuple(args, "sO", &sinogram_file, &arr))
+        return NULL;
+
+    Michelogram m(arr);
+    m.write_to(sinogram_file);
 
     Py_RETURN_NONE;
 }

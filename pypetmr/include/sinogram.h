@@ -5,7 +5,7 @@
 #include <vector>
 #include <tuple>
 #include <coincidence.h>
-
+#include <Python.h>
 #include <json.hpp>
 using json = nlohmann::json;
 
@@ -30,9 +30,9 @@ class Geometry
 
 class Sinogram: Geometry
 {
-    std::vector<int> s;
-
     public:
+
+    std::vector<int> s;
 
     Sinogram(): s(std::vector<int>(dim_theta*dim_r, 0)) {};
     inline int& operator() (int theta, int r){ return s[theta*dim_r + r]; };
@@ -61,6 +61,7 @@ class Michelogram: Geometry
          * Within each segment, iteration starts with the plane nearest ring 0
          * and moves towards the maximum positive plane.
          * 'upper' as used here corresponds to negative segments (rd < 0).
+         * Horizontal axis is the first ring (ring 0), vert. axis is ring 1
          */
 
         int r0 = 0, rd = 0;
@@ -68,6 +69,8 @@ class Michelogram: Geometry
         Michelogram &m;
 
         public:
+
+        int h = 0, v = 0;
 
         Iterator(int rd, Michelogram &m):
             rd(rd), m(m) {};
@@ -85,12 +88,22 @@ class Michelogram: Geometry
                 upper = !upper;
                 r0 = rd;
             }
+
+            if (upper)
+            {
+                h = r0 - rd;
+                v = r0;
+            }
+            else
+            {
+                h = r0;
+                v = r0 - rd;
+            }
+
             return *this;
         }
 
-        // r0 is the horiz. coord in the Michelogram, r1 = r0 - rd is the vert. coord
-        Sinogram& operator*() const
-        { return upper ? m(r0 - rd, r0) : m(r0, r0 - rd); };
+        Sinogram& operator*() const { return m(h, v); };
 
         // Compare ring difference - only valid to determine the end iterator
         friend bool operator!=(Iterator &a, Iterator &b)
@@ -114,8 +127,13 @@ class Michelogram: Geometry
         photopeaks(load_photopeaks(base_dir)),
         m(std::vector<Sinogram>(nring*nring)) {}
 
+    Michelogram():
+        m(std::vector<Sinogram>(nring*nring)) {};
+
+    Michelogram(PyObject*);
+
     // first arg is horiz. index, second arg is vert. index
-    inline Sinogram& operator() (int r0, int r1){ return m[r1*nring + r0]; };
+    inline Sinogram& operator() (int h, int v){ return m[v*nring + h]; };
 
     static std::vector<std::vector<double>> load_photopeaks(std::string);
     static std::vector<std::vector<int>> load_luts(std::string);
@@ -123,6 +141,8 @@ class Michelogram: Geometry
     void add_event(const CoincidenceData&);
     void write_to(std::string);
     void read_from(std::string);
+
+    PyObject *to_py_data();
 };
 
 #endif

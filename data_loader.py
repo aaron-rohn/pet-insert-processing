@@ -41,7 +41,6 @@ class DataLoaderPopup:
 
         if not self.input_files: raise ValueError("No input file specified")
         _, ext = os.path.splitext(self.input_files[0])
-        self.allow_store = False
 
         if ext == '.COIN':
             # Just load the coincidences, regardless of coincidence sorting checkbox
@@ -55,7 +54,7 @@ class DataLoaderPopup:
                         initialdir = os.path.expanduser('~'),
                         filetypes = coincidence_filetypes) or None
                 self.bg = threading.Thread(target = self.sort_coincidences)
-                self.allow_store = not bool(self.output_file)
+
             else:
                 # Just load the singles
                 self.bg = threading.Thread(target = self.load_singles)
@@ -75,7 +74,6 @@ class DataLoaderPopup:
 
         self.fileselector.label.config(text = self.input_files)
         self.fileselector.load_button.config(state = tk.DISABLED)
-        self.fileselector.store_coincidence_data.config(state = tk.DISABLED)
         self.bg.start()
         self.check()
 
@@ -87,25 +85,23 @@ class DataLoaderPopup:
         data queue, return it to the caller via the provided callback,
         update UI elements to reflect the exit state, and finish
         """
+
         while not self.stat_queue.empty():
             perc, counts, *label = self.stat_queue.get()
             label = label[0] if label else 'Counts'
-
             self.counts_label.config(text = f'{label}: {counts:,}')
             self.progbar['value'] = perc
 
         if self.bg.is_alive():
             self.popup.after(interval, self.check)
+
         else:
             if not self.data_queue.empty():
                 self.update_data_cb(self.data_queue.get())
             else:
                 self.update_data_cb(RuntimeError("Data loading failed"))
-                self.allow_store = False
 
             self.popup.destroy()
-            self.fileselector.store_coincidence_data.config(
-                    state = tk.NORMAL if self.allow_store else tk.DISABLED)
             self.fileselector.load_button.config(state = tk.NORMAL)
 
     def on_close(self):
@@ -116,7 +112,6 @@ class DataLoaderPopup:
         self.terminate.set()
         self.bg.join()
         self.check()
-        gc.collect()
 
     def load_singles(self):
         """ Load singles data from one or more .SGL files. If multiple files are provided,
@@ -130,8 +125,6 @@ class DataLoaderPopup:
             perc = float(i + 1) / len(self.input_files) * 100
             self.stat_queue.put((perc, i + 1, "Completed"))
         
-        #d = [petmr.singles(f) for f in self.input_files]
-
         d = [pd.DataFrame(dict(zip(names, di))) for di in d]
         d = pd.concat(d, ignore_index = True)
         d = d.assign(e1  = lambda df: df.loc[:,'A1':'D1'].sum(axis=1),
@@ -144,6 +137,7 @@ class DataLoaderPopup:
                      y2  = lambda df: (df['A2'] + df['D2']) / df['e2'],
                      x   = lambda df: df['x1'],
                      y   = lambda df: (df['y1'] + df['y2']) / 2.0)
+
         self.data_queue.put(d)
 
     def sort_coincidences(self):
@@ -151,16 +145,16 @@ class DataLoaderPopup:
         multiple files are provided, they must be time-aligned from a single acquisition
         """
         # (a,b) -> [a_df, b_df] -> ab_df
-        ab = petmr.coincidences(
+        d = petmr.coincidences(
                 self.terminate,
                 self.stat_queue,
                 self.input_files,
                 self.output_file)
 
-        d = [coincidence_to_df(c) for c in ab]
+        d = [coincidence_to_df(c) for c in d]
         d = pd.concat(d, ignore_index = True)
         d = prepare_coincidences(d)
-        self.data_queue.put((ab, d))
+        self.data_queue.put(d)
 
     def load_coincidences(self):
         """ Load coincidence data from a file on disk. If multiple file are provided,
@@ -171,8 +165,6 @@ class DataLoaderPopup:
         d = [coincidence_to_df(di) for di in d]
         d = pd.concat(d, ignore_index = True)
         d = prepare_coincidences(d)
-
-        d.info(memory_usage = 'deep')
-
+        #d.info(memory_usage = 'deep')
         self.data_queue.put(d)
 

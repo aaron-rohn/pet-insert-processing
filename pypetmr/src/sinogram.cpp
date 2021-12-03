@@ -1,5 +1,12 @@
+
+#define NO_IMPORT_ARRAY
+#define PY_ARRAY_UNIQUE_SYMBOL petmr_ARRAY_API
+
 #include <sinogram.h>
 #include <singles.h>
+
+#include <numpy/ndarraytypes.h>
+#include <numpy/arrayobject.h>
 
 void Sinogram::add_event(int idx1, int idx2)
 {
@@ -148,4 +155,52 @@ void Michelogram::read_from(std::string fname)
     std::ifstream f(fname, std::ios::in | std::ios::binary);
     for (auto &s : *this)
         s.read_from(f);
+}
+
+Michelogram::Michelogram(PyObject *arr):
+    m(std::vector<Sinogram>(nring*nring))
+{
+    int ndim = PyArray_NDIM(arr);
+    if (ndim != 4)
+    {
+        std::cerr << "Invalid number of dimensions in numpy array: " <<
+            ndim << std::endl;
+        return;
+    }
+
+    npy_intp *dims = PyArray_DIMS(arr);
+    if (dims[0] != nring ||
+        dims[1] != nring ||
+        dims[2] != dim_theta ||
+        dims[3] != dim_r)
+    {
+        std::cerr << "Invalid sinogram dimensions: ";
+        for (int i = 0; i < 4; i++) std::cerr << dims[i] << " ";
+        std::cerr << std::endl;
+        return;
+    }
+
+    for (auto b = begin(), e = end(); b != e; ++b)
+    {
+        int *py_sino_ptr = (int*)PyArray_GETPTR4((PyArrayObject*)arr, b.v, b.h, 0, 0);
+
+        auto &sinogram = (*b).s;
+        std::memcpy(sinogram.data(), py_sino_ptr, sinogram.size()*sizeof(int));
+    }
+}
+
+PyObject *Michelogram::to_py_data()
+{
+    npy_intp dims[] = {nring, nring, dim_theta, dim_r};
+    PyObject *arr = PyArray_SimpleNew(4, dims, NPY_INT);
+
+    for (auto b = begin(), e = end(); b != e; ++b)
+    {
+        int *py_sino_ptr = (int*)PyArray_GETPTR4((PyArrayObject*)arr, b.v, b.h, 0, 0);
+
+        auto &sinogram = (*b).s;
+        std::memcpy(py_sino_ptr, sinogram.data(), sinogram.size()*sizeof(int));
+    }
+
+    return arr;
 }

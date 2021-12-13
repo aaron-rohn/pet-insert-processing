@@ -368,15 +368,23 @@ static PyObject*
 petmr_sort_sinogram(PyObject *self, PyObject *args)
 {
     const char *coincidence_file, *lut_dir;
-    if (!PyArg_ParseTuple(args, "ss", &coincidence_file, &lut_dir))
+    PyObject *terminate, *status_queue, *data_queue;
+    if (!PyArg_ParseTuple(args, "ssOOO",
+                &coincidence_file,
+                &lut_dir,
+                &terminate,
+                &status_queue,
+                &data_queue))
         return NULL;
 
+    PyThreadState *_save = PyEval_SaveThread();
+
     Michelogram m (lut_dir);
-
     auto cd = CoincidenceData::read(coincidence_file);
-    auto incr = cd.size() / 100, perc = 0UL, last_perc = 0UL;
+    uint64_t incr = cd.size() / 100, perc = 0UL, last_perc = 0UL;
+    bool stop = false;
 
-    for (uint64_t i = 0; i < cd.size(); i++)
+    for (uint64_t i = 0; !stop && i < cd.size(); i++)
     {
         auto c = cd[i];
         m.add_event(c);
@@ -384,12 +392,19 @@ petmr_sort_sinogram(PyObject *self, PyObject *args)
         perc = i / incr;
         if (perc != last_perc)
         {
-            std::cout << perc << std::endl;
+            PyEval_RestoreThread(_save);
+            PyObject *term = PyObject_CallMethod(terminate, "is_set", "");
+            PyObject_CallMethod(status_queue, "put", "K", perc);
+            if (term == Py_True) stop = true;
+            _save = PyEval_SaveThread();
         }
         last_perc = perc;
     }
 
-    return m.to_py_data();
+    PyEval_RestoreThread(_save);
+    PyObject *data = m.to_py_data();
+    PyObject_CallMethod(data_queue, "put", "O", data);
+    Py_RETURN_NONE;
 }
 
 static PyObject*

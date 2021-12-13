@@ -125,8 +125,9 @@ void Michelogram::add_event(const CoincidenceData &c)
 
     int rowa = xa / ncrystals_per_block;
     int rowb = xb / ncrystals_per_block;
-    int ra = rowa + (ba % nblocks_axial)*ncrystals_per_block;
-    int rb = rowb + (bb % nblocks_axial)*ncrystals_per_block;
+    int blka_ax = ba % nblocks_axial, blkb_ax = bb % nblocks_axial;
+    int ra = rowa + blka_ax*ncrystals_per_block + blka_ax;
+    int rb = rowb + blkb_ax*ncrystals_per_block + blkb_ax;
 
     auto &s = (*this)(ra, rb);
 

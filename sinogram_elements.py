@@ -6,10 +6,12 @@ from matplotlib.figure import Figure, SubplotParams
 
 import petmr
 from data_loader import coincidence_filetypes
+from sinogram_loader import SinogramLoaderPopup
 
 class SinogramDisplay:
     def __init__(self, root):
         self.sino_data = None
+        self.ldr = None
         self.root = root
         self.button_frame = tk.Frame(self.root)
 
@@ -51,11 +53,12 @@ class SinogramDisplay:
 
     def count_map_draw(self):
         self.plane_counts_plt.clear()
-        self.plane_counts_plt.imshow(
-                self.sino_data.sum((2,3)),
-                aspect = 'auto')
-        self.plane_counts_plt.invert_yaxis()
-        self.plane_counts_canvas.draw()
+        if self.sino_data is not None:
+            self.plane_counts_plt.imshow(
+                    self.sino_data.sum((2,3)),
+                    aspect = 'auto')
+            self.plane_counts_plt.invert_yaxis()
+            self.plane_counts_canvas.draw()
 
     def click(self, ev):
         self.sinogram_plt.clear()
@@ -78,9 +81,22 @@ class SinogramDisplay:
                 title = "Select configuration directory",
                 initialdir = base)
 
-        if fname and cfgdir:
-            self.sino_data = petmr.sort_sinogram(fname, cfgdir)
+        def sorting_callback(result):
+            if isinstance(result, RuntimeError):
+                self.sino_data = None
+                tk.messagebox.showerror(message =
+                        f'{type(result).__name__}: {" ".join(result.args)}')
+            else:
+                self.sino_data = result
+
             self.count_map_draw()
+            self.ldr = None
+
+        if fname and cfgdir:
+            self.ldr = SinogramLoaderPopup(self.root, sorting_callback, fname, cfgdir)
+
+            #self.sino_data = petmr.sort_sinogram(fname, cfgdir)
+            #self.count_map_draw()
 
     def load_sinogram(self):
         fname = tk.filedialog.askopenfilename(

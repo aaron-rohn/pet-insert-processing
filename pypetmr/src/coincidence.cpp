@@ -307,8 +307,14 @@ sorted_values sort_span(
     {
         for (auto b = a + 1; b != singles.end() && (b->abs_time - a->abs_time < width); ++b)
         {
-            if (a->mod != b->mod)
+            const auto &ma = a->mod, &mb = b->mod;
+
+            if (ma != mb &&
+                ma != ((mb + 1) % Record::nmodules) &&
+                ma != ((mb + Record::nmodules - 1) % Record::nmodules))
+            {
                 coincidences.emplace_back(*a, *b);
+            }
         }
     }
 

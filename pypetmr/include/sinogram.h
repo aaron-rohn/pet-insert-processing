@@ -4,6 +4,7 @@
 #include <map>
 #include <vector>
 #include <tuple>
+#include <singles.h>
 #include <coincidence.h>
 #include <Python.h>
 #include <json.hpp>
@@ -14,11 +15,12 @@ class Geometry
     public:
     static const int ncrystals_per_block = 19;
 
-    static const int nblocks_per_ring = 16;
     static const int nblocks_axial = 4;
-    static const int nring = nblocks_axial * ncrystals_per_block;
 
-    static const int npix  = ncrystals_per_block * nblocks_per_ring;
+    // allow for 1 crystal gap between blocks
+    static const int nring = nblocks_axial*ncrystals_per_block + (nblocks_axial - 1);
+
+    static const int npix  = ncrystals_per_block * Record::nmodules;
     static const int dim_theta = npix;
     static const int dim_r     = npix / 2;
 

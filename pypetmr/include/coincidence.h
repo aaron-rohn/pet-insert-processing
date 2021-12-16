@@ -10,18 +10,10 @@
 
 #include <Python.h>
 
-struct SingleData {
-    double x1, y1, x2, y2, x, y;
-    uint16_t e1 = 0, e2 = 0;
-    SingleData() {};
-    SingleData(const Single&);
-};
-
 struct CoincidenceData {
-    static const long ncol = 6;
+    // Columns in python data - block, e1, e2, x, y
+    static const long ncol = 5;
     static const size_t vals_per_ev = 10;
-    static const size_t scale = 511;
-
     uint16_t data[vals_per_ev] = {0};
 
     CoincidenceData() {};

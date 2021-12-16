@@ -18,12 +18,15 @@ SingleData::SingleData(const Single &s)
         e2 += s.energies[i + 4];
     }
 
+    // Fractional values 0-1
     x1 = (double)(s.energies[0] + s.energies[1]) / e1;
     y1 = (double)(s.energies[0] + s.energies[3]) / e1;
     x2 = (double)(s.energies[4] + s.energies[5]) / e2;
     y2 = (double)(s.energies[4] + s.energies[7]) / e2;
-    x = x1;
-    y = (y1 + y2) / 2.0;
+
+    // Pixel values 0-511
+    x = std::round(x1 * scale);
+    y = std::round((y1 + y2) / 2.0 * scale);
 }
     
 CoincidenceData::CoincidenceData(const Single &a, const Single &b)
@@ -38,10 +41,10 @@ CoincidenceData::CoincidenceData(const Single &a, const Single &b)
     e_a2(sd1.e2);
     e_b1(sd2.e1);
     e_b2(sd2.e2);
-    x_a(std::round(sd1.x * scale));
-    y_a(std::round(sd1.y * scale));
-    x_b(std::round(sd2.x * scale));
-    y_b(std::round(sd2.y * scale));
+    x_a(sd1.x);
+    y_a(sd1.y);
+    x_b(sd2.x);
+    y_b(sd2.y);
 }
 
 std::vector<CoincidenceData>
@@ -58,13 +61,8 @@ CoincidenceData::read(std::string fname, uint64_t max_events)
     uint64_t count = fsize / sizeof(CoincidenceData);
     count = max_events > 0 && count > max_events ? max_events : count;
 
-    std::cout << "Reading " << count << " entries from coincidence file: " <<
-        fname << std::endl;
-
     std::vector<CoincidenceData> cd(count);
     f.read((char*)cd.data(), count * sizeof(CoincidenceData));
-
-    std::cout << "Finished reading" << std::endl;
 
     return cd;
 }
@@ -79,19 +77,14 @@ void CoincidenceData::write(
 PyObject *CoincidenceData::to_py_data(
         const std::vector<CoincidenceData> &cd
 ) {
-    PyObject *acols[ncol], *bcols[ncol];
+    PyArrayObject *acols[ncol], *bcols[ncol];
     npy_intp nrow = cd.size();
 
-    std::cout << "Begin creating python objects: 2x" <<
-        ncol << "x" << nrow << std::endl;
-
-    for (size_t i = 0; i < ncol-1; i++)
+    for (size_t i = 0; i < ncol; i++)
     {
-        acols[i] = PyArray_SimpleNew(1, &nrow, NPY_UINT16);
-        bcols[i] = PyArray_SimpleNew(1, &nrow, NPY_UINT16);
+        acols[i] = (PyArrayObject*)PyArray_SimpleNew(1, &nrow, NPY_UINT16);
+        bcols[i] = (PyArrayObject*)PyArray_SimpleNew(1, &nrow, NPY_UINT16);
     }
-    acols[ncol-1] = PyArray_SimpleNew(1, &nrow, NPY_INT16);
-    bcols[ncol-1] = PyArray_SimpleNew(1, &nrow, NPY_INT16);
 
     for (npy_int i = 0; i < nrow; i++)
     {
@@ -100,29 +93,23 @@ PyObject *CoincidenceData::to_py_data(
         *((uint16_t*)PyArray_GETPTR1(acols[2], i)) = cd[i].e_a2();
         *((uint16_t*)PyArray_GETPTR1(acols[3], i)) = cd[i].x_a();
         *((uint16_t*)PyArray_GETPTR1(acols[4], i)) = cd[i].y_a();
-        *(( int16_t*)PyArray_GETPTR1(acols[5], i)) = cd[i].tdiff();
 
         *((uint16_t*)PyArray_GETPTR1(bcols[0], i)) = cd[i].blkb();
         *((uint16_t*)PyArray_GETPTR1(bcols[1], i)) = cd[i].e_b1();
         *((uint16_t*)PyArray_GETPTR1(bcols[2], i)) = cd[i].e_b2();
         *((uint16_t*)PyArray_GETPTR1(bcols[3], i)) = cd[i].x_b();
         *((uint16_t*)PyArray_GETPTR1(bcols[4], i)) = cd[i].y_b();
-        *(( int16_t*)PyArray_GETPTR1(bcols[5], i)) = cd[i].tdiff();
     }
 
     PyObject *a = PyList_New(ncol), *b = PyList_New(ncol);
     for (size_t i = 0; i < ncol; i++)
     {
-        // block, e1, e2, x, y, tdiff
-        PyList_SetItem(a, i, acols[i]);
-        PyList_SetItem(b, i, bcols[i]);
+        PyList_SetItem(a, i, (PyObject*)acols[i]);
+        PyList_SetItem(b, i, (PyObject*)bcols[i]);
     }
     PyObject *out = PyTuple_New(2);
     PyTuple_SetItem(out, 0, a);
     PyTuple_SetItem(out, 1, b);
-
-    std::cout << "Finished creating python objects" << std::endl;
-
     return out;
 }
 
@@ -132,7 +119,7 @@ CoincidenceData::from_py_data(PyObject *obj)
     std::vector<CoincidenceData> cd;
     PyObject *a, *b;
     size_t ncola = 0, ncolb = 0;
-    PyObject *acols[ncol] = {NULL}, *bcols[ncol] = {NULL};
+    PyArrayObject *acols[ncol] = {NULL}, *bcols[ncol] = {NULL};
     npy_intp *ashape, *bshape;
     npy_intp nrow = 0;
 
@@ -153,8 +140,8 @@ CoincidenceData::from_py_data(PyObject *obj)
 
     for (size_t i = 0; i < ncol; i++)
     {
-        acols[i] = PyList_GetItem(a, i);
-        bcols[i] = PyList_GetItem(b, i);
+        acols[i] = (PyArrayObject*)PyList_GetItem(a, i);
+        bcols[i] = (PyArrayObject*)PyList_GetItem(b, i);
 
         // Each list item must be a numpy array with one dimension
         if (PyArray_NDIM(acols[i]) != 1 || PyArray_NDIM(bcols[i]) != 1) goto error;
@@ -166,20 +153,10 @@ CoincidenceData::from_py_data(PyObject *obj)
         // Each array must have the same number of items
         if (ashape[0] != nrow || bshape[0] != nrow) goto error;
 
-        // The first five items must be uint16, the sixth must be int16
-        if (i < ncol - 1)
-        {
-            if (PyArray_TYPE(acols[i]) != NPY_UINT16 ||
-                PyArray_TYPE(bcols[i]) != NPY_UINT16) goto error;
-        }
-        else
-        {
-            if (PyArray_TYPE(acols[i]) != NPY_INT16 ||
-                PyArray_TYPE(bcols[i]) != NPY_INT16) goto error;
-        }
+        if (PyArray_TYPE(acols[i]) != NPY_UINT16 ||
+            PyArray_TYPE(bcols[i]) != NPY_UINT16) goto error;
     }
 
-    std::cout << "Number of coincidences: " << nrow << std::endl;
     cd.resize(nrow);
     
     for (npy_intp i = 0; i < nrow; i++)
@@ -194,7 +171,7 @@ CoincidenceData::from_py_data(PyObject *obj)
         cd[i].y_a(*(uint16_t*)PyArray_GETPTR1(acols[4],i));
         cd[i].x_b(*(uint16_t*)PyArray_GETPTR1(bcols[3],i));
         cd[i].y_b(*(uint16_t*)PyArray_GETPTR1(bcols[4],i));
-        cd[i].tdiff(*(int16_t*)PyArray_GETPTR1(acols[5],i));
+        cd[i].tdiff(0);
     }
 
     return cd;
@@ -228,6 +205,7 @@ void find_tt_offset(
             std::lock_guard<std::mutex> lg(l);
             q.push(f.tellg() - std::streamoff(Record::event_size));
         }
+
         cv.notify_all();
     }
 
@@ -303,15 +281,15 @@ sorted_values sort_span(
     uint64_t width = 5;
     std::vector<CoincidenceData> coincidences;
 
-    for (auto a = singles.begin(); !stop && a != singles.end(); ++a)
+    for (auto a = singles.begin(), e = singles.end(); !stop && a != e; ++a)
     {
-        for (auto b = a + 1; b != singles.end() && (b->abs_time - a->abs_time < width); ++b)
+        for (auto b = a + 1; b != e && (b->abs_time - a->abs_time < width); ++b)
         {
             const auto &ma = a->mod, &mb = b->mod;
 
             if (ma != mb &&
-                ma != ((mb + 1) % Record::nmodules) &&
-                ma != ((mb + Record::nmodules - 1) % Record::nmodules))
+                ma != Record::module_above(mb) &&
+                ma != Record::module_below(mb))
             {
                 coincidences.emplace_back(*a, *b);
             }

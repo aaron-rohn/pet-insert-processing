@@ -1,8 +1,4 @@
-import os
-import gc
-import threading
-import queue
-import petmr
+import os, threading, queue, traceback, petmr
 import pandas as pd
 import tkinter as tk
 import numpy as np
@@ -11,11 +7,11 @@ from tkinter.ttk import Progressbar
 singles_filetypes = [("Singles",".SGL")]
 coincidence_filetypes = [("Coincidences",".COIN")]
 
-def coincidence_to_df(lst_of_arrays):
-    names = ['block', 'e1', 'e2', 'x', 'y', 'tdiff']
+def data_to_df(lst_of_arrays):
+    names = ['block', 'e1', 'e2', 'x', 'y']
     return pd.DataFrame(np.column_stack(lst_of_arrays), columns = names)
 
-def prepare_coincidences(d):
+def prepare_df(d):
     """ Add the columns necessary for plotting to the coincidence dataframe """
     d['x'] /= 511
     d['y'] /= 511
@@ -51,7 +47,7 @@ class DataLoaderPopup:
                 # Sort singles to coincidences
                 self.output_file = tk.filedialog.asksaveasfilename(
                         title = "Output file, or none",
-                        initialdir = os.path.expanduser('~'),
+                        initialdir = os.path.dirname(self.input_files[0]),
                         filetypes = coincidence_filetypes) or None
                 self.bg = threading.Thread(target = self.sort_coincidences)
 
@@ -117,26 +113,23 @@ class DataLoaderPopup:
         """ Load singles data from one or more .SGL files. If multiple files are provided,
         the data will be concatenated into a single dataframe
         """
-        names = ['block', 'time', 'A1', 'B1', 'C1', 'D1', 'A2', 'B2', 'C2', 'D2']
 
-        d = []
-        for i,f in enumerate(self.input_files):
-            d.append(petmr.singles(f))
-            perc = float(i + 1) / len(self.input_files) * 100
-            self.stat_queue.put((perc, i + 1, "Completed"))
-        
-        d = [pd.DataFrame(dict(zip(names, di))) for di in d]
-        d = pd.concat(d, ignore_index = True)
-        d = d.assign(e1  = lambda df: df.loc[:,'A1':'D1'].sum(axis=1),
-                     e2  = lambda df: df.loc[:,'A2':'D2'].sum(axis=1),
-                     es  = lambda df: df['e1'] + df['e2'],
-                     doi = lambda df: df['e1'] / df['es'],
-                     x1  = lambda df: (df['A1'] + df['B1']) / df['e1'],
-                     y1  = lambda df: (df['A1'] + df['D1']) / df['e1'],
-                     x2  = lambda df: (df['A2'] + df['B2']) / df['e2'],
-                     y2  = lambda df: (df['A2'] + df['D2']) / df['e2'],
-                     x   = lambda df: df['x1'],
-                     y   = lambda df: (df['y1'] + df['y2']) / 2.0)
+        try:
+            d = []
+            for i,f in enumerate(self.input_files):
+                di = petmr.singles(f)
+                di = data_to_df(di)
+                d.append(di)
+
+                perc = float(i + 1) / len(self.input_files) * 100
+                self.stat_queue.put((perc, i + 1, "Completed"))
+            
+            d = pd.concat(d, ignore_index = True)
+            d = prepare_df(d)
+
+        except Exception as ex:
+            print(traceback.format_exc())
+            d = ex
 
         self.data_queue.put(d)
 
@@ -144,16 +137,23 @@ class DataLoaderPopup:
         """ Load coincicdence data by sorting the events in one or more singles files. If
         multiple files are provided, they must be time-aligned from a single acquisition
         """
-        # (a,b) -> [a_df, b_df] -> ab_df
-        d = petmr.coincidences(
-                self.terminate,
-                self.stat_queue,
-                self.input_files,
-                self.output_file)
 
-        d = [coincidence_to_df(c) for c in d]
-        d = pd.concat(d, ignore_index = True)
-        d = prepare_coincidences(d)
+        try:
+            # (a,b) -> [a_df, b_df] -> ab_df
+            d = petmr.coincidences(
+                    self.terminate,
+                    self.stat_queue,
+                    self.input_files,
+                    self.output_file)
+
+            d = [data_to_df(c) for c in d]
+            d = pd.concat(d, ignore_index = True)
+            d = prepare_df(d)
+
+        except Exception as ex:
+            print(traceback.format_exc())
+            d = ex
+
         self.data_queue.put(d)
 
     def load_coincidences(self):
@@ -161,10 +161,15 @@ class DataLoaderPopup:
         the dataframes will be concatenated
         """
 
-        d = petmr.load(self.input_files[0])
-        d = [coincidence_to_df(di) for di in d]
-        d = pd.concat(d, ignore_index = True)
-        d = prepare_coincidences(d)
-        #d.info(memory_usage = 'deep')
+        try:
+            # [(a,b), ... (a,b)]
+            d = [petmr.load(f) for f in self.input_files]
+            d = [data_to_df(a_or_b) for ab in d for a_or_b in ab]
+            d = pd.concat(d, ignore_index = True)
+            d = prepare_df(d)
+        except Exception as ex:
+            print(traceback.format_exc())
+            d = ex
+
         self.data_queue.put(d)
 

@@ -15,7 +15,7 @@ flags = [
     '-DNDEBUG',
     '-std=c++17',
     '-xc++',
-    '-I/usr/include/python3.9',
+    '-I/usr/include/python3.10',
     '-I' + os.path.dirname(__file__) + "/include",
     '-I' + np.get_include(),
     ]

@@ -14,10 +14,12 @@ class SinogramDisplay:
         self.ldr = None
         self.root = root
         self.button_frame = tk.Frame(self.root)
+        self.flip = tk.IntVar()
 
         self.load_coin = tk.Button(self.button_frame, text = "Load Coincidences", command = self.sort_sinogram)
         self.load_sino = tk.Button(self.button_frame, text = "Load Sinogram", command = self.load_sinogram)
         self.save_sino = tk.Button(self.button_frame, text = "Save Sinogram", command = self.save_sinogram)
+        self.flip_y_coord = tk.Checkbutton(self.button_frame, text = "Flip LUT Y coordinate", variable = self.flip)
 
         self.plot_frame = tk.Frame(self.root)
         self.plot_frame.columnconfigure(0, weight = 1)
@@ -48,11 +50,13 @@ class SinogramDisplay:
         self.load_coin.pack(side = tk.LEFT, padx = 5)
         self.load_sino.pack(side = tk.LEFT, padx = 5)
         self.save_sino.pack(side = tk.LEFT, padx = 5)
+        self.flip_y_coord.pack(side = tk.LEFT, padx = 5)
 
         self.plot_frame.pack()
 
     def count_map_draw(self):
         self.plane_counts_plt.clear()
+        self.sinogram_plt.clear()
         if self.sino_data is not None:
             self.plane_counts_plt.imshow(
                     self.sino_data.sum((2,3)),
@@ -76,6 +80,8 @@ class SinogramDisplay:
                 initialdir = os.path.expanduser('~'),
                 filetypes = coincidence_filetypes)
 
+        if not fname: return
+
         base = os.path.dirname(fname)
         cfgdir = tk.filedialog.askdirectory(
                 title = "Select configuration directory",
@@ -93,10 +99,7 @@ class SinogramDisplay:
             self.ldr = None
 
         if fname and cfgdir:
-            self.ldr = SinogramLoaderPopup(self.root, sorting_callback, fname, cfgdir)
-
-            #self.sino_data = petmr.sort_sinogram(fname, cfgdir)
-            #self.count_map_draw()
+            self.ldr = SinogramLoaderPopup(self.root, sorting_callback, fname, cfgdir, self.flip.get())
 
     def load_sinogram(self):
         fname = tk.filedialog.askopenfilename(
@@ -108,9 +111,24 @@ class SinogramDisplay:
             self.count_map_draw()
 
     def save_sinogram(self):
-        if self.sino_data is not None:
-            fname = tk.filedialog.asksaveasfilename(
-                    title = "Save sinogram file",
-                    initialdir = os.path.expanduser('~'),
-                    filetypes = [("Sinogram file", ".raw")])
-            petmr.save_sinogram(fname, self.sino_data)
+        if self.sino_data is None: return
+
+        fname = tk.filedialog.asksaveasfilename(
+                title = "Save sinogram file",
+                initialdir = os.path.expanduser('~'),
+                filetypes = [("Sinogram file", ".raw")])
+
+        if not fname: return
+
+        petmr.save_sinogram(fname, self.sino_data)
+
+        """
+        # Michelogram ordering parameters for interfile header
+        nring = self.sino_data.shape[0]
+        span_len = [nring] + list(np.repeat(np.arange(nring-1, 0, -1), 2))
+        pos_rd = np.arange(1, nring)
+        rd = np.zeros(pos_rd.size*2 + 1, int)
+        rd[1::2] = pos_rd
+        rd[2::2] = -pos_rd
+        rd = list(rd)
+        """

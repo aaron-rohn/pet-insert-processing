@@ -13,91 +13,101 @@ void Sinogram::add_event(int idx1, int idx2)
     int theta = (idx1 + idx2) % npix;
     int r = std::abs(idx1 - idx2);
     if (idx1 + idx2 >= npix) r = npix - r;
+
+    std::lock_guard<std::mutex> lck(m);
     (*this)(theta, r/2)++;
 }
 
-std::vector<std::vector<int>>
-Michelogram::load_luts(std::string lut_dir)
+void Michelogram::load_luts(std::string dir)
 {
-    // Default value of LUTs is an invalid crystal number
-    std::vector<std::vector<int>> luts (
-            Single::nblocks, std::vector<int>(lut_pix*lut_pix, xtal_max));
+    if (dir == std::string())
+    {
+        std::cout << "Skipping LUT loading" << std::endl;
+        return;
+    }
 
-    for (auto &p : std::filesystem::recursive_directory_iterator(lut_dir))
+    for (auto &p : std::filesystem::recursive_directory_iterator(dir))
     {
         if (p.path().extension() == ".lut")
         {
             std::string curr_path = p.path().filename();
             size_t blk = 0;
-            std::sscanf(curr_path.c_str(), "block%zul.lut", &blk);
+            int n = std::sscanf(curr_path.c_str(), "block%zul.lut", &blk);
 
-            if (blk < Single::nblocks)
+            if (n != 1 || blk >= Single::nblocks)
             {
-                auto &l = luts[blk];
-                std::ifstream f(p.path(), std::ios::in | std::ios::binary);
-                f.read((char*)l.data(), l.size()*sizeof(int));
+                std::cout << "Error: " << curr_path << std::endl;
+                throw std::invalid_argument(curr_path);
             }
+
+            auto &l = luts[blk];
+            std::ifstream f(p.path(), std::ios::in | std::ios::binary);
+            f.read((char*)l.data(), l.size()*sizeof(int));
         }
     }
-
-    return luts;
 }
 
-std::vector<std::vector<double>>
-Michelogram::load_photopeaks(std::string base_dir)
+std::string Michelogram::find_cfg_file(std::string base_dir)
 {
-    std::vector<std::vector<double>> photopeaks (
-            Single::nblocks, std::vector<double>(xtal_max, -1));
-
     for (auto &p : std::filesystem::recursive_directory_iterator(base_dir))
     {
         if (p.path().extension() == ".json")
         {
-            json cfg;
-            std::ifstream(p.path()) >> cfg;
+            return p.path();
+        }
+    }
+    return std::string();
+}
 
-            // iterate over each block in the json file
-            for (auto &[blk, values]: cfg.items())
+void Michelogram::load_photopeaks(std::string cfg_file)
+{
+    if (cfg_file == std::string())
+    {
+        std::cout << "Skipping photopeak loading" << std::endl;
+        return;
+    }
+
+    json cfg;
+    std::ifstream(cfg_file) >> cfg;
+
+    // iterate over each block in the json file
+    for (auto &[blk, values]: cfg.items())
+    {
+        size_t blk_num = std::stoi(blk);
+
+        if (blk_num >= Single::nblocks)
+            continue;
+
+        double blk_ppeak = -1;
+
+        // iterate over each item within the block
+        for (auto &[elem, ppeak]: values.items())
+        {
+            // record the block photopeak
+            if (elem == "block" || elem == "photopeak")
             {
-                size_t blk_num = std::stoi(blk);
+                blk_ppeak = ppeak;
+            }
+            else
+            {
+                // record the crystal photopeak
+                size_t xtal_num = std::stoi(elem);
+                if (xtal_num < xtal_max) photopeaks[blk_num][xtal_num] = ppeak;
+            }
+        }
 
-                if (blk_num >= Single::nblocks)
-                    continue;
-
-                double blk_ppeak = -1;
-
-                // iterate over each item within the block
-                for (auto &[elem, ppeak]: values.items())
-                {
-                    // record the block photopeak
-                    if (elem.compare("block") == 0)
-                    {
-                        blk_ppeak = ppeak;
-                    }
-                    else
-                    {
-                        // record the crystal photopeak
-                        size_t xtal_num = std::stoi(elem);
-                        if (xtal_num < xtal_max) photopeaks[blk_num][xtal_num] = ppeak;
-                    }
-                }
-
-                // If found, assign the block photopeak to any missed crystals
-                if (blk_ppeak > 0)
-                {
-                    for (auto &xtal_ppeak : photopeaks[blk_num])
-                    {
-                        if (xtal_ppeak < 0) xtal_ppeak = blk_ppeak;
-                    }
-                }
+        // If found, assign the block photopeak to any missed crystals
+        if (blk_ppeak > 0)
+        {
+            for (auto &xtal_ppeak : photopeaks[blk_num])
+            {
+                if (xtal_ppeak < 0) xtal_ppeak = blk_ppeak;
             }
         }
     }
-
-    return photopeaks;
 }
 
-void Michelogram::add_event(const CoincidenceData &c)
+void Michelogram::add_event(const CoincidenceData &c, bool flip_ring_num)
 {
     auto [ba, bb] = c.blk();
     auto [pos_xa, pos_ya, pos_xb, pos_yb] = c.pos();
@@ -125,6 +135,12 @@ void Michelogram::add_event(const CoincidenceData &c)
 
     int rowa = xa / ncrystals_per_block;
     int rowb = xb / ncrystals_per_block;
+    if (flip_ring_num)
+    {
+        rowa = (ncrystals_per_block-1) - rowa;
+        rowb = (ncrystals_per_block-1) - rowb;
+    }
+
     int blka_ax = ba % nblocks_axial, blkb_ax = bb % nblocks_axial;
     int ra = rowa + blka_ax*ncrystals_per_block + blka_ax;
     int rb = rowb + blkb_ax*ncrystals_per_block + blkb_ax;
@@ -159,9 +175,9 @@ void Michelogram::read_from(std::string fname)
 }
 
 Michelogram::Michelogram(PyObject *arr):
-    m(std::vector<Sinogram>(nring*nring))
+    Michelogram()
 {
-    int ndim = PyArray_NDIM(arr);
+    int ndim = PyArray_NDIM((PyArrayObject*)arr);
     if (ndim != 4)
     {
         std::cerr << "Invalid number of dimensions in numpy array: " <<
@@ -169,7 +185,7 @@ Michelogram::Michelogram(PyObject *arr):
         return;
     }
 
-    npy_intp *dims = PyArray_DIMS(arr);
+    npy_intp *dims = PyArray_DIMS((PyArrayObject*)arr);
     if (dims[0] != nring ||
         dims[1] != nring ||
         dims[2] != dim_theta ||
@@ -184,9 +200,7 @@ Michelogram::Michelogram(PyObject *arr):
     for (auto b = begin(), e = end(); b != e; ++b)
     {
         int *py_sino_ptr = (int*)PyArray_GETPTR4((PyArrayObject*)arr, b.v, b.h, 0, 0);
-
-        auto &sinogram = (*b).s;
-        std::memcpy(sinogram.data(), py_sino_ptr, sinogram.size()*sizeof(int));
+        std::memcpy(b->s.data(), py_sino_ptr, b->s.size()*sizeof(int));
     }
 }
 
@@ -198,10 +212,29 @@ PyObject *Michelogram::to_py_data()
     for (auto b = begin(), e = end(); b != e; ++b)
     {
         int *py_sino_ptr = (int*)PyArray_GETPTR4((PyArrayObject*)arr, b.v, b.h, 0, 0);
-
-        auto &sinogram = (*b).s;
-        std::memcpy(py_sino_ptr, sinogram.data(), sinogram.size()*sizeof(int));
+        std::memcpy(py_sino_ptr, b->s.data(), b->s.size()*sizeof(int));
     }
 
     return arr;
 }
+
+std::streampos sort_sinogram_span(
+        std::string fname,
+        std::streampos start,
+        std::streampos end,
+        int flip_flood_y_coord,
+        Michelogram &m,
+        std::atomic_bool &stop
+) {
+    CoincidenceData c;
+    std::ifstream f(fname, std::ios::binary);
+    f.seekg(start);
+
+    while (!stop && f.tellg() < end)
+    {
+        f.read((char*)&c, sizeof(c));
+        m.add_event(c, flip_flood_y_coord);
+    }
+
+    return f.tellg();
+};

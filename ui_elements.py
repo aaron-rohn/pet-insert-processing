@@ -40,14 +40,14 @@ class FileSelector:
         self.coincidences.pack(side = tk.LEFT, padx = 5, pady = 10)
 
     def loading_error(self, err):
-        tk.messagebox.showerror(message = f'{type(err).__name__}: {" ".join(err.args)}')
+        tk.messagebox.showerror(message = f'{err}')
 
     def update_data_cb_wrapper(self, d):
         """ Wrap the process of updating the data set in the app 
         to catch any potential errors that happened when retreiving
         the data
         """
-        if isinstance(d, RuntimeError):
+        if isinstance(d, Exception):
             self.loading_error(d)
         else:
             self.update_data_cb(d)

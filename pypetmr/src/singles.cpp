@@ -1,5 +1,11 @@
+
+#define NO_IMPORT_ARRAY
+#define PY_ARRAY_UNIQUE_SYMBOL petmr_ARRAY_API
+
 #include "singles.h"
 #include <thread>
+#include <numpy/ndarraytypes.h>
+#include <numpy/arrayobject.h>
 
 TimeTag::TimeTag(uint8_t data[])
 {
@@ -39,6 +45,39 @@ Single::Single(uint8_t data[], const TimeTag &tt)
 
     time = ((data[13] << 16) | (data[14] << 8) | data[15]) & 0xFFFFF;
     abs_time = tt.value * TimeTag::clks_per_tt + time;
+}
+
+
+PyObject* Single::to_py_data(std::vector<Single> &events)
+{
+    // 'block', 'e1', 'e2', 'x', 'y'
+    const int ncol = 5;
+
+    PyArrayObject *cols[ncol];
+    npy_intp nrow = events.size();
+
+    for (size_t i = 0; i < ncol; i++)
+    {
+        cols[i] = (PyArrayObject*)PyArray_SimpleNew(1, &nrow, NPY_UINT16);
+    }
+
+    for (npy_int i = 0; i < nrow; i++)
+    {
+        const Single &s = events[i];
+        SingleData sd(s);
+
+        *((uint16_t*)PyArray_GETPTR1(cols[0], i)) = s.blk;
+        *((uint16_t*)PyArray_GETPTR1(cols[1], i)) = sd.e1;
+        *((uint16_t*)PyArray_GETPTR1(cols[2], i)) = sd.e2;
+        *((uint16_t*)PyArray_GETPTR1(cols[3], i)) = sd.x;
+        *((uint16_t*)PyArray_GETPTR1(cols[4], i)) = sd.y;
+    }
+
+    PyObject *a = PyList_New(ncol);
+    for (size_t i = 0; i < ncol; i++)
+        PyList_SetItem(a, i, (PyObject*)cols[i]);
+
+    return a;
 }
 
 void Record::align(std::ifstream &f, uint8_t data[])

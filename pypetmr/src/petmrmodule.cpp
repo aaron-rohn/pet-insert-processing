@@ -54,6 +54,11 @@ PyInit_petmr(void)
  * Helpers to load and store data
  */
 
+std::streampos fsize(const char *fname)
+{
+    return std::ifstream(fname, std::ios::ate | std::ios::binary).tellg();
+}
+
 char *py_to_str(PyObject *obj)
 {
     if (!PyUnicode_Check(obj))
@@ -78,54 +83,8 @@ pylist_to_strings(PyObject *file_list)
     return cfile_list;
 }
 
-struct EventRecords
-{
-    // vectors to store output data
-    std::vector<std::vector<uint16_t>> energies;
-    std::vector<uint8_t> blk;
-    std::vector<uint64_t> TT;
-    uint64_t n = 0;
-
-    EventRecords(): energies(Single::nch, std::vector<uint16_t>{}) {};
-
-    void append(const Single &s)
-    {
-        n++;
-        for (size_t i = 0; i < energies.size(); i++)
-            energies[i].push_back(s.energies[i]);
-        blk.push_back(s.blk);
-        TT.push_back(s.time);
-    }
-
-    PyObject *to_list()
-    {
-        PyObject *lst = PyList_New(energies.size() + 2);
-        PyObject *arr = NULL;
-
-        long nl = n;
-
-        arr = PyArray_SimpleNew(1, &nl, NPY_UINT8);
-        std::memcpy(PyArray_DATA(arr), blk.data(), nl*sizeof(uint8_t));
-        PyList_SetItem(lst, 0, arr);
-
-        arr = PyArray_SimpleNew(1, &nl, NPY_UINT64);
-        std::memcpy(PyArray_DATA(arr), TT.data(), nl*sizeof(uint64_t));
-        PyList_SetItem(lst, 1, arr);
-
-        for (size_t i = 0; i < energies.size(); i++)
-        {
-            arr = PyArray_SimpleNew(1, &nl, NPY_UINT16);
-            std::memcpy(PyArray_DATA(arr), energies[i].data(), nl*sizeof(uint16_t));
-            PyList_SetItem(lst, 2 + i, arr);
-        }
-
-        return lst;
-    }
-};
-
 /*
- * Load singles data from several files,
- * provided in a python list
+ * Load singles data from a single file
  */
 
 static PyObject *
@@ -136,20 +95,24 @@ petmr_singles(PyObject *self, PyObject *args)
     if (!PyArg_ParseTuple(args, "s|K", &fname, &max_events))
         return NULL;
 
-    EventRecords records;
-
-    std::ifstream f (fname, std::ios::in | std::ios::binary);
+    std::ifstream f (fname, std::ios::binary);
     if (!f.good()) 
     {
         PyErr_SetFromErrno(PyExc_IOError);
         return NULL;
     }
 
+    uint64_t nevents_approx = fsize(fname) / Record::event_size;
+
     uint64_t nevents = 0;
     uint8_t data[Record::event_size];
     std::vector<TimeTag> last_tt (Record::nmodules);
+    std::vector<Single> events;
 
     Py_BEGIN_ALLOW_THREADS
+
+    events.reserve(nevents_approx);
+
     while (f.good())
     {
         if (max_events > 0 && nevents > max_events) break;
@@ -160,23 +123,14 @@ petmr_singles(PyObject *self, PyObject *args)
         auto mod = Record::get_module(data);
 
         if (Record::is_single(data))
-        {
-            records.append(Single(data, last_tt[mod]));
-        }
+            events.emplace_back(data, last_tt[mod]);
         else
-        {
             last_tt[mod] = TimeTag(data);
-        }
     }
+
     Py_END_ALLOW_THREADS
 
-    PyObject *records_list = records.to_list();
-    if (records_list == NULL)
-    {
-        PyErr_SetString(PyExc_Exception, "Failed to create numpy array");
-        return NULL;
-    }
-    return records_list;
+    return Single::to_py_data(events);
 }
 
 /*
@@ -186,46 +140,57 @@ petmr_singles(PyObject *self, PyObject *args)
 static PyObject *
 petmr_coincidences(PyObject *self, PyObject *args)
 {
-    PyObject *status_queue, *terminate, *py_file_list, *py_output_file;
+    PyObject *status_queue, *terminate, *py_file_list;
     uint64_t max_events = 0;
-    if (!PyArg_ParseTuple(args, "OOOO|K", &terminate,
+    char *output_file_str = NULL;
+    if (!PyArg_ParseTuple(args, "OOO|Ks", &terminate,
                                           &status_queue,
                                           &py_file_list,
-                                          &py_output_file,
-                                          &max_events)) return NULL;
-
-    // Parse the output file name (if provided)
-    char *output_file_str = NULL;
-    if (py_output_file != Py_None)
-    {
-        output_file_str = py_to_str(py_output_file);
-        if (PyErr_Occurred()) return NULL;
-    }
+                                          &max_events,
+                                          &output_file_str)) return NULL;
 
     // Parse the input files
     auto file_list = pylist_to_strings(py_file_list);
     if (PyErr_Occurred()) return NULL;
 
+    // Create handle to output file
+    std::ofstream output_file_handle (
+            output_file_str, std::ios::out | std::ios::binary);
+
+    if (!output_file_handle)
+    {
+        PyErr_SetString(PyExc_IOError, strerror(errno));
+        return NULL;
+    }
+
+    // Declare all the variables at the beginning
+    // Allows for saving the thread state early on
+
+    size_t sorter_threads = 8;
+    size_t n = file_list.size();
+    std::atomic_bool stop = false;
+
+    // Items passed to time-tag scanning threads
+    std::vector<std::thread> tt_scan;
+    std::vector<std::mutex> all_lock (n);
+    std::vector<std::condition_variable_any> all_cv (n);
+    std::vector<std::queue<std::streampos>> all_pos (n);
+
+    // Items used for sorting coincidences within a file range
+    uint64_t ncoin = 0;
+    std::vector<CoincidenceData> cd;
+    std::deque<std::future<sorted_values>> workers;
+    std::vector<std::streampos> start_pos(n), end_pos(n);
+
+    // Begin multithreading
+    PyThreadState *_save = PyEval_SaveThread();
+
     // calculate total size of all singles files
     std::streampos total_size = 0;
     for (auto &fname : file_list)
     {
-        std::ifstream f (fname, std::ios::ate | std::ios::binary);
-        total_size += f.tellg();
+        total_size += fsize(fname.c_str());
     }
-
-    std::ofstream output_file_handle (
-            output_file_str, std::ios::out | std::ios::binary);
-
-    size_t sorter_threads = 8;
-    size_t n = file_list.size();
-
-    std::vector<std::mutex> all_lock (n);
-    std::vector<std::condition_variable_any> all_cv (n);
-    std::vector<std::queue<std::streampos>> all_pos (n);
-    std::atomic_bool stop = false;
-
-    std::vector<std::thread> tt_scan;
 
     // Create time-tag search threads - one per file
     for (size_t i = 0; i < n; i++)
@@ -237,8 +202,6 @@ petmr_coincidences(PyObject *self, PyObject *args)
                              std::ref(all_pos[i]),
                              std::ref(stop));
     }
-
-    std::vector<std::streampos> start_pos(n), end_pos(n);
 
     // The first value returned is the reset position
     for (size_t i = 0; i < n; i++)
@@ -254,17 +217,16 @@ petmr_coincidences(PyObject *self, PyObject *args)
     {
         stop = true;
         for (auto &th : tt_scan) th.join();
-        std::cout << "Failed to find reset" << std::endl;
-        PyErr_SetString(PyExc_RuntimeError, "One or more files did not contain a reset");
+
+        std::string errstr("Error scanning for reset: ");
+        errstr += strerror(errno);
+
+        std::cout << errstr << std::endl;
+
+        PyEval_RestoreThread(_save);
+        PyErr_SetString(PyExc_RuntimeError, errstr.c_str());
         return NULL;
     }
-
-    uint64_t ncoin = 0;
-
-    std::vector<CoincidenceData> cd;
-    std::deque<std::future<sorted_values>> workers;
-
-    PyThreadState *_save = PyEval_SaveThread();
 
     while (!stop || workers.size() > 0)
     {
@@ -310,20 +272,20 @@ petmr_coincidences(PyObject *self, PyObject *args)
             PyObject *term = PyObject_CallMethod(terminate, "is_set", "");
             PyObject_CallMethod(status_queue, "put", "((dK))", perc, ncoin);
 
-            _save = PyEval_SaveThread();
-
             if ((term == Py_True) || (max_events > 0 && ncoin > max_events))
             {
                 stop = true;
             }
+
+            _save = PyEval_SaveThread();
         }
     }
-
-    PyEval_RestoreThread(_save);
 
     stop = true;
     for (auto &scanner : tt_scan)
         scanner.join();
+
+    PyEval_RestoreThread(_save);
 
     return CoincidenceData::to_py_data(cd);
 }
@@ -358,9 +320,8 @@ petmr_store(PyObject *self, PyObject *args)
     auto cd = CoincidenceData::from_py_data(df);
     if (PyErr_Occurred()) return NULL;
 
-    std::ofstream f(fname);
+    std::ofstream f(fname, std::ios::binary);
     CoincidenceData::write(f, cd);
-
     Py_RETURN_NONE;
 }
 
@@ -368,40 +329,84 @@ static PyObject*
 petmr_sort_sinogram(PyObject *self, PyObject *args)
 {
     const char *coincidence_file, *lut_dir;
+    int flip_flood_y_coord = 0;
+    uint64_t events_per_thread = 1'000'000;
     PyObject *terminate, *status_queue, *data_queue;
-    if (!PyArg_ParseTuple(args, "ssOOO",
+    if (!PyArg_ParseTuple(args, "ssOOO|iK",
                 &coincidence_file,
                 &lut_dir,
                 &terminate,
                 &status_queue,
-                &data_queue))
-        return NULL;
+                &data_queue,
+                &flip_flood_y_coord,
+                &events_per_thread)) return NULL;
 
     PyThreadState *_save = PyEval_SaveThread();
 
-    Michelogram m (lut_dir);
-    auto cd = CoincidenceData::read(coincidence_file);
-    uint64_t incr = cd.size() / 100, perc = 0UL, last_perc = 0UL;
-    bool stop = false;
+    Michelogram m;
+    std::string cfg_file = Michelogram::find_cfg_file(lut_dir);
 
-    for (uint64_t i = 0; !stop && i < cd.size(); i++)
+    try
     {
-        auto c = cd[i];
-        m.add_event(c);
+        // catch invalid filename or json contents
+        m.load_luts(lut_dir);
+        m.load_photopeaks(cfg_file);
+    }
+    catch (std::invalid_argument &e)
+    {
+        std::string err_str ("Error loading configuration data (");
+        err_str += e.what();
+        err_str += ")";
 
-        perc = i / incr;
-        if (perc != last_perc)
+        PyEval_RestoreThread(_save);
+
+        PyErr_SetString(PyExc_RuntimeError, err_str.c_str());
+        return NULL;
+    };
+
+    std::streampos coincidence_file_size = fsize(coincidence_file);
+    uint64_t incr = sizeof(CoincidenceData) * events_per_thread;
+    std::atomic_bool stop = false;
+
+    size_t nworkers = 8;
+    std::streampos start = 0;
+    std::deque<std::future<std::streampos>> workers;
+
+    while (!stop || workers.size() > 0)
+    {
+        if (!stop)
         {
+            auto end = start + std::streampos(incr);
+            if (end >= coincidence_file_size)
+            {
+                end = coincidence_file_size;
+                stop = true;
+            }
+
+            workers.push_back(std::async(std::launch::async,
+                &sort_sinogram_span,
+                coincidence_file, start, end, flip_flood_y_coord,
+                std::ref(m), std::ref(stop)));
+
+            start = end;
+        }
+
+        if (stop || workers.size() >= nworkers)
+        {
+            auto pos = workers.front().get();
+            workers.pop_front();
+            double perc = (double)pos / coincidence_file_size * 100;
+
             PyEval_RestoreThread(_save);
             PyObject *term = PyObject_CallMethod(terminate, "is_set", "");
-            PyObject_CallMethod(status_queue, "put", "K", perc);
+            PyObject_CallMethod(status_queue, "put", "d", perc);
             if (term == Py_True) stop = true;
             _save = PyEval_SaveThread();
         }
-        last_perc = perc;
     }
 
     PyEval_RestoreThread(_save);
+
     PyObject *data = m.to_py_data();
     PyObject_CallMethod(data_queue, "put", "O", data);
     Py_RETURN_NONE;
@@ -429,6 +434,5 @@ petmr_save_sinogram(PyObject* self, PyObject* args)
 
     Michelogram m(arr);
     m.write_to(sinogram_file);
-
     Py_RETURN_NONE;
 }

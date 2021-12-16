@@ -111,15 +111,7 @@ class Flood():
         return pks
 
     def estimate_peaks(self):
-        rows = self.find_1d_peaks(1)[::-1]
+        rows = self.find_1d_peaks(1)#[::-1]
         cols = self.find_1d_peaks(0)
         pks = np.array(np.meshgrid(cols,rows)).reshape(2, len(rows)*len(cols))
         return pks
-
-
-if __name__ == "__main__":
-    floods = glob.glob("/home/aaron/Downloads/block_*.raw")
-    for f in floods:
-        print(f)
-        fld = Flood(f)
-        fld.estimate_peaks()

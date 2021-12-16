@@ -1,6 +1,7 @@
 #ifndef _SINOGRAM_H
 #define _SINOGRAM_H
 
+#include <mutex>
 #include <map>
 #include <vector>
 #include <tuple>
@@ -17,8 +18,8 @@ class Geometry
 
     static const int nblocks_axial = 4;
 
-    // allow for 1 crystal gap between blocks
-    static const int nring = nblocks_axial*ncrystals_per_block + (nblocks_axial - 1);
+    // allow for 1 crystal gap between blocks (and at end of scanner)
+    static const int nring = nblocks_axial*ncrystals_per_block + nblocks_axial;
 
     static const int npix  = ncrystals_per_block * Record::nmodules;
     static const int dim_theta = npix;
@@ -32,11 +33,13 @@ class Geometry
 
 class Sinogram: Geometry
 {
+    std::mutex m;
+
     public:
 
     std::vector<int> s;
+    Sinogram(): s(std::vector<int> (dim_theta*dim_r, 0)) {};
 
-    Sinogram(): s(std::vector<int>(dim_theta*dim_r, 0)) {};
     inline int& operator() (int theta, int r){ return s[theta*dim_r + r]; };
     void add_event(int,int);
 
@@ -54,6 +57,25 @@ class Michelogram: Geometry
     std::vector<Sinogram> m;
 
     public:
+
+    Michelogram():
+            luts(std::vector<std::vector<int>> (Single::nblocks, std::vector<int>(lut_pix*lut_pix, xtal_max))),
+            photopeaks(std::vector<std::vector<double>> (Single::nblocks, std::vector<double>(xtal_max, -1))),
+            m(std::vector<Sinogram> (nring*nring)) {};
+
+    // first arg is horiz. index, second arg is vert. index
+    inline Sinogram& operator() (int h, int v){ return m[v*nring + h]; };
+
+    static std::string find_cfg_file(std::string);
+    void load_luts(std::string);
+    void load_photopeaks(std::string);
+
+    void add_event(const CoincidenceData&,bool=false);
+    void write_to(std::string);
+    void read_from(std::string);
+
+    PyObject *to_py_data();
+    Michelogram(PyObject*);
 
     class Iterator
     {
@@ -105,7 +127,8 @@ class Michelogram: Geometry
             return *this;
         }
 
-        Sinogram& operator*() const { return m(h, v); };
+        Sinogram& operator*() const { return m(h,v); };
+        Sinogram* operator->() const { return &m(h,v); };
 
         // Compare ring difference - only valid to determine the end iterator
         friend bool operator!=(Iterator &a, Iterator &b)
@@ -123,28 +146,9 @@ class Michelogram: Geometry
 
     // maximum valid segment is nring-1
     Iterator end() { return Iterator(nring, *this); };
-
-    Michelogram(std::string base_dir):
-        luts(load_luts(base_dir)),
-        photopeaks(load_photopeaks(base_dir)),
-        m(std::vector<Sinogram>(nring*nring)) {}
-
-    Michelogram():
-        m(std::vector<Sinogram>(nring*nring)) {};
-
-    Michelogram(PyObject*);
-
-    // first arg is horiz. index, second arg is vert. index
-    inline Sinogram& operator() (int h, int v){ return m[v*nring + h]; };
-
-    static std::vector<std::vector<double>> load_photopeaks(std::string);
-    static std::vector<std::vector<int>> load_luts(std::string);
-
-    void add_event(const CoincidenceData&);
-    void write_to(std::string);
-    void read_from(std::string);
-
-    PyObject *to_py_data();
 };
+
+std::streampos sort_sinogram_span(std::string,
+        std::streampos, std::streampos, int, Michelogram&, std::atomic_bool&);
 
 #endif

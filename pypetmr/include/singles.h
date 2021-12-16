@@ -8,11 +8,18 @@
 #include <deque>
 #include <fstream>
 #include <atomic>
+#include <Python.h>
 
 namespace Record
 {
     const int event_size = 16;
     const int nmodules = 16;
+
+    inline int module_above(int mod)
+    { return (mod + 1) % nmodules; };
+
+    inline int module_below(int mod)
+    { return (mod + nmodules - 1) % nmodules; };
 
     inline bool is_header(uint8_t b)
     { return (b >> 3) == 0x1F; };
@@ -34,7 +41,6 @@ namespace Record
 };
 
 struct TimeTag {
-    //const static uint64_t clks_per_tt = 0xFFFFF;
     const static uint64_t clks_per_tt = 800'000;
 
     uint8_t mod;
@@ -54,6 +60,17 @@ struct Single {
 
     inline bool operator<(const Single &rhs) const
     { return abs_time < rhs.abs_time; }
+
+    static PyObject* to_py_data(std::vector<Single>&);
+};
+
+struct SingleData {
+    constexpr static double scale = 511;
+
+    double x1, y1, x2, y2;
+    uint16_t e1 = 0, e2 = 0, x = 0, y = 0;
+    SingleData() {};
+    SingleData(const Single&);
 };
 
 #endif

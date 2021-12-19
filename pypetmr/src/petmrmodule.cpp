@@ -1,18 +1,6 @@
 #define PY_SSIZE_T_CLEAN
 #define PY_ARRAY_UNIQUE_SYMBOL petmr_ARRAY_API
 
-#include <iostream>
-#include <cinttypes>
-#include <cstdbool>
-#include <vector>
-#include <queue>
-#include <algorithm>
-#include <numeric>
-#include <future>
-#include <map>
-#include <filesystem>
-#include <regex>
-
 #include "singles.h"
 #include "coincidence.h"
 #include "sinogram.h"
@@ -141,7 +129,7 @@ static PyObject *
 petmr_coincidences(PyObject *self, PyObject *args)
 {
     PyObject *status_queue, *terminate, *py_file_list;
-    uint64_t max_events = 0;
+    uint64_t max_events = 100'000'000;
     char *output_file_str = NULL;
     if (!PyArg_ParseTuple(args, "OOO|Ks", &terminate,
                                           &status_queue,
@@ -157,7 +145,7 @@ petmr_coincidences(PyObject *self, PyObject *args)
     std::ofstream output_file_handle (
             output_file_str, std::ios::out | std::ios::binary);
 
-    if (!output_file_handle)
+    if (output_file_str && !output_file_handle)
     {
         PyErr_SetString(PyExc_IOError, strerror(errno));
         return NULL;
@@ -298,10 +286,11 @@ static PyObject*
 petmr_load(PyObject *self, PyObject *args)
 {
     const char *fname;
-    if (!PyArg_ParseTuple(args, "s", &fname))
+    uint64_t max_events = 100'000'000;
+    if (!PyArg_ParseTuple(args, "s|K", &fname, &max_events))
         return NULL;
 
-    auto cd = CoincidenceData::read(fname, 100'000'000);
+    auto cd = CoincidenceData::read(fname, max_events);
     return CoincidenceData::to_py_data(cd);
 }
 
@@ -328,12 +317,12 @@ petmr_store(PyObject *self, PyObject *args)
 static PyObject*
 petmr_sort_sinogram(PyObject *self, PyObject *args)
 {
-    const char *coincidence_file, *lut_dir;
+    const char *fname, *lut_dir;
     int flip_flood_y_coord = 0;
     uint64_t events_per_thread = 1'000'000;
     PyObject *terminate, *status_queue, *data_queue;
     if (!PyArg_ParseTuple(args, "ssOOO|iK",
-                &coincidence_file,
+                &fname,
                 &lut_dir,
                 &terminate,
                 &status_queue,
@@ -343,7 +332,7 @@ petmr_sort_sinogram(PyObject *self, PyObject *args)
 
     PyThreadState *_save = PyEval_SaveThread();
 
-    Michelogram m;
+    Michelogram m(flip_flood_y_coord);
     std::string cfg_file = Michelogram::find_cfg_file(lut_dir);
 
     try
@@ -354,19 +343,15 @@ petmr_sort_sinogram(PyObject *self, PyObject *args)
     }
     catch (std::invalid_argument &e)
     {
-        std::string err_str ("Error loading configuration data (");
-        err_str += e.what();
-        err_str += ")";
-
         PyEval_RestoreThread(_save);
-
+        auto err_str = std::string("Error loading configuration data (") + e.what() + ")";
         PyErr_SetString(PyExc_RuntimeError, err_str.c_str());
         return NULL;
     };
 
-    std::streampos coincidence_file_size = fsize(coincidence_file);
-    uint64_t incr = sizeof(CoincidenceData) * events_per_thread;
-    std::atomic_bool stop = false;
+    std::streampos coincidence_file_size = fsize(fname);
+    std::streampos incr = sizeof(CoincidenceData) * events_per_thread;
+    bool stop = false;
 
     size_t nworkers = 8;
     std::streampos start = 0;
@@ -376,7 +361,7 @@ petmr_sort_sinogram(PyObject *self, PyObject *args)
     {
         if (!stop)
         {
-            auto end = start + std::streampos(incr);
+            auto end = start + incr;
             if (end >= coincidence_file_size)
             {
                 end = coincidence_file_size;
@@ -384,9 +369,7 @@ petmr_sort_sinogram(PyObject *self, PyObject *args)
             }
 
             workers.push_back(std::async(std::launch::async,
-                &sort_sinogram_span,
-                coincidence_file, start, end, flip_flood_y_coord,
-                std::ref(m), std::ref(stop)));
+                &Michelogram::sort_span, &m, fname, start, end));
 
             start = end;
         }
@@ -395,6 +378,7 @@ petmr_sort_sinogram(PyObject *self, PyObject *args)
         {
             auto pos = workers.front().get();
             workers.pop_front();
+
             double perc = (double)pos / coincidence_file_size * 100;
 
             PyEval_RestoreThread(_save);

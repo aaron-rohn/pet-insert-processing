@@ -3,9 +3,8 @@
 #define PY_ARRAY_UNIQUE_SYMBOL petmr_ARRAY_API
 
 #include "singles.h"
-#include <thread>
-#include <numpy/ndarraytypes.h>
-#include <numpy/arrayobject.h>
+
+#include <iostream>
 
 TimeTag::TimeTag(uint8_t data[])
 {
@@ -98,20 +97,31 @@ void Record::align(std::ifstream &f, uint8_t data[])
     }
 }
 
+#include <mutex>
+
+static std::mutex m;
+
 bool Record::go_to_tt(
         std::ifstream &f,
         uint64_t value,
         std::atomic_bool &stop
 ) {
+    TimeTag last_tt;
     uint8_t data[event_size];
+    bool sync = false;
+
     while(f.good() && !stop)
     {
         read(f, data);
         align(f, data);
         
-        if (!is_single(data) && TimeTag(data).value >= value)
+        if (!is_single(data))
         {
-            break;
+            TimeTag tt(data);
+            if (sync && tt.value >= value) break;
+
+            sync = tt.value == last_tt.value;
+            last_tt = tt;
         }
     }
 

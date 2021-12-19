@@ -1,14 +1,13 @@
 #ifndef COINCIDENCE_H
 #define COINCIDENCE_H
 
-#include <deque>
 #include <queue>
 #include <future>
-#include <algorithm>
-#include <tuple>
-#include "singles.h"
-
 #include <Python.h>
+#include <numpy/ndarraytypes.h>
+#include <numpy/arrayobject.h>
+
+#include "singles.h"
 
 struct CoincidenceData {
     // Columns in python data - block, e1, e2, x, y

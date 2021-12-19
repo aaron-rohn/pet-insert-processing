@@ -138,14 +138,12 @@ class DataLoaderPopup:
         multiple files are provided, they must be time-aligned from a single acquisition
         """
 
+        args = [self.terminate, self.stat_queue, self.input_files]
+        if self.output_file is not None: args += [0, self.output_file]
+
         try:
             # (a,b) -> [a_df, b_df] -> ab_df
-            d = petmr.coincidences(
-                    self.terminate,
-                    self.stat_queue,
-                    self.input_files,
-                    self.output_file)
-
+            d = petmr.coincidences(*args)
             d = [data_to_df(c) for c in d]
             d = pd.concat(d, ignore_index = True)
             d = prepare_df(d)

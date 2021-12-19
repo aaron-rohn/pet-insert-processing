@@ -1,15 +1,19 @@
 #ifndef _SINOGRAM_H
 #define _SINOGRAM_H
 
+#include <iostream>
 #include <mutex>
-#include <map>
-#include <vector>
-#include <tuple>
 #include <singles.h>
 #include <coincidence.h>
 #include <Python.h>
 #include <json.hpp>
+
+#include <numpy/arrayobject.h>
+#include <numpy/ndarraytypes.h>
+
 using json = nlohmann::json;
+using stype = float;
+static const auto npy_type = NPY_FLOAT32;
 
 class Geometry
 {
@@ -37,31 +41,41 @@ class Sinogram: Geometry
 
     public:
 
-    std::vector<int> s;
-    Sinogram(): s(std::vector<int> (dim_theta*dim_r, 0)) {};
+    std::vector<stype> s;
+    Sinogram(): s(std::vector<stype> (dim_theta*dim_r, 0)) {};
 
-    inline int& operator() (int theta, int r){ return s[theta*dim_r + r]; };
-    void add_event(int,int);
+    inline stype& operator() (int theta, int r){ return s[theta*dim_r + r]; };
+
+    static std::tuple<int,int> idx_to_coord(int idx1, int idx2)
+    {
+        int theta = (idx1 + idx2) % npix;
+        int r = std::abs(idx1 - idx2);
+        if (idx1 + idx2 >= npix) r = npix - r;
+        return std::make_tuple(theta, r/2);
+    }
+
+    void add_event(int idx1, int idx2)
+    {
+        auto [theta, r] = idx_to_coord(idx1, idx2);
+        std::lock_guard<std::mutex> lck(m);
+        (*this)(theta, r)++;
+    }
 
     void write_to(std::ofstream &f)
-    { f.write((char*)s.data(), s.size()*sizeof(int)); };
+    { f.write((char*)s.data(), s.size()*sizeof(stype)); };
 
     void read_from(std::ifstream  &f)
-    { f.read((char*)s.data(), s.size()*sizeof(int)); };
+    { f.read((char*)s.data(), s.size()*sizeof(stype)); };
 };
 
 class Michelogram: Geometry
 {
+    const bool flip;
     std::vector<std::vector<int>> luts;
     std::vector<std::vector<double>> photopeaks;
     std::vector<Sinogram> m;
 
     public:
-
-    Michelogram():
-            luts(std::vector<std::vector<int>> (Single::nblocks, std::vector<int>(lut_pix*lut_pix, xtal_max))),
-            photopeaks(std::vector<std::vector<double>> (Single::nblocks, std::vector<double>(xtal_max, -1))),
-            m(std::vector<Sinogram> (nring*nring)) {};
 
     // first arg is horiz. index, second arg is vert. index
     inline Sinogram& operator() (int h, int v){ return m[v*nring + h]; };
@@ -70,12 +84,21 @@ class Michelogram: Geometry
     void load_luts(std::string);
     void load_photopeaks(std::string);
 
-    void add_event(const CoincidenceData&,bool=false);
+    void add_event(const CoincidenceData&);
     void write_to(std::string);
     void read_from(std::string);
 
     PyObject *to_py_data();
+
     Michelogram(PyObject*);
+
+    Michelogram(bool flip = false):
+        flip(flip),
+        luts(std::vector<std::vector<int>> (Single::nblocks, std::vector<int>(lut_pix*lut_pix, xtal_max))),
+        photopeaks(std::vector<std::vector<double>> (Single::nblocks, std::vector<double>(xtal_max, -1))),
+        m(std::vector<Sinogram> (nring*nring)) {};
+
+    std::streampos sort_span(std::string, std::streampos, std::streampos);
 
     class Iterator
     {
@@ -113,17 +136,9 @@ class Michelogram: Geometry
                 r0 = rd;
             }
 
-            if (upper)
-            {
-                h = r0 - rd;
-                v = r0;
-            }
-            else
-            {
-                h = r0;
-                v = r0 - rd;
-            }
-
+            h = r0;
+            v = r0 - rd;
+            if (upper) std::swap(h,v);
             return *this;
         }
 
@@ -147,8 +162,5 @@ class Michelogram: Geometry
     // maximum valid segment is nring-1
     Iterator end() { return Iterator(nring, *this); };
 };
-
-std::streampos sort_sinogram_span(std::string,
-        std::streampos, std::streampos, int, Michelogram&, std::atomic_bool&);
 
 #endif

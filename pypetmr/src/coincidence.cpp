@@ -3,10 +3,7 @@
 #define PY_ARRAY_UNIQUE_SYMBOL petmr_ARRAY_API
 
 #include "coincidence.h"
-#include <cmath>
-#include <tuple>
-#include <numpy/ndarraytypes.h>
-#include <numpy/arrayobject.h>
+#include <iostream>
 
 SingleData::SingleData(const Single &s)
 {
@@ -241,6 +238,8 @@ sorted_values sort_span(
         fsize_to_process += (end_pos[i] - start_pos[i]);
     size_t approx_singles = fsize_to_process / Record::event_size;
 
+    std::cout << approx_singles << std::endl;
+
     // Allocate storage to load all the singles
     std::vector<Single> singles;
     singles.reserve(approx_singles);
@@ -296,5 +295,5 @@ sorted_values sort_span(
         }
     }
 
-    return std::tie(end_pos, coincidences);
+    return std::make_tuple(end_pos, std::move(coincidences));
 }

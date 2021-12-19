@@ -1,14 +1,13 @@
 #ifndef SINGLES_H
 #define SINGLES_H
 
-#include <cinttypes>
-#include <iostream>
 #include <cstring>
 #include <vector>
-#include <deque>
 #include <fstream>
 #include <atomic>
 #include <Python.h>
+#include <numpy/ndarraytypes.h>
+#include <numpy/arrayobject.h>
 
 namespace Record
 {

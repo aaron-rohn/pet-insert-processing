@@ -3,20 +3,6 @@
 #define PY_ARRAY_UNIQUE_SYMBOL petmr_ARRAY_API
 
 #include <sinogram.h>
-#include <singles.h>
-
-#include <numpy/ndarraytypes.h>
-#include <numpy/arrayobject.h>
-
-void Sinogram::add_event(int idx1, int idx2)
-{
-    int theta = (idx1 + idx2) % npix;
-    int r = std::abs(idx1 - idx2);
-    if (idx1 + idx2 >= npix) r = npix - r;
-
-    std::lock_guard<std::mutex> lck(m);
-    (*this)(theta, r/2)++;
-}
 
 void Michelogram::load_luts(std::string dir)
 {
@@ -107,7 +93,7 @@ void Michelogram::load_photopeaks(std::string cfg_file)
     }
 }
 
-void Michelogram::add_event(const CoincidenceData &c, bool flip_ring_num)
+void Michelogram::add_event(const CoincidenceData &c)
 {
     auto [ba, bb] = c.blk();
     auto [pos_xa, pos_ya, pos_xb, pos_yb] = c.pos();
@@ -135,7 +121,8 @@ void Michelogram::add_event(const CoincidenceData &c, bool flip_ring_num)
 
     int rowa = xa / ncrystals_per_block;
     int rowb = xb / ncrystals_per_block;
-    if (flip_ring_num)
+
+    if (flip)
     {
         rowa = (ncrystals_per_block-1) - rowa;
         rowb = (ncrystals_per_block-1) - rowb;
@@ -144,8 +131,6 @@ void Michelogram::add_event(const CoincidenceData &c, bool flip_ring_num)
     int blka_ax = ba % nblocks_axial, blkb_ax = bb % nblocks_axial;
     int ra = rowa + blka_ax*ncrystals_per_block + blka_ax;
     int rb = rowb + blkb_ax*ncrystals_per_block + blkb_ax;
-
-    auto &s = (*this)(ra, rb);
 
     // Calculate index along the ring
 
@@ -157,7 +142,7 @@ void Michelogram::add_event(const CoincidenceData &c, bool flip_ring_num)
     int idx1 = cola + (ncrystals_per_block * moda);
     int idx2 = colb + (ncrystals_per_block * modb);
 
-    s.add_event(idx1, idx2);
+    (*this)(ra,rb).add_event(idx1, idx2);
 }
 
 void Michelogram::write_to(std::string fname)
@@ -177,10 +162,16 @@ void Michelogram::read_from(std::string fname)
 Michelogram::Michelogram(PyObject *arr):
     Michelogram()
 {
+    if (PyArray_TYPE((PyArrayObject*)arr) != npy_type)
+    {
+        std::cout << "Invalid type" << std::endl;
+        return;
+    }
+
     int ndim = PyArray_NDIM((PyArrayObject*)arr);
     if (ndim != 4)
     {
-        std::cerr << "Invalid number of dimensions in numpy array: " <<
+        std::cout << "Invalid number of dimensions in numpy array: " <<
             ndim << std::endl;
         return;
     }
@@ -191,50 +182,47 @@ Michelogram::Michelogram(PyObject *arr):
         dims[2] != dim_theta ||
         dims[3] != dim_r)
     {
-        std::cerr << "Invalid sinogram dimensions: ";
-        for (int i = 0; i < 4; i++) std::cerr << dims[i] << " ";
-        std::cerr << std::endl;
+        std::cout << "Invalid sinogram dimensions: ";
+        for (int i = 0; i < 4; i++) std::cout << dims[i] << " ";
+        std::cout << std::endl;
         return;
     }
 
     for (auto b = begin(), e = end(); b != e; ++b)
     {
-        int *py_sino_ptr = (int*)PyArray_GETPTR4((PyArrayObject*)arr, b.v, b.h, 0, 0);
-        std::memcpy(b->s.data(), py_sino_ptr, b->s.size()*sizeof(int));
+        stype *py_sino_ptr = (stype*)PyArray_GETPTR4((PyArrayObject*)arr, b.v, b.h, 0, 0);
+        std::memcpy(b->s.data(), py_sino_ptr, b->s.size()*sizeof(stype));
     }
 }
 
 PyObject *Michelogram::to_py_data()
 {
     npy_intp dims[] = {nring, nring, dim_theta, dim_r};
-    PyObject *arr = PyArray_SimpleNew(4, dims, NPY_INT);
+    PyObject *arr = PyArray_SimpleNew(4, dims, npy_type);
 
     for (auto b = begin(), e = end(); b != e; ++b)
     {
-        int *py_sino_ptr = (int*)PyArray_GETPTR4((PyArrayObject*)arr, b.v, b.h, 0, 0);
-        std::memcpy(py_sino_ptr, b->s.data(), b->s.size()*sizeof(int));
+        stype *py_sino_ptr = (stype*)PyArray_GETPTR4((PyArrayObject*)arr, b.v, b.h, 0, 0);
+        std::memcpy(py_sino_ptr, b->s.data(), b->s.size()*sizeof(stype));
     }
 
     return arr;
 }
 
-std::streampos sort_sinogram_span(
+std::streampos Michelogram::sort_span(
         std::string fname,
         std::streampos start,
-        std::streampos end,
-        int flip_flood_y_coord,
-        Michelogram &m,
-        std::atomic_bool &stop
+        std::streampos end
 ) {
     CoincidenceData c;
     std::ifstream f(fname, std::ios::binary);
     f.seekg(start);
 
-    while (!stop && f.tellg() < end)
+    while (f.good() && f.tellg() < end)
     {
         f.read((char*)&c, sizeof(c));
-        m.add_event(c, flip_flood_y_coord);
+        add_event(c);
     }
 
     return f.tellg();
-};
+}

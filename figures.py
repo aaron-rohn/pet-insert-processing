@@ -5,7 +5,25 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure, SubplotParams
 from scipy.spatial import Voronoi, voronoi_plot_2d
 
-class FloodHist():
+class FloodHist:
+    def __init__(self, frame, **kwargs):
+        self.img_size = 512
+        self.npts = 19
+
+        self.fig = Figure(subplotpars = SubplotParams(0,0,1,1))
+        self.plot = self.fig.add_subplot(frame_on = False)
+        self.canvas = FigureCanvasTkAgg(self.fig, master = frame)
+        self.canvas.draw()
+        self.canvas.get_tk_widget().grid(**kwargs)
+
+        self.img = np.zeros((self.img_size,self.img_size))
+        self.f = None
+        self.selection = None
+        self.pts = None
+        self.pts_active = None
+
+        self.canvas.mpl_connect('button_press_event', self.click)
+
     def click(self, ev):
         if self.pts is None: return
 
@@ -28,13 +46,6 @@ class FloodHist():
         self.redraw()
 
     def redraw(self):
-        self.plot.clear()
-
-        if self.pts is None: return
-
-        active = self.pts[self.pts_active].T
-        inactive = self.pts[~self.pts_active].T
-
         """
         Coordinate layout:
         
@@ -66,50 +77,48 @@ class FloodHist():
 
         """
 
-        vor = Voronoi(self.pts.reshape(-1,2))
-        voronoi_plot_2d(vor, ax = self.plot, 
-                show_vertices = False, 
-                show_points = False, 
-                line_colors = 'grey',
-                line_alpha = 0.5)
+        self.plot.clear()
+        self.plot.imshow(self.f.fld, aspect = 'auto')
 
-        self.plot.imshow(self.img, aspect = 'auto')
-        self.plot.plot(*active, '.b', *inactive, '.r', ms = 1)
+        if self.pts is not None:
+            active = self.pts[self.pts_active].T
+            inactive = self.pts[~self.pts_active].T
+
+            vor = Voronoi(self.pts.reshape(-1,2))
+            """
+            voronoi_plot_2d(vor, ax = self.plot, 
+                    show_vertices = False, 
+                    show_points = False, 
+                    line_colors = 'grey',
+                    line_alpha = 0.5)
+            """
+
+            self.plot.plot(*active, '.b', *inactive, '.r', ms = 1)
+
         # Invert Y axis to display A channel in Top right
         self.plot.invert_yaxis()
         self.plot.set_xlim(0,self.img_size-1)
         self.plot.set_ylim(0,self.img_size-1)
         self.canvas.draw()
 
-    def update(self, data):
+    def update(self, data, smoothing, warp):
         # Image rows (1st coordinate) are the Y value ((A+D)/e)
         # Image cols (2nd coordinate) are the X value ((A+B)/e)
         self.img,*_ = np.histogram2d(data['y'], data['x'],
                                      bins = self.img_size, range = [[0,1],[0,1]])
-        self.f = fld.Flood(self.img)
-        self.pts = self.f.estimate_peaks().T.reshape(self.npts, self.npts, 2)
+        self.f = fld.Flood(self.img, smoothing, warp)
+
+        try:
+            self.pts = self.f.estimate_peaks()
+            self.pts = self.pts.T.reshape(self.npts, self.npts, 2)
+        except RuntimeError as e:
+            print(repr(e))
+            self.pts = None
+
         self.pts_active = np.zeros((self.npts, self.npts), dtype = bool)
         self.redraw()
 
-    def __init__(self, frame, **kwargs):
-        self.img_size = 512
-        self.npts = 19
-
-        self.fig = Figure(subplotpars = SubplotParams(0,0,1,1))
-        self.plot = self.fig.add_subplot(frame_on = False)
-        self.canvas = FigureCanvasTkAgg(self.fig, master = frame)
-        self.canvas.draw()
-        self.canvas.get_tk_widget().grid(**kwargs)
-
-        self.img = np.zeros((self.img_size,self.img_size))
-        self.f = None
-        self.selection = None
-        self.pts = None
-        self.pts_active = None
-
-        self.canvas.mpl_connect('button_press_event', self.click)
-
-class ThresholdHist():
+class ThresholdHist:
     def update(self, data, retain = False):
         last_rng = self.thresholds()
         self.plot.clear()

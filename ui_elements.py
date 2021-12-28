@@ -7,6 +7,7 @@ import tkinter as tk
 from flood import nearest_peak
 from figures import ThresholdHist, FloodHist
 from data_loader import DataLoaderPopup, coincidence_filetypes
+from entry_fields import NumericEntry
 
 pd.options.mode.chained_assignment = None
 
@@ -97,19 +98,41 @@ class ScrolledListbox:
 class Plots:
     def __init__(self, root, data, get_block, set_block):
         self.d    = None
-        self.data = data           # callback to get the current data frame
-        self.get_block = get_block # callback to get the selected block
-        self.set_block = set_block # callback to set the selected block
+        self.data = data
+        self.get_block = get_block
+        self.set_block = set_block
 
         self.save_xtal_photopeak = tk.IntVar()
+        self.transform_flood = tk.IntVar()
 
         self.button_frame = tk.Frame(root)
-        self.store_this_flood = tk.Button(self.button_frame, text = "Store this flood", command = self.store_this_flood_cb)
-        self.save_xtal = tk.Checkbutton(self.button_frame, text = "Store crystal photopeak", variable = self.save_xtal_photopeak)
+
+        self.select_dir_button = tk.Button(self.button_frame, text = "Select Directory",
+                command = lambda: self.check_output_dir(True))
+
+        self.store_flood_button = tk.Button(self.button_frame, text = "Store Flood",
+                command = self.store_flood_cb)
+
+        self.store_lut_button = tk.Button(self.button_frame, text = "Store LUT",
+                command = self.store_lut_cb)
+
+        self.save_xtal_cb = tk.Checkbutton(self.button_frame, text = "Store crystal photopeak",
+                variable = self.save_xtal_photopeak)
+
+        self.transform_flood_cb = tk.Checkbutton(self.button_frame, text = "Transform flood",
+                variable = self.transform_flood, command = self.flood_cb)
+
+        self.flood_smoothing_label = tk.Label(self.button_frame, text = "Flood smoothing:")
+        self.flood_smoothing_entry = NumericEntry(self.button_frame, 1.0, self.flood_cb)
 
         self.button_frame.pack(pady = 10);
-        self.store_this_flood.pack(side = tk.LEFT, padx = 5)
-        self.save_xtal.pack(side = tk.LEFT, padx = 5)
+        self.select_dir_button.pack(side = tk.LEFT, padx = 5)
+        self.store_flood_button.pack(side = tk.LEFT, padx = 5)
+        self.store_lut_button.pack(side = tk.LEFT, padx = 5)
+        self.save_xtal_cb.pack(side = tk.LEFT, padx = 5)
+        self.transform_flood_cb.pack(side = tk.LEFT, padx = 5)
+        self.flood_smoothing_label.pack(side = tk.LEFT, padx = 5)
+        self.flood_smoothing_entry.pack(side = tk.LEFT, padx = 5)
 
         self.frame = tk.Frame(root)
         self.frame.pack()
@@ -147,9 +170,12 @@ class Plots:
         """ Update the flood according to energy and DOI thresholds """
         eth = self.energy.thresholds()
         dth = self.doi.thresholds()
+
+        smoothing = self.flood_smoothing_entry.get()
+
         if self.d is not None:
             data_subset = self.d.query('({} < es < {}) & ({} < doi < {})'.format(*eth, *dth))
-            self.flood.update(data_subset)
+            self.flood.update(data_subset, smoothing, self.transform_flood.get())
 
     def doi_cb(self, retain = True):
         """ Update the DOI according to the energy thresholds """
@@ -165,23 +191,38 @@ class Plots:
             data_subset = self.d.query('{} < doi < {}'.format(*dth))
             self.energy.update(data_subset['es'], retain)
 
-    def store_this_flood_cb(self):
+    def check_output_dir(self, reset = False):
+        if reset: self.output_dir = None
         self.output_dir = self.output_dir or tk.filedialog.askdirectory(
                 title = "Configuration data directory",
                 initialdir = os.path.expanduser('~'))
 
-        if not self.output_dir or self.flood.f is None: return
+        return self.output_dir
+
+    def store_flood_cb(self):
+        output_dir = self.check_output_dir()
+        if not output_dir or self.flood.f is None:
+            return
+
+        blk = self.get_block()
+        flood_fname = os.path.join(output_dir, f'block{blk}.raw')
+        self.flood.img.astype(np.intc).tofile(flood_fname)
+
+    def store_lut_cb(self):
+        output_dir = self.check_output_dir()
+        if not output_dir or self.flood.f is None:
+            return
 
         blk = self.get_block()
 
         """ store the LUT for this block to the specified directory """
-        lut_fname = os.path.join(self.output_dir, f'block{blk}.lut')
+        lut_fname = os.path.join(output_dir, f'block{blk}.lut')
         lut = nearest_peak((self.flood.img_size,)*2,
                 self.flood.pts.reshape(-1,2))
         lut.astype(np.intc).tofile(lut_fname)
 
         """ update json file with photopeak position for this block """
-        config_file = os.path.join(self.output_dir, 'conig.json')
+        config_file = os.path.join(output_dir, 'conig.json')
 
         try:
             with open(config_file, 'r') as f:

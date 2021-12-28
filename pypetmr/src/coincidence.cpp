@@ -4,6 +4,7 @@
 
 #include "coincidence.h"
 #include <iostream>
+#include <filesystem>
 
 SingleData::SingleData(const Single &s)
 {
@@ -23,7 +24,7 @@ SingleData::SingleData(const Single &s)
 
     // Pixel values 0-511
     x = std::round(x1 * scale);
-    y = std::round((y1 + y2) / 2.0 * scale);
+    y = std::round(/*(y1 + y2) / 2.0*/y1 * scale);
 }
     
 CoincidenceData::CoincidenceData(const Single &a, const Single &b)
@@ -191,12 +192,17 @@ void find_tt_offset(
         std::queue<std::streampos> &q,
         std::atomic_bool &stop
 ) {
-    uint64_t tt_target = 0, tt_incr = 1000;
+    uint64_t tt = 0, incr = 1000;
     std::ifstream f (fname, std::ios::in | std::ios::binary);
+    std::string bname = std::filesystem::path(fname).filename();
 
-    while (!stop && Record::go_to_tt(f, tt_target, stop))
+    while (true)
     {
-        tt_target += tt_incr;
+        int64_t curr_tt = Record::go_to_tt(f, tt, stop);
+
+        if (curr_tt == -1) break;
+
+        tt += incr;
 
         {
             std::lock_guard<std::mutex> lg(l);
@@ -237,8 +243,6 @@ sorted_values sort_span(
     for (size_t i = 0; i < n; i++)
         fsize_to_process += (end_pos[i] - start_pos[i]);
     size_t approx_singles = fsize_to_process / Record::event_size;
-
-    std::cout << approx_singles << std::endl;
 
     // Allocate storage to load all the singles
     std::vector<Single> singles;

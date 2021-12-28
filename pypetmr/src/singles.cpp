@@ -99,31 +99,26 @@ void Record::align(std::ifstream &f, uint8_t data[])
 
 #include <mutex>
 
-static std::mutex m;
-
-bool Record::go_to_tt(
+int64_t Record::go_to_tt(
         std::ifstream &f,
         uint64_t value,
         std::atomic_bool &stop
 ) {
-    TimeTag last_tt;
     uint8_t data[event_size];
-    bool sync = false;
 
-    while(f.good() && !stop)
+    while(true)
     {
+        if (!f.good() || stop)
+            return -1;
+
         read(f, data);
         align(f, data);
         
         if (!is_single(data))
         {
             TimeTag tt(data);
-            if (sync && tt.value >= value) break;
-
-            sync = tt.value == last_tt.value;
-            last_tt = tt;
+            if (tt.value >= value)
+                return tt.value;
         }
     }
-
-    return f.good() && !stop;
 }

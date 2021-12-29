@@ -17,20 +17,25 @@ class App:
         self.d = None
 
         self.base = ttk.Notebook(root)
-        self.listmode_frame = tk.Frame(self.base)
-        self.sinogram_frame = tk.Frame(self.base)
-        self.base.add(self.listmode_frame, text = "Listmode Processing")
-        self.base.add(self.sinogram_frame, text = "Sinogram Processing")
-        self.base.pack()
+        listmode_frame = tk.Frame(self.base)
+        sinogram_frame = tk.Frame(self.base)
+        self.base.add(listmode_frame, text = "Listmode Processing")
+        self.base.add(sinogram_frame, text = "Sinogram Processing")
+        self.base.pack(fill = tk.BOTH, expand = True)
 
-        self.file = FileSelector(self.listmode_frame, self.collect_data)
-        self.block = ScrolledListbox(self.listmode_frame)
-        self.file.pack()
-        self.block.pack()
-        self.plots = Plots(self.listmode_frame, self.return_data, self.return_block, self.set_block)
+        lm_top_frame = tk.Frame(listmode_frame)
+        lm_top_frame.pack(fill = tk.X, expand = True)
+
+        self.file = FileSelector(lm_top_frame, self.collect_data)
+        self.block = ScrolledListbox(lm_top_frame, "Active Blocks")
+
+        self.file.pack(side = tk.LEFT, padx = 30, pady = 20)
+        self.block.pack(side = tk.LEFT, fill = tk.BOTH, expand = True, padx = 30, pady = 20)
+
+        self.plots = Plots(listmode_frame, self.return_data, self.return_block, self.set_block)
         self.block.bind(self.plots.plots_update)
 
-        self.sino = SinogramDisplay(self.sinogram_frame)
+        self.sino = SinogramDisplay(sinogram_frame)
         self.sino.pack()
 
 root = tk.Tk()

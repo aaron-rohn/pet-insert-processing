@@ -22,17 +22,19 @@ class SinogramDisplay:
         self.flip_y_coord = tk.Checkbutton(self.button_frame, text = "Flip LUT Y coordinate", variable = self.flip)
 
         self.plot_frame = tk.Frame(self.root)
+        self.plot_frame.rowconfigure(0, weight = 1)
         self.plot_frame.columnconfigure(0, weight = 1)
         self.plot_frame.columnconfigure(1, weight = 1)
 
         # Plot for counts in each pair of system planes
 
         self.plane_counts_fig = Figure(subplotpars = SubplotParams(0,0,1,1))
-        self.plane_counts_plt = self.plane_counts_fig.add_subplot()
+        self.plane_counts_plt = self.plane_counts_fig.add_subplot(frame_on = False)
         self.plane_counts_canvas = FigureCanvasTkAgg(
                 self.plane_counts_fig, master = self.plot_frame)
+        self.plane_counts_canvas.get_tk_widget().config(bd = 3, relief = tk.GROOVE)
         self.plane_counts_canvas.draw()
-        self.plane_counts_canvas.get_tk_widget().grid(column = 0, row = 0, sticky = 'NSEW')
+        self.plane_counts_canvas.get_tk_widget().grid(column = 0, row = 0, sticky = 'NSEW', padx = 5, pady = 5)
 
         self.plane_counts_canvas.mpl_connect('button_press_event', self.click)
 
@@ -42,17 +44,18 @@ class SinogramDisplay:
         self.sinogram_plt = self.sinogram_fig.add_subplot()
         self.sinogram_canvas = FigureCanvasTkAgg(
                 self.sinogram_fig, master = self.plot_frame)
+        self.sinogram_canvas.get_tk_widget().config(bd = 3, relief = tk.GROOVE)
         self.sinogram_canvas.draw()
-        self.sinogram_canvas.get_tk_widget().grid(column = 1, row = 0, sticky = 'NSEW')
+        self.sinogram_canvas.get_tk_widget().grid(column = 1, row = 0, sticky = 'NSEW', padx = 5, pady = 5)
 
     def pack(self):
-        self.button_frame.pack(pady = 10)
+        self.button_frame.pack(pady = 30)
         self.load_coin.pack(side = tk.LEFT, padx = 5)
         self.load_sino.pack(side = tk.LEFT, padx = 5)
         self.save_sino.pack(side = tk.LEFT, padx = 5)
         self.flip_y_coord.pack(side = tk.LEFT, padx = 5)
 
-        self.plot_frame.pack()
+        self.plot_frame.pack(fill = tk.BOTH, expand = True, padx = 5, pady = 5)
 
     def count_map_draw(self):
         self.plane_counts_plt.clear()

@@ -1,8 +1,9 @@
-import os
-import json
+import os, json
 import pandas as pd
 import numpy as np
 import tkinter as tk
+from tkinter.ttk import Separator
+from multiprocessing import Pool
 
 from flood import nearest_peak
 from figures import ThresholdHist, FloodHist
@@ -30,15 +31,15 @@ class FileSelector:
         self.update_data_cb = update_data_cb 
 
         self.frame = tk.Frame(self.root)
-        self.load_button = tk.Button(self.frame, text = "Select file", command = self.load)
-        self.label = WrappingLabel(self.frame, bg = 'white', text = '', anchor = 'w', relief = tk.SUNKEN, borderwidth = 1, height = 5)
+
+        self.load_button = tk.Button(self.frame, text = "Select files", command = self.load)
         self.coincidences = tk.Checkbutton(self.frame, text = "Sort Coincidences", variable = self.sort_coin)
 
-    def pack(self):
-        self.frame.pack(fill = tk.X, expand = True, padx = 10, pady = 10)
-        self.load_button.pack(side = tk.LEFT, padx = 5, pady = 10)
-        self.label.pack(side = tk.LEFT, fill = tk.X, expand = True, padx = 5, pady = 10)
-        self.coincidences.pack(side = tk.LEFT, padx = 5, pady = 10)
+    def pack(self, **kwds):
+        self.frame.pack(**kwds)
+
+        self.load_button.pack(side = tk.TOP, padx = 5, pady = 10)
+        self.coincidences.pack(side = tk.BOTTOM, padx = 5, pady = 10)
 
     def loading_error(self, err):
         tk.messagebox.showerror(message = f'{err}')
@@ -63,16 +64,20 @@ class FileSelector:
             self.loading_error(err)
 
 class ScrolledListbox:
-    def __init__(self, root):
+    def __init__(self, root, title = None):
         self.root = root
         self.frame = tk.Frame(self.root)
         self.active_var = tk.Variable()
+        self.title = tk.Label(self.frame, text = title) if title else None
         self.active = tk.Listbox(self.frame, listvariable = self.active_var, exportselection = False)
         self.scroll = tk.Scrollbar(self.frame, orient = tk.VERTICAL, command = self.active.yview)
         self.active.config(yscrollcommand = self.scroll.set)
 
-    def pack(self):
-        self.frame.pack(fill = tk.X, expand = True, padx = 10)
+    def pack(self, **kwds):
+        self.frame.pack(**kwds)
+
+        if self.title is not None:
+            self.title.pack(side = tk.TOP, pady = 5)
         self.active.pack(fill = tk.X, expand = True, side = tk.LEFT)
         self.scroll.pack(fill = tk.Y, side = tk.RIGHT)
 
@@ -107,42 +112,52 @@ class Plots:
 
         self.button_frame = tk.Frame(root)
 
-        self.select_dir_button = tk.Button(self.button_frame, text = "Select Directory",
+        self.register_button = tk.Button(self.button_frame,
+                text = "Register peaks",
+                command = lambda: self.flood.register())
+
+        self.transform_flood_cb = tk.Checkbutton(self.button_frame,
+                text = "Transform flood",
+                variable = self.transform_flood,
+                command = self.flood_cb)
+
+        self.select_dir_button = tk.Button(self.button_frame,
+                text = "Select Directory",
                 command = lambda: self.check_output_dir(True))
 
-        self.store_flood_button = tk.Button(self.button_frame, text = "Store Flood",
+        self.store_flood_button = tk.Button(self.button_frame,
+                text = "Store Flood",
                 command = self.store_flood_cb)
 
-        self.store_lut_button = tk.Button(self.button_frame, text = "Store LUT",
+        self.store_lut_button = tk.Button(self.button_frame,
+                text = "Store LUT",
                 command = self.store_lut_cb)
 
-        self.save_xtal_cb = tk.Checkbutton(self.button_frame, text = "Store crystal photopeak",
+        self.save_xtal_cb = tk.Checkbutton(self.button_frame,
+                text = "Store crystal photopeak",
                 variable = self.save_xtal_photopeak)
 
-        self.transform_flood_cb = tk.Checkbutton(self.button_frame, text = "Transform flood",
-                variable = self.transform_flood, command = self.flood_cb)
-
-        self.flood_smoothing_label = tk.Label(self.button_frame, text = "Flood smoothing:")
-        self.flood_smoothing_entry = NumericEntry(self.button_frame, 1.5, self.flood_cb)
-
         self.button_frame.pack(pady = 10);
+        self.register_button.pack(side = tk.LEFT, padx = 5)
+        self.transform_flood_cb.pack(side = tk.LEFT, padx = 5)
+
+        Separator(self.button_frame, orient = tk.VERTICAL).pack(
+                side = tk.LEFT, fill = tk.Y, padx = 20, pady = 5)
+
         self.select_dir_button.pack(side = tk.LEFT, padx = 5)
         self.store_flood_button.pack(side = tk.LEFT, padx = 5)
         self.store_lut_button.pack(side = tk.LEFT, padx = 5)
         self.save_xtal_cb.pack(side = tk.LEFT, padx = 5)
-        self.transform_flood_cb.pack(side = tk.LEFT, padx = 5)
-        self.flood_smoothing_label.pack(side = tk.LEFT, padx = 5)
-        self.flood_smoothing_entry.pack(side = tk.LEFT, padx = 5)
 
         self.frame = tk.Frame(root)
-        self.frame.pack()
+        self.frame.pack(padx = 5, pady = 5)
         self.frame.columnconfigure(0, weight = 1)
         self.frame.columnconfigure(1, weight = 1)
         self.frame.columnconfigure(2, weight = 1)
 
-        self.flood  = FloodHist(self.frame, column = 0, row = 0, sticky = 'EW')
-        self.energy = ThresholdHist(self.frame, is_energy = True, column = 1, row = 0, sticky = 'EW')
-        self.doi    = ThresholdHist(self.frame, is_energy = False, column = 2, row = 0, sticky = 'EW')
+        self.flood  = FloodHist(self.frame, column = 0, row = 0)
+        self.energy = ThresholdHist(self.frame, is_energy = True, column = 1, row = 0)
+        self.doi    = ThresholdHist(self.frame, is_energy = False, column = 2, row = 0)
 
         # when one plot is updated, update other plots accordingly
         # callbacks are triggered after a threshold drag is finished
@@ -171,11 +186,9 @@ class Plots:
         eth = self.energy.thresholds()
         dth = self.doi.thresholds()
 
-        smoothing = self.flood_smoothing_entry.get()
-
         if self.d is not None:
             data_subset = self.d.query('({} < es < {}) & ({} < doi < {})'.format(*eth, *dth))
-            self.flood.update(data_subset, smoothing, self.transform_flood.get())
+            self.flood.update(data_subset, smoothing = 1.5, warp = self.transform_flood.get())
 
     def doi_cb(self, retain = True):
         """ Update the DOI according to the energy thresholds """
@@ -219,11 +232,7 @@ class Plots:
         lut_fname = os.path.join(output_dir, f'block{blk}.lut')
         lut = nearest_peak((self.flood.img_size,)*2,
                 self.flood.pts.reshape(-1,2))
-
-        self.flood.f.register_peaks(self.flood.pts.reshape(19*19,2))
-        lut = self.flood.f.register_lut(lut)
         lut = self.flood.f.warp_lut(lut)
-
         lut.astype(np.intc).tofile(lut_fname)
 
         """ update json file with photopeak position for this block """
@@ -253,11 +262,11 @@ class Plots:
             self.d = self.d.groupby(['lut'])
 
             # find the photopeak for each crystal
-            def groupfun(grp):
+            def get_photopeak(grp):
                 n,bins = np.histogram(grp['es'].values, bins = 100)
                 return round(bins[np.argmax(bins[:-1] * n**2)])
 
-            pks = self.d.apply(groupfun)
+            pks = self.d.apply(get_photopeak)
 
             # record the crystal photopeak
             for lut,pk in pks.iteritems():

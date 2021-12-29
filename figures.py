@@ -13,6 +13,7 @@ class FloodHist:
         self.fig = Figure(subplotpars = SubplotParams(0,0,1,1))
         self.plot = self.fig.add_subplot(frame_on = False)
         self.canvas = FigureCanvasTkAgg(self.fig, master = frame)
+        self.canvas.get_tk_widget().config(bd = 3, relief = tk.GROOVE)
         self.canvas.draw()
         self.canvas.get_tk_widget().grid(**kwargs)
 
@@ -40,7 +41,6 @@ class FloodHist:
             self.pts[:,self.selection[1],0] = loc[0]
             self.pts.sort(0)
             self.pts.sort(1)
-            self.pts = np.flip(self.pts, (0,1))
             self.selection = None
 
         self.redraw()
@@ -85,33 +85,45 @@ class FloodHist:
             inactive = self.pts[~self.pts_active].T
 
             vor = Voronoi(self.pts.reshape(-1,2))
-            """
             voronoi_plot_2d(vor, ax = self.plot, 
                     show_vertices = False, 
                     show_points = False, 
                     line_colors = 'grey',
                     line_alpha = 0.5)
-            """
 
-            self.plot.plot(*active, '.b', *inactive, '.r', ms = 1)
+            self.plot.plot(*active, '.b', *inactive, '.r', ms = 2)
 
         # Invert Y axis to display A channel in Top right
         self.plot.invert_yaxis()
         self.plot.set_xlim(0,self.img_size-1)
         self.plot.set_ylim(0,self.img_size-1)
         self.canvas.draw()
+    
+    def register(self):
+        """ Apply a deformable 2D registration to the current point set
+        based on the loaded flood.
+        """
+
+        if self.pts is None: return
+
+        self.pts = self.pts.reshape(self.npts*self.npts, 2)
+        self.pts = self.f.register_peaks(self.pts)
+        self.pts = self.pts.reshape(self.npts, self.npts, 2)
+        self.redraw()
 
     def update(self, data, smoothing, warp):
         # Image rows (1st coordinate) are the Y value ((A+D)/e)
         # Image cols (2nd coordinate) are the X value ((A+B)/e)
         self.img,*_ = np.histogram2d(data['y'], data['x'],
                                      bins = self.img_size, range = [[0,1],[0,1]])
+
         self.f = fld.Flood(self.img, smoothing, warp)
 
         try:
             self.pts = self.f.estimate_peaks()
             self.pts = self.pts.T.reshape(self.npts, self.npts, 2)
         except RuntimeError as e:
+            # Failed to find sufficient peaks - smoothing may be too high
             print(repr(e))
             self.pts = None
 
@@ -178,6 +190,7 @@ class ThresholdHist:
         self.plot = self.fig.add_subplot()
         self.init_lines()
         self.canvas = FigureCanvasTkAgg(self.fig, master = frame)
+        self.canvas.get_tk_widget().config(bd = 3, relief = tk.GROOVE)
         self.canvas.draw()
         self.canvas.get_tk_widget().grid(**kwargs)
 

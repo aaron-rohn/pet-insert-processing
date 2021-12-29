@@ -68,7 +68,6 @@ class DataLoaderPopup:
         self.counts_label = tk.Label(self.popup, text = '')
         self.counts_label.pack(pady = 10)
 
-        self.fileselector.label.config(text = self.input_files)
         self.fileselector.load_button.config(state = tk.DISABLED)
         self.bg.start()
         self.check()

@@ -18,20 +18,18 @@ static const auto npy_type = NPY_FLOAT32;
 class Geometry
 {
     public:
-    static const int ncrystals_per_block = 19;
-
+    static const int ncrystals = 19;
+    static const int ncrystals_total = ncrystals * ncrystals;
     static const int nblocks_axial = 4;
 
     // allow for 1 crystal gap between blocks (and at end of scanner)
-    static const int nring = nblocks_axial*ncrystals_per_block + nblocks_axial;
+    static const int nring = nblocks_axial*ncrystals + nblocks_axial;
 
-    static const int npix  = ncrystals_per_block * Record::nmodules;
-    static const int dim_theta = npix;
-    static const int dim_r     = npix / 2;
+    static const int ncrystals_per_ring = ncrystals * Record::nmodules;
+    static const int dim_theta = ncrystals_per_ring;
+    static const int dim_r     = ncrystals_per_ring / 2;
 
-    static const int lut_pix = 512;
-    static const int xtal_max = ncrystals_per_block * ncrystals_per_block;
-
+    static const int lut_dim = 512;
     static constexpr double energy_window = 0.15;
 };
 
@@ -48,9 +46,14 @@ class Sinogram: Geometry
 
     static std::tuple<int,int> idx_to_coord(int idx1, int idx2)
     {
-        int theta = (idx1 + idx2) % npix;
+        // note that LORs with theta = 0 are tangent to crystal #0
+        // theta increases in the same direction as the crystal numbering
+        int theta = (idx1 + idx2) % ncrystals_per_ring;
         int r = std::abs(idx1 - idx2);
-        if (idx1 + idx2 >= npix) r = npix - r;
+
+        if (idx1 + idx2 >= ncrystals_per_ring)
+            r = ncrystals_per_ring - r;
+
         return std::make_tuple(theta, r/2);
     }
 
@@ -94,8 +97,8 @@ class Michelogram: Geometry
 
     Michelogram(bool flip = false):
         flip(flip),
-        luts(std::vector<std::vector<int>> (Single::nblocks, std::vector<int>(lut_pix*lut_pix, xtal_max))),
-        photopeaks(std::vector<std::vector<double>> (Single::nblocks, std::vector<double>(xtal_max, -1))),
+        luts(std::vector<std::vector<int>> (Single::nblocks, std::vector<int>(lut_dim*lut_dim, ncrystals_total))),
+        photopeaks(std::vector<std::vector<double>> (Single::nblocks, std::vector<double>(ncrystals_total, -1))),
         m(std::vector<Sinogram> (nring*nring)) {};
 
     std::streampos sort_span(std::string, std::streampos, std::streampos);

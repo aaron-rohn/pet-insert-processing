@@ -2,6 +2,7 @@ import cv2 as cv
 import numpy as np
 from scipy import ndimage, signal
 from scipy.spatial import Voronoi, voronoi_plot_2d, KDTree
+import pyelastix
 import matplotlib.pyplot as plt
 
 def nearest_peak(shape, pks):
@@ -13,12 +14,13 @@ def nearest_peak(shape, pks):
     return nearest
 
 class Flood:
-    def __init__(self, f, ksize = 1.0, warp = False):
+    def __init__(self, f, ksize = 1.5, warp = False):
         self.fld = np.copy(f).astype(np.float64)
 
         # warp flood to rectangle
         self.warped = warp
         self.transformation_matrix = None
+        self.field = None
         if warp:
             try:
                 self.fld, self.transformation_matrix = self.apply_warp(self.fld)
@@ -59,9 +61,19 @@ class Flood:
 
         mask = (blur > binary_mask_threshold).astype(np.uint8)
         ctor, hier = cv.findContours(mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
-        ctor_approx = cv.approxPolyDP(ctor[0], contour_threshold, True)
 
-        if ctor_approx.shape[0] != 4:
+        for _ in range(10):
+            ctor_approx = cv.approxPolyDP(ctor[0], contour_threshold, True)
+            nvertex = ctor_approx.shape[0]
+
+            if nvertex == 4:
+                break
+            elif nvertex > 4:
+                contour_threshold += 5
+            elif nvertex < 4:
+                contour_threshold -= 5
+
+        else:
             raise RuntimeError('Could not find approximate bounding rectangle')
 
         cmin, rmin = ctor_approx.squeeze().min(0)
@@ -72,9 +84,37 @@ class Flood:
                 ctor_approx.astype(np.float32), ctor_target.astype(np.float32))
 
         f_out = cv.warpPerspective(f, mat, f.shape)
-
         return f_out, mat
 
+    def warp_lut(self, lut):
+        if self.transformation_matrix is None:
+            return lut
+        else:
+            return cv.warpPerspective(lut, self.transformation_matrix, lut.shape,
+                    flags = cv.WARP_INVERSE_MAP | cv.INTER_NEAREST,
+                    borderMode = cv.BORDER_CONSTANT, borderValue = int(lut.max()))
+
+    def register_lut(self, lut):
+        if self.field is None:
+            return lut
+        else:
+            return cv.remap(lut, self.field[0], self.field[1], cv.INTER_NEAREST,
+                    borderMode = cv.BORDER_CONSTANT, borderValue = int(lut.max()))
+
+    def register_peaks(self, pks):
+        pks_map = np.zeros(self.fld.shape)
+        for pk in pks:
+            pks_map[pk[1], pk[0]] = 1
+        pks_blur = ndimage.gaussian_filter(pks_map, 1)
+
+        pars = pyelastix.get_default_params()
+        pars.NumberOfResolution = 2
+        pars.MaximumNumberOfIterations = 200
+        _, field = pyelastix.register(pks_blur, self.fld, pars, verbose = 0)
+
+        xfield, yfield = field
+        x = np.tile(np.arange(512, dtype = np.float32), 512).reshape(512,512)
+        self.field = (x + xfield, x.T + yfield)
 
     def edges(self, f, axis = 0, threshold = 10):
         p = np.sum(f, axis)

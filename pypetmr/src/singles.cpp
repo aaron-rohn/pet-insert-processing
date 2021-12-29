@@ -93,32 +93,25 @@ void Record::align(std::ifstream &f, uint8_t data[])
                 break;
             }
         }
-        f.read((char*)(data + event_size - n), n);
+        read(f, data + event_size - n, n);
     }
 }
 
-#include <mutex>
-
-int64_t Record::go_to_tt(
+bool Record::go_to_tt(
         std::ifstream &f,
         uint64_t value,
         std::atomic_bool &stop
 ) {
     uint8_t data[event_size];
 
-    while(true)
+    while(f.good() && !stop)
     {
-        if (!f.good() || stop)
-            return -1;
-
         read(f, data);
         align(f, data);
-        
-        if (!is_single(data))
-        {
-            TimeTag tt(data);
-            if (tt.value >= value)
-                return tt.value;
-        }
+
+        if (!is_single(data) && TimeTag(data).value == value)
+            break;
     }
+
+    return f.good() && !stop;
 }

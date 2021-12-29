@@ -78,7 +78,7 @@ void Michelogram::load_photopeaks(std::string cfg_file)
             {
                 // record the crystal photopeak
                 size_t xtal_num = std::stoi(elem);
-                if (xtal_num < xtal_max) photopeaks[blk_num][xtal_num] = ppeak;
+                if (xtal_num < ncrystals_total) photopeaks[blk_num][xtal_num] = ppeak;
             }
         }
 
@@ -100,10 +100,10 @@ void Michelogram::add_event(const CoincidenceData &c)
 
     // Lookup crystal index
 
-    int xa = luts[ba][pos_ya*lut_pix + pos_xa];
-    int xb = luts[bb][pos_yb*lut_pix + pos_xb];
+    int xa = luts[ba][pos_ya*lut_dim + pos_xa];
+    int xb = luts[bb][pos_yb*lut_dim + pos_xb];
 
-    if (xa >= xtal_max || xb >= xtal_max) return;
+    if (xa >= ncrystals_total || xb >= ncrystals_total) return;
 
     // Apply energy thresholds
 
@@ -119,28 +119,28 @@ void Michelogram::add_event(const CoincidenceData &c)
 
     // Calculate ring pairs
 
-    int rowa = xa / ncrystals_per_block;
-    int rowb = xb / ncrystals_per_block;
+    int rowa = xa / ncrystals;
+    int rowb = xb / ncrystals;
 
     if (flip)
     {
-        rowa = (ncrystals_per_block-1) - rowa;
-        rowb = (ncrystals_per_block-1) - rowb;
+        rowa = (ncrystals-1) - rowa;
+        rowb = (ncrystals-1) - rowb;
     }
 
     int blka_ax = ba % nblocks_axial, blkb_ax = bb % nblocks_axial;
-    int ra = rowa + blka_ax*ncrystals_per_block + blka_ax;
-    int rb = rowb + blkb_ax*ncrystals_per_block + blkb_ax;
+    int ra = rowa + blka_ax*ncrystals + blka_ax;
+    int rb = rowb + blkb_ax*ncrystals + blkb_ax;
 
     // Calculate index along the ring
 
     // crystals are indexed in the opposite direction from increasing module number
-    int cola = (ncrystals_per_block - 1) - (xa % ncrystals_per_block);
-    int colb = (ncrystals_per_block - 1) - (xb % ncrystals_per_block);
+    int cola = (ncrystals - 1) - (xa % ncrystals);
+    int colb = (ncrystals - 1) - (xb % ncrystals);
 
     int moda = ba >> 2, modb = bb >> 2;
-    int idx1 = cola + (ncrystals_per_block * moda);
-    int idx2 = colb + (ncrystals_per_block * modb);
+    int idx1 = cola + (ncrystals * moda);
+    int idx2 = colb + (ncrystals * modb);
 
     (*this)(ra,rb).add_event(idx1, idx2);
 }

@@ -36,7 +36,7 @@ namespace Record
     { f.read((char*)d, n); };
 
     void align(std::ifstream&, uint8_t[]);
-    int64_t go_to_tt(std::ifstream&, uint64_t, std::atomic_bool&);
+    bool go_to_tt(std::ifstream&, uint64_t, std::atomic_bool&);
 };
 
 struct TimeTag {

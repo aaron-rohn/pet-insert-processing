@@ -194,14 +194,9 @@ void find_tt_offset(
 ) {
     uint64_t tt = 0, incr = 1000;
     std::ifstream f (fname, std::ios::in | std::ios::binary);
-    std::string bname = std::filesystem::path(fname).filename();
 
-    while (true)
+    while (Record::go_to_tt(f, tt, stop))
     {
-        int64_t curr_tt = Record::go_to_tt(f, tt, stop);
-
-        if (curr_tt == -1) break;
-
         tt += incr;
 
         {

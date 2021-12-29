@@ -123,7 +123,7 @@ class Plots:
                 variable = self.transform_flood, command = self.flood_cb)
 
         self.flood_smoothing_label = tk.Label(self.button_frame, text = "Flood smoothing:")
-        self.flood_smoothing_entry = NumericEntry(self.button_frame, 1.0, self.flood_cb)
+        self.flood_smoothing_entry = NumericEntry(self.button_frame, 1.5, self.flood_cb)
 
         self.button_frame.pack(pady = 10);
         self.select_dir_button.pack(side = tk.LEFT, padx = 5)
@@ -219,6 +219,11 @@ class Plots:
         lut_fname = os.path.join(output_dir, f'block{blk}.lut')
         lut = nearest_peak((self.flood.img_size,)*2,
                 self.flood.pts.reshape(-1,2))
+
+        self.flood.f.register_peaks(self.flood.pts.reshape(19*19,2))
+        lut = self.flood.f.register_lut(lut)
+        lut = self.flood.f.warp_lut(lut)
+
         lut.astype(np.intc).tofile(lut_fname)
 
         """ update json file with photopeak position for this block """

@@ -200,6 +200,7 @@ petmr_coincidences(PyObject *self, PyObject *args)
         all_pos[i].pop();
     }
 
+    // verify that each file as readable and contained a reset
     if (std::any_of(start_pos.begin(), start_pos.end(),
                 [](std::streampos p){ return p == -1; }))
     {
@@ -244,6 +245,7 @@ petmr_coincidences(PyObject *self, PyObject *args)
             auto [pos, new_cd] = workers.front().get();
             workers.pop_front();
 
+            // either save the data or copy it to a buffer
             if (output_file_handle)
                 CoincidenceData::write(output_file_handle, new_cd);
             else

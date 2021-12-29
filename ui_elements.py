@@ -208,7 +208,7 @@ class Plots:
         if reset: self.output_dir = None
         self.output_dir = self.output_dir or tk.filedialog.askdirectory(
                 title = "Configuration data directory",
-                initialdir = os.path.expanduser('~'))
+                initialdir = '/')
 
         return self.output_dir
 

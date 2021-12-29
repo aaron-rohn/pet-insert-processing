@@ -19,6 +19,8 @@ class SinogramDisplay:
         self.load_coin = tk.Button(self.button_frame, text = "Load Coincidences", command = self.sort_sinogram)
         self.load_sino = tk.Button(self.button_frame, text = "Load Sinogram", command = self.load_sinogram)
         self.save_sino = tk.Button(self.button_frame, text = "Save Sinogram", command = self.save_sinogram)
+        self.create_norm_button = tk.Button(self.button_frame, text = "Create Norm", command = self.create_norm)
+        self.apply_norm_button = tk.Button(self.button_frame, text = "Apply Norm", command = self.apply_norm)
         self.flip_y_coord = tk.Checkbutton(self.button_frame, text = "Flip LUT Y coordinate", variable = self.flip)
 
         self.plot_frame = tk.Frame(self.root)
@@ -53,8 +55,9 @@ class SinogramDisplay:
         self.load_coin.pack(side = tk.LEFT, padx = 5)
         self.load_sino.pack(side = tk.LEFT, padx = 5)
         self.save_sino.pack(side = tk.LEFT, padx = 5)
+        self.create_norm_button.pack(side = tk.LEFT, padx = 5)
+        self.apply_norm_button.pack(side = tk.LEFT, padx = 5)
         self.flip_y_coord.pack(side = tk.LEFT, padx = 5)
-
         self.plot_frame.pack(fill = tk.BOTH, expand = True, padx = 5, pady = 5)
 
     def count_map_draw(self):
@@ -80,7 +83,7 @@ class SinogramDisplay:
     def sort_sinogram(self):
         fname = tk.filedialog.askopenfilename(
                 title = "Select coincidence file",
-                initialdir = os.path.expanduser('~'),
+                initialdir = '/',
                 filetypes = coincidence_filetypes)
 
         if not fname: return
@@ -89,6 +92,8 @@ class SinogramDisplay:
         cfgdir = tk.filedialog.askdirectory(
                 title = "Select configuration directory",
                 initialdir = base)
+
+        if not cfgdir: return
 
         def sorting_callback(result):
             if isinstance(result, RuntimeError):
@@ -101,13 +106,13 @@ class SinogramDisplay:
             self.count_map_draw()
             self.ldr = None
 
-        if fname and cfgdir:
-            self.ldr = SinogramLoaderPopup(self.root, sorting_callback, fname, cfgdir, self.flip.get())
+        self.ldr = SinogramLoaderPopup(self.root,
+                sorting_callback, fname, cfgdir, self.flip.get())
 
     def load_sinogram(self):
         fname = tk.filedialog.askopenfilename(
                 title = "Select sinogram file",
-                initialdir = os.path.expanduser('~'))
+                initialdir = '/')
 
         if fname:
             self.sino_data = petmr.load_sinogram(fname)
@@ -118,7 +123,7 @@ class SinogramDisplay:
 
         fname = tk.filedialog.asksaveasfilename(
                 title = "Save sinogram file",
-                initialdir = os.path.expanduser('~'),
+                initialdir = '/',
                 filetypes = [("Sinogram file", ".raw")])
 
         if not fname: return
@@ -135,3 +140,64 @@ class SinogramDisplay:
         rd[2::2] = -pos_rd
         rd = list(rd)
         """
+
+    def create_norm(self):
+        fnames = tk.filedialog.askopenfilenames(
+                title = "Select sinogram file",
+                initialdir = '/',
+                filetypes = [("Sinogram file", ".raw")])
+
+        if not fnames: return
+
+        # sum the provided sinograms
+        sinogram = None
+        for fn in fnames:
+            s = petmr.load_sinogram(fn)
+
+            if sinogram is None:
+                sinogram = s
+            else:
+                sinogram += s
+
+        # average over angular dimension
+        proj = sinogram.mean(2)
+        sinogram = sinogram / proj[:,:,None,:]
+        sinogram = np.nan_to_num(sinogram,
+                nan = 1, posinf = 1, neginf = 1)
+
+        # set norm coeff. to 1 outside of norm phantom
+        for a in range(sinogram.shape[0]):
+            for b in range(sinogram.shape[1]):
+                p = proj[a,b]
+                s = sinogram[a,b]
+                s[:, p < p.max() / 4] = 1
+
+        self.sino_data = sinogram
+        self.count_map_draw()
+
+    def apply_norm(self):
+        fname = tk.filedialog.askopenfilename(
+                title = "Select sinogram file",
+                initialdir = '/',
+                filetypes = [("Sinogram file", ".raw")])
+
+        if not fname: return
+
+        base = os.path.dirname(fname)
+        norm = tk.filedialog.askopenfilename(
+                title = "Select normalization sinogram",
+                initialdir = base,
+                filetypes = [("Sinogram file", ".raw")])
+
+        if not norm: return
+
+        # load sinogram and norm
+        self.sino_data = petmr.load_sinogram(fname)
+        norm_sino      = petmr.load_sinogram(norm)
+
+        # divide sinogram by norm, suppress invalid values
+        self.sino_data /= norm_sino
+        self.sino_data = np.nan_to_num(self.sino_data,
+                nan = 1, posinf = 1, neginf = 1)
+
+        self.count_map_draw()

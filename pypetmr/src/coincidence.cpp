@@ -16,15 +16,26 @@ SingleData::SingleData(const Single &s)
         e2 += s.energies[i + 4];
     }
 
+    /* System Front
+     * #####
+     * #D A#
+     * #   #
+     * #C B#
+     * #####
+     * System Rear
+     *
+     * View of one block from outside the system looking inwards
+     */
+
     // Fractional values 0-1
-    x1 = (double)(s.energies[0] + s.energies[1]) / e1;
-    y1 = (double)(s.energies[0] + s.energies[3]) / e1;
+    x1 = (double)(s.energies[0] + s.energies[1]) / e1; // (A + B) / e
+    y1 = (double)(s.energies[0] + s.energies[3]) / e1; // (A + D) / e
     x2 = (double)(s.energies[4] + s.energies[5]) / e2;
     y2 = (double)(s.energies[4] + s.energies[7]) / e2;
 
     // Pixel values 0-511
     x = std::round(x1 * scale);
-    y = std::round(/*(y1 + y2) / 2.0*/y1 * scale);
+    y = std::round(y1 * scale);
 }
     
 CoincidenceData::CoincidenceData(const Single &a, const Single &b)
@@ -195,7 +206,7 @@ void find_tt_offset(
     uint64_t tt = 0, incr = 1000;
     std::ifstream f (fname, std::ios::in | std::ios::binary);
 
-    while (Record::go_to_tt(f, tt, stop))
+    while (Record::go_to_tt(f, tt, stop, tt == 0))
     {
         tt += incr;
 

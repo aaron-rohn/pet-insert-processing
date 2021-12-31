@@ -13,6 +13,8 @@ struct CoincidenceData {
     // Columns in python data - block, e1, e2, x, y
     static const long ncol = 5;
     static const size_t vals_per_ev = 10;
+
+    // only data member of the struct is an array of uint16's
     uint16_t data[vals_per_ev] = {0};
 
     CoincidenceData() {};
@@ -26,7 +28,7 @@ struct CoincidenceData {
 
     inline uint8_t blka()  const { return data[0] >> 8; }
     inline uint8_t blkb()  const { return data[0] & 0xFF; }
-    inline int16_t tdiff() const { return *((int16_t*)(&data[1])); }
+    inline uint16_t time() const { return data[1]; }
     inline uint16_t e_a1() const { return data[2]; }
     inline uint16_t e_a2() const { return data[3]; }
     inline uint16_t e_b1() const { return data[4]; }
@@ -37,7 +39,7 @@ struct CoincidenceData {
     inline uint16_t y_b()  const { return data[9]; }
 
     inline void blk(uint16_t a, uint16_t b) { data[0] = (a << 8) | b; }
-    inline void tdiff(int16_t t)   { data[1] = *((uint16_t*)(&t)); }
+    inline void time(uint16_t val) { data[1] = val; }
     inline void e_a1(uint16_t val) { data[2] = val; }
     inline void e_a2(uint16_t val) { data[3] = val; }
     inline void e_b1(uint16_t val) { data[4] = val; }

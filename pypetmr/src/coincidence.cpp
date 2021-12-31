@@ -43,9 +43,14 @@ CoincidenceData::CoincidenceData(const Single &a, const Single &b)
     const auto &[ev1, ev2] = a.blk < b.blk ?
         std::tie(a, b) : std::tie(b, a);
 
+    // pick the timetag associated with the earlier event
+    uint64_t mintime = std::min(a.abs_time, b.abs_time);
+    // record time in 100 ms increments since reset
+    mintime /= (TimeTag::clks_per_tt * 100);
+
     SingleData sd1(ev1), sd2(ev2);
     blk(ev1.blk, ev2.blk);
-    tdiff((int64_t)ev1.abs_time - ev2.abs_time);
+    time(mintime);
     e_a1(sd1.e1);
     e_a2(sd1.e2);
     e_b1(sd2.e1);
@@ -180,7 +185,7 @@ CoincidenceData::from_py_data(PyObject *obj)
         cd[i].y_a(*(uint16_t*)PyArray_GETPTR1(acols[4],i));
         cd[i].x_b(*(uint16_t*)PyArray_GETPTR1(bcols[3],i));
         cd[i].y_b(*(uint16_t*)PyArray_GETPTR1(bcols[4],i));
-        cd[i].tdiff(0);
+        cd[i].time(0);
     }
 
     return cd;

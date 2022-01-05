@@ -3,12 +3,12 @@ import pandas as pd
 import numpy as np
 import tkinter as tk
 from tkinter.ttk import Separator
-from multiprocessing import Pool
+import concurrent.futures
 
+import petmr
 from flood import nearest_peak
 from figures import ThresholdHist, FloodHist
-from data_loader import DataLoaderPopup, coincidence_filetypes
-from entry_fields import NumericEntry
+from data_loader import DataLoaderPopup, singles_filetypes
 
 pd.options.mode.chained_assignment = None
 
@@ -33,12 +33,14 @@ class FileSelector:
         self.frame = tk.Frame(self.root)
 
         self.load_button = tk.Button(self.frame, text = "Select files", command = self.load)
+        self.validate_button = tk.Button(self.frame, text = "Validate files", command = self.validate)
         self.coincidences = tk.Checkbutton(self.frame, text = "Sort Coincidences", variable = self.sort_coin)
 
     def pack(self, **kwds):
         self.frame.pack(**kwds)
 
         self.load_button.pack(side = tk.TOP, padx = 5, pady = 10)
+        self.validate_button.pack(side = tk.TOP, padx = 5, pady = 10)
         self.coincidences.pack(side = tk.BOTTOM, padx = 5, pady = 10)
 
     def loading_error(self, err):
@@ -62,6 +64,24 @@ class FileSelector:
             DataLoaderPopup(self.root, self, self.update_data_cb_wrapper)
         except (ValueError, RuntimeError) as err:
             self.loading_error(err)
+
+    def validate(self):
+        fnames = list(tk.filedialog.askopenfilenames(
+                title = "Validate singles files",
+                initialdir = "/",
+                filetypes = singles_filetypes))
+
+        if not fnames: return
+
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = [executor.submit(petmr.validate_singles_file, f) for f in fnames]
+
+        valid = [fut.result() for fut in futures]
+
+        message = [os.path.basename(f) + ': ' + ('valid' if v else 'invalid')
+                for f,v in zip(fnames, valid)]
+
+        tk.messagebox.showinfo(message = '\n'.join(message))
 
 class ScrolledListbox:
     def __init__(self, root, title = None):

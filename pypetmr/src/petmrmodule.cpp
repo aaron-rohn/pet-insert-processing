@@ -15,6 +15,7 @@ static PyObject *petmr_store(PyObject*, PyObject*);
 static PyObject *petmr_sort_sinogram(PyObject*, PyObject*);
 static PyObject *petmr_load_sinogram(PyObject*, PyObject*);
 static PyObject *petmr_save_sinogram(PyObject*, PyObject*);
+static PyObject *petmr_validate_singles_file(PyObject*, PyObject*);
 
 static PyMethodDef petmrMethods[] = {
     {"singles", petmr_singles, METH_VARARGS, "read PET/MRI insert singles data"},
@@ -24,6 +25,7 @@ static PyMethodDef petmrMethods[] = {
     {"sort_sinogram", petmr_sort_sinogram, METH_VARARGS, "Sort coincidence data into a sinogram"},
     {"load_sinogram", petmr_load_sinogram, METH_VARARGS, "Load a sinogram from disk"},
     {"save_sinogram", petmr_save_sinogram, METH_VARARGS, "Save a sinogram to disk"},
+    {"validate_singles_file", petmr_validate_singles_file, METH_VARARGS, "Indicate if a singles file contains a reset and timetags for each module"},
     {NULL, NULL, 0, NULL}
 };
 
@@ -421,4 +423,54 @@ petmr_save_sinogram(PyObject* self, PyObject* args)
     Michelogram m(arr);
     m.write_to(sinogram_file);
     Py_RETURN_NONE;
+}
+
+static PyObject *petmr_validate_singles_file(PyObject* self, PyObject* args)
+{
+    const char *singles_file;
+    if (!PyArg_ParseTuple(args, "s", &singles_file))
+        return NULL;
+
+    std::ifstream f (singles_file, std::ios::binary);
+    if (!f.good()) 
+    {
+        PyErr_SetFromErrno(PyExc_IOError);
+        return NULL;
+    }
+
+    const auto pred = [](bool v){ return v;};
+    const auto all = [=](std::vector<bool> v){
+        return std::all_of(v.begin(), v.end(), pred); };
+
+    const int nmodules = 4;
+
+    uint8_t data[Record::event_size];
+    std::vector<bool> has_tt (nmodules, false);
+    bool has_rst = false, valid = false;
+
+    Py_BEGIN_ALLOW_THREADS
+
+    while (f.good())
+    {
+        Record::read(f, data);
+        Record::align(f, data);
+
+        auto mod = Record::get_module(data) % nmodules;
+
+        if (!Record::is_single(data))
+        {
+            has_rst = has_rst || (TimeTag(data).value == 0);
+            has_tt[mod] = true;
+            valid = has_rst && all(has_tt);
+
+            if (valid) break;
+        }
+    }
+
+    Py_END_ALLOW_THREADS
+
+    if (valid)
+        Py_RETURN_TRUE;
+    else
+        Py_RETURN_FALSE;
 }

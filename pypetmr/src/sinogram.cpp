@@ -139,8 +139,8 @@ void Michelogram::add_event(const CoincidenceData &c)
     int colb = (ncrystals - 1) - (xb % ncrystals);
 
     int moda = ba >> 2, modb = bb >> 2;
-    int idx1 = cola + (ncrystals * moda);
-    int idx2 = colb + (ncrystals * modb);
+    int idx1 = cola + (ncrystals * moda) + (moda*ncrystals_transverse_gap);
+    int idx2 = colb + (ncrystals * modb) + (modb*ncrystals_transverse_gap);
 
     (*this)(ra,rb).add_event(idx1, idx2);
 }

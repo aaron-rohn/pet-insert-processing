@@ -22,10 +22,15 @@ class Geometry
     static const int ncrystals_total = ncrystals * ncrystals;
     static const int nblocks_axial = 4;
 
+    static const int ncrystals_transverse_gap   = 3;
+    static const int ncrystals_axial_gap        = 1;
+
     // allow for 1 crystal gap between blocks (and at end of scanner)
     static const int nring = nblocks_axial*ncrystals + nblocks_axial;
 
-    static const int ncrystals_per_ring = ncrystals * Record::nmodules;
+    static const int ncrystals_per_ring = (ncrystals*Record::nmodules) +
+        (Record::nmodules*ncrystals_transverse_gap);
+
     static const int dim_theta = ncrystals_per_ring;
     static const int dim_r     = ncrystals_per_ring / 2;
 

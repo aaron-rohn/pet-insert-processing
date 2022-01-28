@@ -13,6 +13,7 @@ static PyObject *petmr_coincidences(PyObject*, PyObject*);
 static PyObject *petmr_load(PyObject*, PyObject*);
 static PyObject *petmr_store(PyObject*, PyObject*);
 static PyObject *petmr_sort_sinogram(PyObject*, PyObject*);
+static PyObject *petmr_save_listmode(PyObject*, PyObject*);
 static PyObject *petmr_load_sinogram(PyObject*, PyObject*);
 static PyObject *petmr_save_sinogram(PyObject*, PyObject*);
 static PyObject *petmr_validate_singles_file(PyObject*, PyObject*);
@@ -23,6 +24,7 @@ static PyMethodDef petmrMethods[] = {
     {"load", petmr_load, METH_VARARGS, "Load coincidence listmode data"},
     {"store", petmr_store, METH_VARARGS, "Store coincidence listmode data"},
     {"sort_sinogram", petmr_sort_sinogram, METH_VARARGS, "Sort coincidence data into a sinogram"},
+    {"save_listmode", petmr_save_listmode, METH_VARARGS, "Convert coincidence format into a simple listmode format"},
     {"load_sinogram", petmr_load_sinogram, METH_VARARGS, "Load a sinogram from disk"},
     {"save_sinogram", petmr_save_sinogram, METH_VARARGS, "Save a sinogram to disk"},
     {"validate_singles_file", petmr_validate_singles_file, METH_VARARGS, "Indicate if a singles file contains a reset and timetags for each module"},
@@ -321,29 +323,26 @@ petmr_store(PyObject *self, PyObject *args)
 static PyObject*
 petmr_sort_sinogram(PyObject *self, PyObject *args)
 {
-    const char *fname, *lut_dir;
+    double energy_window = 0.2;
+    const char *fname, *cfg_dir;
     int flip_flood_y_coord = 0;
-    uint64_t events_per_thread = 1'000'000;
     PyObject *terminate, *status_queue, *data_queue;
-    if (!PyArg_ParseTuple(args, "ssOOO|iK",
+    if (!PyArg_ParseTuple(args, "ssOOO|di",
                 &fname,
-                &lut_dir,
+                &cfg_dir,
                 &terminate,
                 &status_queue,
                 &data_queue,
-                &flip_flood_y_coord,
-                &events_per_thread)) return NULL;
+                &energy_window,
+                &flip_flood_y_coord)) return NULL;
 
     PyThreadState *_save = PyEval_SaveThread();
 
-    Michelogram m(flip_flood_y_coord);
-    std::string cfg_file = Michelogram::find_cfg_file(lut_dir);
+    Michelogram m(energy_window, flip_flood_y_coord);
 
     try
     {
-        // catch invalid filename or json contents
-        m.load_luts(lut_dir);
-        m.load_photopeaks(cfg_file);
+        m.cfg_load(cfg_dir);
     }
     catch (std::invalid_argument &e)
     {
@@ -354,6 +353,8 @@ petmr_sort_sinogram(PyObject *self, PyObject *args)
     };
 
     std::streampos coincidence_file_size = fsize(fname);
+
+    uint64_t events_per_thread = 1'000'000;
     std::streampos incr = sizeof(CoincidenceData) * events_per_thread;
     bool stop = false;
 
@@ -397,6 +398,43 @@ petmr_sort_sinogram(PyObject *self, PyObject *args)
 
     PyObject *data = m.to_py_data();
     PyObject_CallMethod(data_queue, "put", "O", data);
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+petmr_save_listmode(PyObject* self, PyObject* args)
+{
+    int flip_flood_y_coord = 0;
+    const char *coincidence_file, *listmode_file, *cfg_dir;
+    if (!PyArg_ParseTuple(args, "sss|i",
+                &coincidence_file,
+                &listmode_file,
+                &cfg_dir,
+                &flip_flood_y_coord)) return NULL;
+
+    Michelogram m(flip_flood_y_coord);
+
+    try
+    {
+        m.cfg_load(cfg_dir);
+    }
+    catch (std::invalid_argument &e)
+    {
+        auto err_str = std::string("Error loading configuration data (") + e.what() + ")";
+        PyErr_SetString(PyExc_RuntimeError, err_str.c_str());
+        return NULL;
+    };
+
+    std::ifstream cf(coincidence_file, std::ios::binary);
+    std::ofstream lf(listmode_file, std::ios::binary);
+
+    CoincidenceData c;
+    while (cf)
+    {
+        cf.read((char*)&c, sizeof(c));
+        m.write_event(lf, c);
+    }
+
     Py_RETURN_NONE;
 }
 
@@ -469,8 +507,11 @@ static PyObject *petmr_validate_singles_file(PyObject* self, PyObject* args)
 
     Py_END_ALLOW_THREADS
 
-    if (valid)
-        Py_RETURN_TRUE;
+    if (valid) Py_RETURN_TRUE;
     else
-        Py_RETURN_FALSE;
+    {
+        return Py_BuildValue("(iiiii)",
+                (int)has_rst, (int)has_tt[0], (int)has_tt[1],
+                (int)has_tt[2], (int)has_tt[3]);
+    }
 }

@@ -29,6 +29,7 @@ class SinogramLoaderPopup:
                         self.terminate,
                         self.stat_queue,
                         self.data_queue,
+                        0.3,
                         flip_y])
 
         self.bg.start()

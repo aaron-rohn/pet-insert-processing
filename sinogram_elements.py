@@ -4,6 +4,7 @@ import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure, SubplotParams
 
+from scipy import ndimage
 import petmr
 from data_loader import coincidence_filetypes
 from sinogram_loader import SinogramLoaderPopup
@@ -19,6 +20,7 @@ class SinogramDisplay:
         self.load_coin = tk.Button(self.button_frame, text = "Load Coincidences", command = self.sort_sinogram)
         self.load_sino = tk.Button(self.button_frame, text = "Load Sinogram", command = self.load_sinogram)
         self.save_sino = tk.Button(self.button_frame, text = "Save Sinogram", command = self.save_sinogram)
+        self.save_lm   = tk.Button(self.button_frame, text = "Save Listmode", command = self.save_listmode)
         self.create_norm_button = tk.Button(self.button_frame, text = "Create Norm", command = self.create_norm)
         self.apply_norm_button = tk.Button(self.button_frame, text = "Apply Norm", command = self.apply_norm)
         self.flip_y_coord = tk.Checkbutton(self.button_frame, text = "Flip LUT Y coordinate", variable = self.flip)
@@ -55,6 +57,7 @@ class SinogramDisplay:
         self.load_coin.pack(side = tk.LEFT, padx = 5)
         self.load_sino.pack(side = tk.LEFT, padx = 5)
         self.save_sino.pack(side = tk.LEFT, padx = 5)
+        self.save_lm.pack(side = tk.LEFT, padx = 5)
         self.create_norm_button.pack(side = tk.LEFT, padx = 5)
         self.apply_norm_button.pack(side = tk.LEFT, padx = 5)
         self.flip_y_coord.pack(side = tk.LEFT, padx = 5)
@@ -75,6 +78,7 @@ class SinogramDisplay:
         h = int(np.floor(ev.xdata))
         v = int(np.floor(ev.ydata))
         if self.sino_data is not None:
+            print(f'row: {v} col: {h}')
             self.sinogram_plt.imshow(self.sino_data[v,h,:,:],
                                      aspect = 'auto')
             self.sinogram_plt.invert_yaxis()
@@ -141,6 +145,27 @@ class SinogramDisplay:
         rd = list(rd)
         """
 
+    def save_listmode(self):
+        fname = tk.filedialog.askopenfilename(
+                title = "Select coincidence file",
+                initialdir = '/',
+                filetypes = coincidence_filetypes)
+        if not fname: return
+        base = os.path.dirname(fname)
+
+        cfgdir = tk.filedialog.askdirectory(
+                title = "Select configuration directory",
+                initialdir = base)
+        if not cfgdir: return
+
+        lmfname = tk.filedialog.asksaveasfilename(
+                title = "Save listmode file",
+                initialdir = base,
+                filetypes = [("Listmode file", ".lm")])
+        if not lmfname: return
+        
+        petmr.save_listmode(fname, lmfname, cfgdir, self.flip.get())
+
     def create_norm(self):
         fnames = tk.filedialog.askopenfilenames(
                 title = "Select sinogram file",
@@ -164,6 +189,7 @@ class SinogramDisplay:
         sinogram = sinogram / proj[:,:,None,:]
         sinogram = np.nan_to_num(sinogram,
                 nan = 1, posinf = 1, neginf = 1)
+        sinogram[sinogram == 0] = 1
 
         # set norm coeff. to 1 outside of norm phantom
         for a in range(sinogram.shape[0]):
@@ -172,7 +198,7 @@ class SinogramDisplay:
                 s = sinogram[a,b]
                 s[:, p < p.max() / 4] = 1
 
-        self.sino_data = sinogram
+        self.sino_data = 1.0 / (sinogram + np.finfo(float).eps)
         self.count_map_draw()
 
     def apply_norm(self):
@@ -196,7 +222,7 @@ class SinogramDisplay:
         norm_sino      = petmr.load_sinogram(norm)
 
         # divide sinogram by norm, suppress invalid values
-        self.sino_data /= norm_sino
+        self.sino_data *= norm_sino
         self.sino_data = np.nan_to_num(self.sino_data,
                 nan = 1, posinf = 1, neginf = 1)
 

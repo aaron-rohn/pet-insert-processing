@@ -4,7 +4,7 @@
 
 #include <sinogram.h>
 
-void Michelogram::load_luts(std::string dir)
+void CrystalLookupTable::load(std::string dir)
 {
     if (dir == std::string())
     {
@@ -33,20 +33,19 @@ void Michelogram::load_luts(std::string dir)
     }
 }
 
-std::string Michelogram::find_cfg_file(std::string base_dir)
+std::string PhotopeakLookupTable::find_cfg_file(std::string base_dir)
 {
     for (auto &p : std::filesystem::recursive_directory_iterator(base_dir))
-    {
-        if (p.path().extension() == ".json")
-        {
-            return p.path();
-        }
-    }
+        if (p.path().extension() == ".json") return p.path();
+
+    std::cout << "No photopeak file found" << std::endl;
     return std::string();
 }
 
-void Michelogram::load_photopeaks(std::string cfg_file)
+void PhotopeakLookupTable::load(std::string base_dir)
 {
+    std::string cfg_file = find_cfg_file(base_dir);
+
     if (cfg_file == std::string())
     {
         std::cout << "Skipping photopeak loading" << std::endl;
@@ -78,7 +77,8 @@ void Michelogram::load_photopeaks(std::string cfg_file)
             {
                 // record the crystal photopeak
                 size_t xtal_num = std::stoi(elem);
-                if (xtal_num < ncrystals_total) photopeaks[blk_num][xtal_num] = ppeak;
+                if (xtal_num < Geometry::ncrystals_total)
+                    photopeaks[blk_num][xtal_num] = ppeak;
             }
         }
 
@@ -86,63 +86,54 @@ void Michelogram::load_photopeaks(std::string cfg_file)
         if (blk_ppeak > 0)
         {
             for (auto &xtal_ppeak : photopeaks[blk_num])
-            {
                 if (xtal_ppeak < 0) xtal_ppeak = blk_ppeak;
-            }
         }
     }
 }
 
-void Michelogram::add_event(const CoincidenceData &c)
+std::tuple<bool, int, int, int, int>
+Michelogram::event_to_coords(const CoincidenceData& c)
 {
-    auto [ba, bb] = c.blk();
-    auto [pos_xa, pos_ya, pos_xb, pos_yb] = c.pos();
+    static const auto invalid_ev =
+        std::make_tuple(false, -1, -1, -1, -1);
 
     // Lookup crystal index
-
-    int xa = luts[ba][pos_ya*lut_dim + pos_xa];
-    int xb = luts[bb][pos_yb*lut_dim + pos_xb];
-
-    if (xa >= ncrystals_total || xb >= ncrystals_total) return;
+    auto [ba, bb] = c.blk();
+    auto [pos_xa, pos_ya, pos_xb, pos_yb] = c.pos();
+    int xa = lut(ba, pos_ya, pos_xa), xb = lut(bb, pos_yb, pos_xb);
+    if (xa >= ncrystals_total || xb >= ncrystals_total)
+        return invalid_ev;
 
     // Apply energy thresholds
-
-    double tha = photopeaks[ba][xa];
-    double thb = photopeaks[bb][xb];
-
     auto [ea, eb] = c.e_sum();
-    if (tha > 0 && (ea < (1.0 - energy_window)*tha ||
-                    ea > (1.0 + energy_window)*tha)) return;
+    if (!ppeak.in_window(ba,xa,ea) || !ppeak.in_window(bb,xb,eb))
+        return invalid_ev;
 
-    if (thb > 0 && (eb < (1.0 - energy_window)*thb ||
-                    eb > (1.0 + energy_window)*thb)) return;
+    int ra = ring(ba, xa, flip), rb = ring(bb, xb, flip);
+    int idxa = idx(ba, xa), idxb = idx(bb, xb);
+    return std::make_tuple(true, ra, rb, idxa, idxb);
+}
 
-    // Calculate ring pairs
+void Michelogram::add_event(const CoincidenceData &c)
+{
+    auto [valid, ra, rb, idxa, idxb] = event_to_coords(c);
 
-    int rowa = xa / ncrystals;
-    int rowb = xb / ncrystals;
-
-    if (flip)
+    if (valid)
     {
-        rowa = (ncrystals-1) - rowa;
-        rowb = (ncrystals-1) - rowb;
+        (*this)(ra,rb).add_event(idxa, idxb);
     }
+}
 
-    int blka_ax = ba % nblocks_axial, blkb_ax = bb % nblocks_axial;
-    int ra = rowa + blka_ax*ncrystals + blka_ax;
-    int rb = rowb + blkb_ax*ncrystals + blkb_ax;
+void Michelogram::write_event(std::ofstream &f, const CoincidenceData &c)
+{
+    auto [valid, ra, rb, idxa, idxb] = event_to_coords(c);
 
-    // Calculate index along the ring
-
-    // crystals are indexed in the opposite direction from increasing module number
-    int cola = (ncrystals - 1) - (xa % ncrystals);
-    int colb = (ncrystals - 1) - (xb % ncrystals);
-
-    int moda = ba >> 2, modb = bb >> 2;
-    int idx1 = cola + (ncrystals * moda) + (moda*ncrystals_transverse_gap);
-    int idx2 = colb + (ncrystals * modb) + (modb*ncrystals_transverse_gap);
-
-    (*this)(ra,rb).add_event(idx1, idx2);
+    if (valid)
+    {
+        int16_t data[] = {(int16_t)idxa, (int16_t)ra,
+                          (int16_t)idxb, (int16_t)rb, 0}; 
+        f.write((char*)data, sizeof(data));
+    }
 }
 
 void Michelogram::write_to(std::string fname)

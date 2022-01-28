@@ -19,23 +19,81 @@ class Geometry
 {
     public:
     static const int ncrystals = 19;
-    static const int ncrystals_total = ncrystals * ncrystals;
     static const int nblocks_axial = 4;
+    static const int ncrystals_total = ncrystals * ncrystals;
 
-    static const int ncrystals_transverse_gap   = 3;
-    static const int ncrystals_axial_gap        = 1;
+    static const int ncrystals_axial_gap = 1;
+    static const int nring = nblocks_axial *
+        (ncrystals + ncrystals_axial_gap);
 
-    // allow for 1 crystal gap between blocks (and at end of scanner)
-    static const int nring = nblocks_axial*ncrystals + nblocks_axial;
+    static const int ncrystals_transverse_gap = 3;
+    static const int ncrystals_per_ring = Record::nmodules *
+        (ncrystals + ncrystals_transverse_gap);
 
-    static const int ncrystals_per_ring = (ncrystals*Record::nmodules) +
-        (Record::nmodules*ncrystals_transverse_gap);
+    static const int dim_theta = ncrystals_per_ring / 2;
+    static const int dim_r     = ncrystals_per_ring;
 
-    static const int dim_theta = ncrystals_per_ring;
-    static const int dim_r     = ncrystals_per_ring / 2;
+    static inline int ring(int blk, int xtal, bool flip = false)
+    {
+        int row = xtal / ncrystals;
+        if (flip) row = (ncrystals - 1) - row;
+        int blk_ax = blk % nblocks_axial;
+        return row + (ncrystals + ncrystals_axial_gap)*blk_ax;
+    }
 
+    static inline int idx(int blk, int xtal, bool flip = false)
+    {
+        // crystals are indexed in the opposite direction from increasing module number
+        int col = (ncrystals - 1) - (xtal % ncrystals);
+        if (flip) col = (ncrystals - 1) - col;
+        int mod = blk >> 2;
+        return col + (ncrystals + ncrystals_transverse_gap)*mod;
+    }
+};
+
+class CrystalLookupTable
+{
+    std::vector<std::vector<int>> luts;
+
+    public:
     static const int lut_dim = 512;
-    static constexpr double energy_window = 0.15;
+
+    CrystalLookupTable():
+        luts(std::vector<std::vector<int>> (
+                    Single::nblocks,
+                    std::vector<int>(
+                        lut_dim*lut_dim,
+                        Geometry::ncrystals_total))) {};
+
+    inline int& operator() (size_t blk, size_t pos_y, size_t pos_x)
+    { return luts[blk][pos_y*lut_dim + pos_x]; }
+
+    void load(std::string);
+};
+
+class PhotopeakLookupTable
+{
+    std::vector<std::vector<double>> photopeaks;
+
+    public:
+    const double energy_window = 0.15;
+
+    PhotopeakLookupTable(double energy_window  = 0.15):
+        photopeaks(std::vector<std::vector<double>> (
+                    Single::nblocks,
+                    std::vector<double>(
+                        Geometry::ncrystals_total, -1))),
+        energy_window(energy_window) {};
+
+    void load(std::string);
+    static std::string find_cfg_file(std::string);
+
+    inline bool in_window(size_t blk, size_t xtal, double e)
+    {
+        double th = photopeaks[blk][xtal];
+        return (th < 0) || ((e > (1.0-energy_window)*th) &&
+                            (e < (1.0+energy_window)*th));
+    }
 };
 
 class Sinogram: Geometry
@@ -59,7 +117,9 @@ class Sinogram: Geometry
         if (idx1 + idx2 >= ncrystals_per_ring)
             r = ncrystals_per_ring - r;
 
-        return std::make_tuple(theta, r/2);
+        // Reduce the number of proj. angles by 1/2 and
+        // allow 2x sampling of FOV
+        return std::make_tuple(theta/2, r);
     }
 
     void add_event(int idx1, int idx2)
@@ -79,34 +139,39 @@ class Sinogram: Geometry
 class Michelogram: Geometry
 {
     const bool flip;
-    std::vector<std::vector<int>> luts;
-    std::vector<std::vector<double>> photopeaks;
     std::vector<Sinogram> m;
 
     public:
 
+    CrystalLookupTable lut;
+    PhotopeakLookupTable ppeak;
+
+    void cfg_load(std::string cfg_dir)
+    {
+        lut.load(cfg_dir);
+        ppeak.load(cfg_dir);
+    }
+
     // first arg is horiz. index, second arg is vert. index
     inline Sinogram& operator() (int h, int v){ return m[v*nring + h]; };
 
-    static std::string find_cfg_file(std::string);
-    void load_luts(std::string);
-    void load_photopeaks(std::string);
+    std::tuple<bool, int, int, int, int> event_to_coords(
+            const CoincidenceData&);
 
     void add_event(const CoincidenceData&);
+    void write_event(std::ofstream&, const CoincidenceData&);
     void write_to(std::string);
     void read_from(std::string);
 
     PyObject *to_py_data();
-
     Michelogram(PyObject*);
-
-    Michelogram(bool flip = false):
+    Michelogram(double energy_window = 0.2, bool flip = false):
         flip(flip),
-        luts(std::vector<std::vector<int>> (Single::nblocks, std::vector<int>(lut_dim*lut_dim, ncrystals_total))),
-        photopeaks(std::vector<std::vector<double>> (Single::nblocks, std::vector<double>(ncrystals_total, -1))),
-        m(std::vector<Sinogram> (nring*nring)) {};
+        m(std::vector<Sinogram> (nring*nring)),
+        ppeak(energy_window) {std::cout << ppeak.energy_window << std::endl;};
 
-    std::streampos sort_span(std::string, std::streampos, std::streampos);
+    std::streampos sort_span(
+            std::string, std::streampos, std::streampos);
 
     class Iterator
     {

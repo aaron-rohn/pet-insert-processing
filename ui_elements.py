@@ -78,10 +78,19 @@ class FileSelector:
 
         valid = [fut.result() for fut in futures]
 
-        message = [os.path.basename(f) + ': ' + ('valid' if v else 'invalid')
-                for f,v in zip(fnames, valid)]
+        messages = []
+        for f, v in zip(fnames, valid):
+            base = os.path.basename(f) + ': '
+            if v is True:
+                messages.append(base + 'valid')
+            else:
+                if not v[0]: messages.append(base + 'no reset')
+                if not v[1]: messages.append(base + 'm0 no timetags')
+                if not v[2]: messages.append(base + 'm1 no timetags')
+                if not v[3]: messages.append(base + 'm2 no timetags')
+                if not v[4]: messages.append(base + 'm3 no timetags')
 
-        tk.messagebox.showinfo(message = '\n'.join(message))
+        tk.messagebox.showinfo(message = '\n'.join(messages))
 
 class ScrolledListbox:
     def __init__(self, root, title = None):

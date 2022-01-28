@@ -30,10 +30,15 @@ class DataLoaderPopup:
         self.stat_queue = queue.Queue()
         self.output_file = None
 
-        self.input_files = list(tk.filedialog.askopenfilenames(
-            title = "Load listmode data",
-            initialdir = "/",
-            filetypes = singles_filetypes + coincidence_filetypes))
+        self.input_files = []
+
+        while True:
+            self.input_files += list(tk.filedialog.askopenfilenames(
+                title = "Load listmode data",
+                initialdir = "/",
+                filetypes = singles_filetypes + coincidence_filetypes))
+            if not tk.messagebox.askyesno(message = "Select additional files?"):
+                break
 
         if not self.input_files: raise ValueError("No input file specified")
         _, ext = os.path.splitext(self.input_files[0])

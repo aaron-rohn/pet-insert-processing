@@ -412,7 +412,7 @@ petmr_save_listmode(PyObject* self, PyObject* args)
                 &cfg_dir,
                 &flip_flood_y_coord)) return NULL;
 
-    Michelogram m(flip_flood_y_coord);
+    Michelogram m(0.2, flip_flood_y_coord);
 
     try
     {

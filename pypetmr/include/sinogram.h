@@ -26,7 +26,7 @@ class Geometry
     static const int nring = nblocks_axial *
         (ncrystals + ncrystals_axial_gap);
 
-    static const int ncrystals_transverse_gap = 3;
+    static const int ncrystals_transverse_gap = 0;
     static const int ncrystals_per_ring = Record::nmodules *
         (ncrystals + ncrystals_transverse_gap);
 
@@ -78,7 +78,7 @@ class PhotopeakLookupTable
     public:
     const double energy_window = 0.15;
 
-    PhotopeakLookupTable(double energy_window  = 0.15):
+    PhotopeakLookupTable(double energy_window = 0.15):
         photopeaks(std::vector<std::vector<double>> (
                     Single::nblocks,
                     std::vector<double>(
@@ -168,7 +168,7 @@ class Michelogram: Geometry
     Michelogram(double energy_window = 0.2, bool flip = false):
         flip(flip),
         m(std::vector<Sinogram> (nring*nring)),
-        ppeak(energy_window) {std::cout << ppeak.energy_window << std::endl;};
+        ppeak(energy_window) {};
 
     std::streampos sort_span(
             std::string, std::streampos, std::streampos);

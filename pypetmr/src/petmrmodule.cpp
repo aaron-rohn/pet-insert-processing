@@ -95,6 +95,7 @@ petmr_singles(PyObject *self, PyObject *args)
     }
 
     uint64_t nevents_approx = fsize(fname) / Record::event_size;
+    if (max_events > 0) nevents_approx = std::min(nevents_approx, max_events);
 
     uint64_t nevents = 0;
     uint8_t data[Record::event_size];
@@ -107,7 +108,7 @@ petmr_singles(PyObject *self, PyObject *args)
 
     while (f.good())
     {
-        if (max_events > 0 && nevents > max_events) break;
+        if (max_events > 0 && nevents++ > max_events) break;
 
         f.read((char*)data, Record::event_size);
         Record::align(f, data);

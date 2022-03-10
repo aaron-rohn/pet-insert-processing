@@ -3,9 +3,13 @@ from tkinter import ttk
 from ui_elements import FileSelector, ScrolledListbox, Plots
 from sinogram_elements import SinogramDisplay
 
+import pandas as pd
+import numpy as np
+
 class App:
     def collect_data(self, d):
-        self.d = d.groupby('block')
+        self.d = d
+        self.d = self.d.groupby('block')
         self.block.set(list(self.d.groups.keys()))
 
     """ Allow member elements to query the current data or selected block """
@@ -15,6 +19,7 @@ class App:
 
     def __init__(self, root):
         self.d = None
+        self.d_idx = None
 
         self.base = ttk.Notebook(root)
         listmode_frame = tk.Frame(self.base)

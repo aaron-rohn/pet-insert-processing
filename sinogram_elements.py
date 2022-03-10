@@ -113,6 +113,13 @@ class SinogramDisplay:
         self.ldr = SinogramLoaderPopup(self.root,
                 sorting_callback, fname, cfgdir, self.flip.get())
 
+    """
+    def interp_sinogram(self):
+        d = self.sino_data
+        init_shape = d.shape
+    """
+
+
     def load_sinogram(self):
         fname = tk.filedialog.askopenfilename(
                 title = "Select sinogram file",
@@ -186,6 +193,10 @@ class SinogramDisplay:
 
         # average over angular dimension
         proj = sinogram.mean(2)
+        sinogram = proj[:,:,None,:] / sinogram
+        self.sino_data = np.nan_to_num(sinogram,
+                nan = 1, posinf = 1, neginf = 1)
+        """
         sinogram = sinogram / proj[:,:,None,:]
         sinogram = np.nan_to_num(sinogram,
                 nan = 1, posinf = 1, neginf = 1)
@@ -199,6 +210,7 @@ class SinogramDisplay:
                 s[:, p < p.max() / 4] = 1
 
         self.sino_data = 1.0 / (sinogram + np.finfo(float).eps)
+        """
         self.count_map_draw()
 
     def apply_norm(self):

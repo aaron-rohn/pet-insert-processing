@@ -43,14 +43,19 @@ CoincidenceData::CoincidenceData(const Single &a, const Single &b)
     const auto &[ev1, ev2] = a.blk < b.blk ?
         std::tie(a, b) : std::tie(b, a);
 
+    /*
     // pick the timetag associated with the earlier event
     uint64_t mintime = std::min(a.abs_time, b.abs_time);
     // record time in 100 ms increments since reset
     mintime /= (TimeTag::clks_per_tt * 100);
+    */
 
     SingleData sd1(ev1), sd2(ev2);
+
+    int16_t tdiff = ev1.abs_time - ev2.abs_time;
+    time(tdiff);
+
     blk(ev1.blk, ev2.blk);
-    time(mintime);
     e_a1(sd1.e1);
     e_a2(sd1.e2);
     e_b1(sd2.e1);
@@ -250,14 +255,23 @@ sorted_values sort_span(
         files.emplace_back(fn, std::ios::in | std::ios::binary);
 
     // Calculate the approximate number of singles in the data stream
+    std::streampos max_fsize_to_process = 1024*1024*1024;
+    max_fsize_to_process = max_fsize_to_process * 4;
+
     std::streampos fsize_to_process = 0;
+
     for (size_t i = 0; i < n; i++)
         fsize_to_process += (end_pos[i] - start_pos[i]);
+
     size_t approx_singles = fsize_to_process / Record::event_size;
 
     // Allocate storage to load all the singles
     std::vector<Single> singles;
-    singles.reserve(approx_singles);
+
+    if (fsize_to_process > 0 && fsize_to_process < max_fsize_to_process)
+        singles.reserve(approx_singles);
+    else
+        std::cerr << "Invalid file size to process: " << fsize_to_process << std::endl;
 
     uint8_t data[Record::event_size];
     std::vector<TimeTag> last_tt (Record::nmodules);
@@ -292,7 +306,7 @@ sorted_values sort_span(
     // sort heap with ascending absolute time
     std::sort_heap(singles.begin(), singles.end());
 
-    uint64_t width = 5;
+    uint64_t width = 20;
     std::vector<CoincidenceData> coincidences;
 
     for (auto a = singles.begin(), e = singles.end(); !stop && a != e; ++a)

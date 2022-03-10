@@ -118,10 +118,12 @@ class DataLoaderPopup:
         the data will be concatenated into a single dataframe
         """
 
+        n = int(100e6)
+
         try:
             d = []
             for i,f in enumerate(self.input_files):
-                di = petmr.singles(f)
+                di = petmr.singles(f, n)
                 di = data_to_df(di)
                 d.append(di)
 
@@ -143,7 +145,11 @@ class DataLoaderPopup:
         """
 
         args = [self.terminate, self.stat_queue, self.input_files]
-        if self.output_file is not None: args += [0, self.output_file]
+
+        if self.output_file is not None:
+            args += [0, self.output_file]
+        else:
+            args += [int(100e6)]
 
         try:
             # (a,b) -> [a_df, b_df] -> ab_df
@@ -163,9 +169,11 @@ class DataLoaderPopup:
         the dataframes will be concatenated
         """
 
+        n = int(100e6)
+
         try:
             # [(a,b), ... (a,b)]
-            d = [petmr.load(f) for f in self.input_files]
+            d = [petmr.load(f, n) for f in self.input_files]
             d = [data_to_df(a_or_b) for ab in d for a_or_b in ab]
             d = pd.concat(d, ignore_index = True)
             d = prepare_df(d)

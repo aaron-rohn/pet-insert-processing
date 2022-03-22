@@ -10,7 +10,7 @@
 #include "singles.h"
 
 struct CoincidenceData {
-    // Columns in python data - block, e1, e2, x, y
+    // Columns in python data - block, eF, eR, x, y
     static const long ncol = 5;
     static const size_t vals_per_ev = 10;
 
@@ -28,24 +28,22 @@ struct CoincidenceData {
 
     inline uint8_t blka()  const { return data[0] >> 8; }
     inline uint8_t blkb()  const { return data[0] & 0xFF; }
-    //inline uint16_t time() const { return data[1]; }
     inline  int16_t time() const { return *((int16_t*)&data[1]); }
-    inline uint16_t e_a1() const { return data[2]; }
-    inline uint16_t e_a2() const { return data[3]; }
-    inline uint16_t e_b1() const { return data[4]; }
-    inline uint16_t e_b2() const { return data[5]; }
+    inline uint16_t e_aF() const { return data[2]; }
+    inline uint16_t e_aR() const { return data[3]; }
+    inline uint16_t e_bF() const { return data[4]; }
+    inline uint16_t e_bR() const { return data[5]; }
     inline uint16_t x_a()  const { return data[6]; }
     inline uint16_t y_a()  const { return data[7]; }
     inline uint16_t x_b()  const { return data[8]; }
     inline uint16_t y_b()  const { return data[9]; }
 
     inline void blk(uint16_t a, uint16_t b) { data[0] = (a << 8) | b; }
-    //inline void time(uint16_t val) { data[1] = val; }
     inline void time(int16_t val)  { data[1] = *((uint16_t*)&val); }
-    inline void e_a1(uint16_t val) { data[2] = val; }
-    inline void e_a2(uint16_t val) { data[3] = val; }
-    inline void e_b1(uint16_t val) { data[4] = val; }
-    inline void e_b2(uint16_t val) { data[5] = val; }
+    inline void e_aF(uint16_t val) { data[2] = val; }
+    inline void e_aR(uint16_t val) { data[3] = val; }
+    inline void e_bF(uint16_t val) { data[4] = val; }
+    inline void e_bR(uint16_t val) { data[5] = val; }
     inline void  x_a(uint16_t val) { data[6] = val; }
     inline void  y_a(uint16_t val) { data[7] = val; }
     inline void  x_b(uint16_t val) { data[8] = val; }
@@ -55,7 +53,7 @@ struct CoincidenceData {
     { return std::make_tuple(blka(), blkb()); };
 
     inline std::tuple<uint16_t,uint16_t> e_sum() const
-    { return std::make_tuple(e_a1()+e_a2(), e_b1()+e_b2()); };
+    { return std::make_tuple(e_aF()+e_aR(), e_bF()+e_bR()); };
     
     inline std::tuple<uint16_t,uint16_t,uint16_t,uint16_t> pos() const
     { return std::make_tuple(x_a(),y_a(),x_b(),y_b()); };

@@ -8,17 +8,17 @@ singles_filetypes = [("Singles",".SGL")]
 coincidence_filetypes = [("Coincidences",".COIN")]
 
 def data_to_df(lst_of_arrays):
-    names = ['block', 'e1', 'e2', 'x', 'y']
+    names = ['block', 'eF', 'eR', 'x', 'y']
     return pd.DataFrame(np.column_stack(lst_of_arrays), columns = names)
 
 def prepare_df(d):
     """ Add the columns necessary for plotting to the coincidence dataframe """
     d['x'] /= 511
     d['y'] /= 511
-    d.insert(len(d.columns), 'es',  d['e1'] + d['e2'])
-    d.insert(len(d.columns), 'doi', d['e1'] / d['es'])
-    del d['e1']
-    del d['e2']
+    d.insert(len(d.columns), 'es',  d['eF'] + d['eR'])
+    d.insert(len(d.columns), 'doi', d['eF'] / d['es'])
+    del d['eF']
+    del d['eR']
     return d
 
 class DataLoaderPopup:

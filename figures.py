@@ -50,11 +50,13 @@ class FloodHist:
         Coordinate layout:
         
         'Animal' side
+    x0y1         x1y1
         #########
         #D     A#
         #   0   #
         #C     B#
         #########
+    x0y0         x1y0
         #########
         #       #
         #   1   #
@@ -148,8 +150,8 @@ class ThresholdHist:
             # Energy histogram - take % window around peak
             rng = [(1-self.e_window)*self.peak, (1+self.e_window)*self.peak]
         else:
-            # DOI histogram - take 50% central counts
-            rng = np.quantile(data, [0.1, 0.9])
+            # DOI histogram - take 10% central counts
+            rng = np.quantile(data, [0.45, 0.55])
 
         self.init_lines(rng)
         self.canvas.draw()

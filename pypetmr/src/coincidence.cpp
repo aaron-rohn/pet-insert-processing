@@ -8,47 +8,45 @@
 
 SingleData::SingleData(const Single &s)
 {
-    e1 = 0;
-    e2 = 0;
+    eR = 0;
+    eF = 0;
+
     for (int i = 0; i < 4; i++)
     {
-        e1 += s.energies[i];
-        e2 += s.energies[i + 4];
+        eR += s.energies[i];
+        eF += s.energies[i + 4];
     }
 
-    /* System Front
-     * #####
-     * #D A#
-     * #   #
-     * #C B#
-     * #####
-     * System Rear
+    /*            System Front
+     *
+     * (x = 0, y = 1)     (x = 1, y = 1)
+     *               #####
+     *               #D A#
+     *               #   #
+     *               #C B#
+     *               #####
+     * (x = 0, y = 0)     (x = 1, y = 0)
+     *
+     *            System Rear
      *
      * View of one block from outside the system looking inwards
      */
 
     // Fractional values 0-1
-    x1 = (double)(s.energies[0] + s.energies[1]) / e1; // (A + B) / e
-    y1 = (double)(s.energies[0] + s.energies[3]) / e1; // (A + D) / e
-    x2 = (double)(s.energies[4] + s.energies[5]) / e2;
-    y2 = (double)(s.energies[4] + s.energies[7]) / e2;
+    xF = (double)(s.energies[A_FRONT] + s.energies[B_FRONT]) / eF;
+    yF = (double)(s.energies[A_FRONT] + s.energies[D_FRONT]) / eF;
+    xR = (double)(s.energies[A_REAR] + s.energies[B_REAR]) / eR;
+    yR = (double)(s.energies[A_REAR] + s.energies[D_REAR]) / eR;
 
     // Pixel values 0-511
-    x = std::round(x1 * scale);
-    y = std::round(y1 * scale);
+    x = std::round(xR * scale);
+    y = std::round((yF+yR)/2.0 * scale);
 }
-    
+
 CoincidenceData::CoincidenceData(const Single &a, const Single &b)
 {
     const auto &[ev1, ev2] = a.blk < b.blk ?
         std::tie(a, b) : std::tie(b, a);
-
-    /*
-    // pick the timetag associated with the earlier event
-    uint64_t mintime = std::min(a.abs_time, b.abs_time);
-    // record time in 100 ms increments since reset
-    mintime /= (TimeTag::clks_per_tt * 100);
-    */
 
     SingleData sd1(ev1), sd2(ev2);
 
@@ -56,10 +54,10 @@ CoincidenceData::CoincidenceData(const Single &a, const Single &b)
     time(tdiff);
 
     blk(ev1.blk, ev2.blk);
-    e_a1(sd1.e1);
-    e_a2(sd1.e2);
-    e_b1(sd2.e1);
-    e_b2(sd2.e2);
+    e_aF(sd1.eF);
+    e_aR(sd1.eR);
+    e_bF(sd2.eF);
+    e_bR(sd2.eR);
     x_a(sd1.x);
     y_a(sd1.y);
     x_b(sd2.x);
@@ -108,14 +106,14 @@ PyObject *CoincidenceData::to_py_data(
     for (npy_int i = 0; i < nrow; i++)
     {
         *((uint16_t*)PyArray_GETPTR1(acols[0], i)) = cd[i].blka();
-        *((uint16_t*)PyArray_GETPTR1(acols[1], i)) = cd[i].e_a1();
-        *((uint16_t*)PyArray_GETPTR1(acols[2], i)) = cd[i].e_a2();
+        *((uint16_t*)PyArray_GETPTR1(acols[1], i)) = cd[i].e_aF();
+        *((uint16_t*)PyArray_GETPTR1(acols[2], i)) = cd[i].e_aR();
         *((uint16_t*)PyArray_GETPTR1(acols[3], i)) = cd[i].x_a();
         *((uint16_t*)PyArray_GETPTR1(acols[4], i)) = cd[i].y_a();
 
         *((uint16_t*)PyArray_GETPTR1(bcols[0], i)) = cd[i].blkb();
-        *((uint16_t*)PyArray_GETPTR1(bcols[1], i)) = cd[i].e_b1();
-        *((uint16_t*)PyArray_GETPTR1(bcols[2], i)) = cd[i].e_b2();
+        *((uint16_t*)PyArray_GETPTR1(bcols[1], i)) = cd[i].e_bF();
+        *((uint16_t*)PyArray_GETPTR1(bcols[2], i)) = cd[i].e_bR();
         *((uint16_t*)PyArray_GETPTR1(bcols[3], i)) = cd[i].x_b();
         *((uint16_t*)PyArray_GETPTR1(bcols[4], i)) = cd[i].y_b();
     }
@@ -182,14 +180,19 @@ CoincidenceData::from_py_data(PyObject *obj)
     {
         cd[i].blk(*(uint16_t*)PyArray_GETPTR1(acols[0],i),
                   *(uint16_t*)PyArray_GETPTR1(bcols[0],i));
-        cd[i].e_a1(*(uint16_t*)PyArray_GETPTR1(acols[1],i));
-        cd[i].e_a2(*(uint16_t*)PyArray_GETPTR1(acols[2],i));
-        cd[i].e_b1(*(uint16_t*)PyArray_GETPTR1(bcols[1],i));
-        cd[i].e_b2(*(uint16_t*)PyArray_GETPTR1(bcols[2],i));
+
+        cd[i].e_aF(*(uint16_t*)PyArray_GETPTR1(acols[1],i));
+        cd[i].e_aR(*(uint16_t*)PyArray_GETPTR1(acols[2],i));
+
+        cd[i].e_bF(*(uint16_t*)PyArray_GETPTR1(bcols[1],i));
+        cd[i].e_bR(*(uint16_t*)PyArray_GETPTR1(bcols[2],i));
+
         cd[i].x_a(*(uint16_t*)PyArray_GETPTR1(acols[3],i));
         cd[i].y_a(*(uint16_t*)PyArray_GETPTR1(acols[4],i));
+
         cd[i].x_b(*(uint16_t*)PyArray_GETPTR1(bcols[3],i));
         cd[i].y_b(*(uint16_t*)PyArray_GETPTR1(bcols[4],i));
+
         cd[i].time(0);
     }
 

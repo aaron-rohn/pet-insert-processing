@@ -23,24 +23,22 @@ TimeTag::TimeTag(uint8_t data[])
 Single::Single(uint8_t data[], const TimeTag &tt)
 {
     // Single event
-    // CRC | f |    b   |   E1   |    E2   |   E3    |   E4   |   E5    |   E6   |   E7    |   E8   |       TT
+    // CRC | f |    b   | D_REAR | C_REAR  | B_REAR | A_REAR  | D_FRONT |C_FRONT | B_FRONT |A_FRONT |       TT
     // { 5 , 1 , 2 }{ 4 , 4 }{ 8 }{ 8 }{ 4 , 4 }{ 8 }{ 8 }{ 4 , 4 }{ 8 }{ 8 }{ 4 , 4 }{ 8 }{ 8 }{ 4 , 4 }{ 8 }{ 8 }
     //       0          1      2    3      4      5    6      7      8    9     10     11   12     13     14   15
 
     blk = Record::get_block(data);
     mod = Record::get_module(data);
 
-    // Front energies
-    energies[0] = ((data[1] << 8) | data[2]) & 0xFFF;   // A
-    energies[1] = (data[3] << 4) | (data[4] >> 4);      // B
-    energies[2] = ((data[4] << 8) | data[5]) & 0xFFF;   // C
-    energies[3] = (data[6] << 4) | (data[7] >> 4);      // D
+    energies[D_REAR] = ((data[1] << 8) | data[2]) & 0xFFF;
+    energies[C_REAR] = (data[3] << 4) | (data[4] >> 4);
+    energies[B_REAR] = ((data[4] << 8) | data[5]) & 0xFFF;
+    energies[A_REAR] = (data[6] << 4) | (data[7] >> 4);
 
-    // Rear energies
-    energies[4] = ((data[7] << 8) | data[8]) & 0xFFF;   // E
-    energies[5] = (data[9] << 4) | (data[10] >> 4);     // F
-    energies[6] = ((data[10] << 8) | data[11]) & 0xFFF; // G
-    energies[7] = (data[12] << 4) | (data[13] >> 4);    // H
+    energies[D_FRONT] = ((data[7] << 8) | data[8]) & 0xFFF;
+    energies[C_FRONT] = (data[9] << 4) | (data[10] >> 4);
+    energies[B_FRONT] = ((data[10] << 8) | data[11]) & 0xFFF;
+    energies[A_FRONT] = (data[12] << 4) | (data[13] >> 4);
 
     time = ((data[13] << 16) | (data[14] << 8) | data[15]) & 0xFFFFF;
     abs_time = tt.value * TimeTag::clks_per_tt + time;
@@ -49,7 +47,7 @@ Single::Single(uint8_t data[], const TimeTag &tt)
 
 PyObject* Single::to_py_data(std::vector<Single> &events)
 {
-    // 'block', 'e1', 'e2', 'x', 'y'
+    // 'block', 'eF', 'eR', 'x', 'y'
     const int ncol = 5;
 
     PyArrayObject *cols[ncol];
@@ -66,8 +64,8 @@ PyObject* Single::to_py_data(std::vector<Single> &events)
         SingleData sd(s);
 
         *((uint16_t*)PyArray_GETPTR1(cols[0], i)) = s.blk;
-        *((uint16_t*)PyArray_GETPTR1(cols[1], i)) = sd.e1;
-        *((uint16_t*)PyArray_GETPTR1(cols[2], i)) = sd.e2;
+        *((uint16_t*)PyArray_GETPTR1(cols[1], i)) = sd.eF;
+        *((uint16_t*)PyArray_GETPTR1(cols[2], i)) = sd.eR;
         *((uint16_t*)PyArray_GETPTR1(cols[3], i)) = sd.x;
         *((uint16_t*)PyArray_GETPTR1(cols[4], i)) = sd.y;
     }

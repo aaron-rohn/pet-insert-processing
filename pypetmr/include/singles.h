@@ -9,6 +9,15 @@
 #include <numpy/ndarraytypes.h>
 #include <numpy/arrayobject.h>
 
+#define A_FRONT 7
+#define B_FRONT 6
+#define C_FRONT 5
+#define D_FRONT 4
+#define A_REAR 3
+#define B_REAR 2
+#define C_REAR 1
+#define D_REAR 0
+
 namespace Record
 {
     const int event_size = 16;
@@ -66,8 +75,8 @@ struct Single {
 struct SingleData {
     constexpr static double scale = 511;
 
-    double x1, y1, x2, y2;
-    uint16_t e1 = 0, e2 = 0, x = 0, y = 0;
+    double xF, yF, xR, yR;
+    uint16_t eF = 0, eR = 0, x = 0, y = 0;
     SingleData() {};
     SingleData(const Single&);
 };

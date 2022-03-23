@@ -131,7 +131,7 @@ class ScrolledListbox:
 
 class Plots:
     def __init__(self, root, data, get_block, set_block):
-        self.d    = None
+        self.d = None
         self.data = data
         self.get_block = get_block
         self.set_block = set_block
@@ -200,38 +200,38 @@ class Plots:
     def plots_update(self, *args):
         """ Update all plots when new data is available """
         blk = self.get_block()
-        all_data = self.data()
+        self.d = self.data(blk)
 
-        if all_data is not None:
-            self.d = all_data.get_group(blk)
-            self.energy.update(self.d['es'], retain = False)
-            self.doi_cb(retain = False)
-            self.flood_cb()
-        else:
-            self.d = None
+        self.energy.update(self.d[:,0], retain = False)
+        self.doi_cb(retain = False)
+        self.flood_cb()
 
     def flood_cb(self):
         """ Update the flood according to energy and DOI thresholds """
         eth = self.energy.thresholds()
         dth = self.doi.thresholds()
 
-        if self.d is not None:
-            data_subset = self.d.query('({} < es < {}) & ({} < doi < {})'.format(*eth, *dth))
-            self.flood.update(data_subset, smoothing = 1.5, warp = self.transform_flood.get())
+        es = self.d[:,0]
+        doi = self.d[:,1]
+        idx = np.where((eth[0] < es) & (es < eth[1]) &
+                       (dth[0] < doi) & (doi < dth[1]))[0]
+
+        self.flood.update(self.d[idx,2], self.d[idx,3],
+                smoothing = 1.5, warp = self.transform_flood.get())
 
     def doi_cb(self, retain = True):
         """ Update the DOI according to the energy thresholds """
         eth = self.energy.thresholds()
-        if self.d is not None:
-            data_subset = self.d.query('{} < es < {}'.format(*eth))
-            self.doi.update(data_subset['doi'], retain)
+        es = self.d[:,0]
+        idx = np.where((eth[0] < es) & (es < eth[1]))[0]
+        self.doi.update(self.d[idx,1], retain)
 
     def energy_cb(self, retain = True):
         """ Update the energy according to the DOI thresholds """
         dth = self.doi.thresholds()
-        if self.d is not None:
-            data_subset = self.d.query('{} < doi < {}'.format(*dth))
-            self.energy.update(data_subset['es'], retain)
+        doi = self.d[:,1]
+        idx = np.where((dth[0] < doi) & (doi < dth[1]))[0]
+        self.energy.update(self.d[idx,0], retain)
 
     def check_output_dir(self, reset = False):
         if reset: self.output_dir = None
@@ -285,17 +285,18 @@ class Plots:
                 'lut': lut.flat
             })
 
-            self.d.loc[:,['x','y']] *= 511.0
-            self.d = self.d.astype({'x': int, 'y': int})
-            self.d = self.d.merge(lut_df, on = ['x', 'y'])
-            self.d = self.d.groupby(['lut'])
+            lm_df = pd.DataFrame(self.d, columns = ['es', 'doi', 'x', 'y'])
+            lm_df.loc[:,['x','y']] *= 511.0
+            lm_df = lm_df.astype({'x': int, 'y': int})
+            lm_df = lm_df.merge(lut_df, on = ['x', 'y'])
+            lm_df = lm_df.groupby(['lut'])
 
             # find the photopeak for each crystal
             def get_photopeak(grp):
                 n,bins = np.histogram(grp['es'].values, bins = 100)
                 return round(bins[np.argmax(bins[:-1] * n**2)])
 
-            pks = self.d.apply(get_photopeak)
+            pks = lm_df.apply(get_photopeak)
 
             # record the crystal photopeak
             for lut,pk in pks.iteritems():

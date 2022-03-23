@@ -113,11 +113,11 @@ class FloodHist:
         self.pts = self.pts.reshape(self.npts, self.npts, 2)
         self.redraw()
 
-    def update(self, data, smoothing, warp):
-        # Image rows (1st coordinate) are the Y value ((A+D)/e)
-        # Image cols (2nd coordinate) are the X value ((A+B)/e)
-        self.img,*_ = np.histogram2d(data['y'], data['x'],
-                                     bins = self.img_size, range = [[0,1],[0,1]])
+    def update(self, x, y, smoothing, warp):
+        # First coord -> rows -> y
+        # Second coord -> cols -> x
+        self.img, *_ = np.histogram2d(y, x, bins = self.img_size,
+                range = [[0,self.img_size-1],[0,self.img_size-1]])
 
         self.f = fld.Flood(self.img, smoothing, warp)
 
@@ -137,7 +137,8 @@ class ThresholdHist:
         last_rng = self.thresholds()
         self.plot.clear()
         rng = np.quantile(data, [0.01, 0.99])
-        n,bins,_ = self.plot.hist(data, bins = 512, range = rng)
+        nbins = int(round((rng[1] - rng[0]) / 10))
+        n,bins,_ = self.plot.hist(data, bins = nbins, range = rng)
 
         # search for the photopeak
         self.peak = (
@@ -150,8 +151,8 @@ class ThresholdHist:
             # Energy histogram - take % window around peak
             rng = [(1-self.e_window)*self.peak, (1+self.e_window)*self.peak]
         else:
-            # DOI histogram - take 10% central counts
-            rng = np.quantile(data, [0.45, 0.55])
+            # DOI histogram
+            rng = np.quantile(data, [0.30, 0.70])
 
         self.init_lines(rng)
         self.canvas.draw()

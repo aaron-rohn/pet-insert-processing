@@ -1,4 +1,4 @@
-import os, threading, queue, traceback, petmr
+import os, threading, queue, traceback, tempfile, petmr
 import pandas as pd
 import tkinter as tk
 import numpy as np
@@ -7,19 +7,8 @@ from tkinter.ttk import Progressbar
 singles_filetypes = [("Singles",".SGL")]
 coincidence_filetypes = [("Coincidences",".COIN")]
 
-def data_to_df(lst_of_arrays):
-    names = ['block', 'eF', 'eR', 'x', 'y']
-    return pd.DataFrame(np.column_stack(lst_of_arrays), columns = names)
-
-def prepare_df(d):
-    """ Add the columns necessary for plotting to the coincidence dataframe """
-    d['x'] /= 511
-    d['y'] /= 511
-    d.insert(len(d.columns), 'es',  d['eF'] + d['eR'])
-    d.insert(len(d.columns), 'doi', d['eF'] / d['es'])
-    del d['eF']
-    del d['eR']
-    return d
+n_doi_bins = 4096
+max_events = int(500e6)
 
 class DataLoaderPopup:
     def __init__(self, root, fileselector, update_data_cb):
@@ -114,72 +103,108 @@ class DataLoaderPopup:
         self.check()
 
     def load_singles(self):
-        """ Load singles data from one or more .SGL files. If multiple files are provided,
-        the data will be concatenated into a single dataframe
+        """ Load singles data from one .SGL file and
+        group events by block
         """
 
-        n = int(100e6)
-
         try:
-            d = []
-            for i,f in enumerate(self.input_files):
-                di = petmr.singles(f, n)
-                di = data_to_df(di)
-                d.append(di)
-
-                perc = float(i + 1) / len(self.input_files) * 100
-                self.stat_queue.put((perc, i + 1, "Completed"))
-            
-            d = pd.concat(d, ignore_index = True)
-            d = prepare_df(d)
-
+            d = petmr.singles(self.input_files[0], max_events)
         except Exception as ex:
             print(traceback.format_exc())
-            d = ex
+            self.data_queue.put(ex)
+            return
 
-        self.data_queue.put(d)
+        blocks = d[0]
+        unique_blocks = np.unique(blocks).tolist()
+        block_files = {}
+
+        for ub in unique_blocks:
+            tf = tempfile.NamedTemporaryFile()
+            idx = np.where(blocks == ub)[0]
+            arr = np.memmap(tf.name, np.uint16,
+                    mode = 'w+', shape = (len(idx), 4))
+
+            # Energy sum -> eF + eR
+            arr[:,0] = d[1][idx] + d[2][idx]
+
+            # DOI -> eF / eSUM
+            tmp = d[1][idx].astype(float)
+            tmp *= (n_doi_bins / arr[:,0])
+            arr[:,1] = tmp
+
+            # X, Y
+            arr[:,2] = d[3][idx]
+            arr[:,3] = d[4][idx]
+
+            block_files[ub] = arr
+
+        self.data_queue.put(block_files)
 
     def sort_coincidences(self):
         """ Load coincicdence data by sorting the events in one or more singles files. If
         multiple files are provided, they must be time-aligned from a single acquisition
         """
-
+        
         args = [self.terminate, self.stat_queue, self.input_files]
 
-        if self.output_file is not None:
-            args += [0, self.output_file]
-        else:
-            args += [int(100e6)]
-
         try:
-            # (a,b) -> [a_df, b_df] -> ab_df
-            d = petmr.coincidences(*args)
-            d = [data_to_df(c) for c in d]
-            d = pd.concat(d, ignore_index = True)
-            d = prepare_df(d)
+            if self.output_file is not None:
+                args += [0, self.output_file]
+                petmr.coincidences(*args)
+                self.data_queue.put({})
+            else:
+                tf = tempfile.NamedTemporaryFile()
+                args += [max_events, tf.name]
+                petmr.coincidences(*args)
+                self.load_coincidences(tf.name)
 
         except Exception as ex:
             print(traceback.format_exc())
-            d = ex
+            self.data_queue.put(ex)
 
-        self.data_queue.put(d)
-
-    def load_coincidences(self):
-        """ Load coincidence data from a file on disk. If multiple file are provided,
-        the dataframes will be concatenated
+    def load_coincidences(self, coincidence_file = None):
+        """ Load coincidence data from a file on disk, and
+        group events by block to visualize flood, energy, and
+        doi histograms.
         """
 
-        n = int(100e6)
+        if coincidence_file is None:
+            coincidence_file = self.input_files[0]
 
-        try:
-            # [(a,b), ... (a,b)]
-            d = [petmr.load(f, n) for f in self.input_files]
-            d = [data_to_df(a_or_b) for ab in d for a_or_b in ab]
-            d = pd.concat(d, ignore_index = True)
-            d = prepare_df(d)
-        except Exception as ex:
-            print(traceback.format_exc())
-            d = ex
+        d = np.memmap(coincidence_file, np.uint16).reshape((-1,10))
 
-        self.data_queue.put(d)
+        blocks = d[:,0]
+        blka = blocks >> 8
+        blkb = blocks & 0xFF
+        unique_blocks = np.unique(np.concatenate([blka,blkb])).tolist()
+        block_files = {}
 
+        for ub in unique_blocks:
+            idxa = np.where(blka == ub)[0]
+            idxb = np.where(blkb == ub)[0]
+
+            rowa = d[idxa,:]
+            rowb = d[idxb,:]
+
+            tf = tempfile.NamedTemporaryFile()
+
+            shape = (len(idxa) + len(idxb), 4)
+            arr = np.memmap(tf.name, np.uint16,
+                    mode = 'w+', shape = shape)
+
+            # Energy sum
+            arr[:,0] = np.concatenate(
+                    [rowa[:,2] + rowa[:,3], rowb[:,4] + rowb[:,5]])
+
+            # DOI
+            tmp = np.concatenate([rowa[:,2], rowb[:,4]]).astype(float)
+            tmp *= (n_doi_bins / arr[:,0])
+            arr[:,1] = tmp
+
+            # X, Y
+            arr[:,2] = np.concatenate([rowa[:,6], rowb[:,8]])
+            arr[:,3] = np.concatenate([rowa[:,7], rowb[:,9]])
+
+            block_files[ub] = arr
+
+        self.data_queue.put(block_files)

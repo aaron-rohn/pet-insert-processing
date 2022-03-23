@@ -9,11 +9,13 @@ import numpy as np
 class App:
     def collect_data(self, d):
         self.d = d
-        self.d = self.d.groupby('block')
-        self.block.set(list(self.d.groups.keys()))
+        self.block.set(list(self.d.keys()))
+
+        #self.d = self.d.groupby('block')
+        #self.block.set(list(self.d.groups.keys()))
 
     """ Allow member elements to query the current data or selected block """
-    def return_data(self): return self.d
+    def return_data(self, block): return self.d[block]
     def return_block(self, *args, **kwds): return self.block.get_active(*args, **kwds)
     def set_block(self, *args, **kwds): return self.block.set_active(*args, **kwds)
 

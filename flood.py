@@ -37,8 +37,8 @@ class Flood:
 
         # remove the background
         blur = ndimage.gaussian_filter(self.fld, 5)
-        e0 = self.edges(blur, 1, 20)
-        e1 = self.edges(blur, 0, 20)
+        e0 = self.edges(blur, 1)
+        e1 = self.edges(blur, 0)
         mask = np.ones(self.fld.shape, dtype = bool)
         mask[e0[0]:e0[1], e1[0]:e1[1]] = False
         self.fld[mask] = 0
@@ -168,12 +168,15 @@ class Flood:
                     borderMode = cv.BORDER_CONSTANT, borderValue = int(lut.max()))
 
 
-    def edges(self, f, axis = 0, threshold = 10):
+    def edges(self, f, axis = 0, qtl = [0.02, 0.98]):
         p = np.sum(f, axis)
-        thresh = np.max(p) / threshold
-        ledge = np.argmax(p > thresh)
-        redge = len(p) - np.argmax(p[::-1] > thresh)
-        return np.array([ledge, redge])
+        p_csum = np.cumsum(p)
+        p_csum_nan = np.copy(p_csum)
+        p_csum_nan[p == 0] = np.NaN
+
+        qtl_vals = np.nanquantile(p_csum_nan, qtl)
+        ledge, redge = np.interp(qtl_vals, p_csum, np.arange(len(p_csum)))
+        return [int(ledge), int(redge)]
 
     def find_1d_peaks(self, axis = 0):
         s = np.sum(self.fld, axis)

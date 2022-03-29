@@ -50,8 +50,13 @@ CoincidenceData::CoincidenceData(const Single &a, const Single &b)
 
     SingleData sd1(ev1), sd2(ev2);
 
-    int16_t tdiff = ev1.abs_time - ev2.abs_time;
-    time(tdiff);
+    // record absolute time in incr. of 100 ms
+    uint64_t t = std::min(ev1.abs_time, ev2.abs_time);
+    t /= (TimeTag::clks_per_tt * 100);
+    abstime(t);
+
+    int16_t td = ev1.abs_time - ev2.abs_time;
+    tdiff(td);
 
     blk(ev1.blk, ev2.blk);
     e_aF(sd1.eF);
@@ -193,7 +198,7 @@ CoincidenceData::from_py_data(PyObject *obj)
         cd[i].x_b(*(uint16_t*)PyArray_GETPTR1(bcols[3],i));
         cd[i].y_b(*(uint16_t*)PyArray_GETPTR1(bcols[4],i));
 
-        cd[i].time(0);
+        cd[i].tdiff(0);
     }
 
     return cd;
@@ -213,27 +218,29 @@ void find_tt_offset(
         std::string fname,
         std::mutex &l,
         std::condition_variable_any &cv,
-        std::queue<std::streampos> &q,
+        std::queue<std::tuple<uint64_t,std::streampos>> &q,
         std::atomic_bool &stop
 ) {
     uint64_t tt = 0, incr = 1000;
+    const std::streamoff offset (Record::event_size);
     std::ifstream f (fname, std::ios::in | std::ios::binary);
 
-    while (Record::go_to_tt(f, tt, stop, tt == 0))
+    while (Record::go_to_tt(f, tt, stop))
     {
-        tt += incr;
+        auto pos = f.tellg() - offset;
 
         {
             std::lock_guard<std::mutex> lg(l);
-            q.push(f.tellg() - std::streamoff(Record::event_size));
+            q.push(std::make_tuple(tt,pos));
         }
 
         cv.notify_all();
+        tt += incr;
     }
 
     {
         std::lock_guard<std::mutex> lg(l);
-        q.push(-1);
+        q.push(std::make_tuple(0,-1));
     }
 
     cv.notify_all();
@@ -282,6 +289,8 @@ sorted_values sort_span(
     // Load all the singles from each file
     for (size_t i = 0; !stop && i < n; i++)
     {
+        //std::cout << fnames[i] << " " << start_pos[i] << " " << end_pos[i] << std::endl;
+
         auto &f = files[i];
         f.seekg(start_pos[i]);
 

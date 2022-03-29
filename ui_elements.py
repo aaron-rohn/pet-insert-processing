@@ -3,12 +3,14 @@ import numpy as np
 import pandas as pd
 import tkinter as tk
 from tkinter.ttk import Separator
-import concurrent.futures
 
-import petmr
 from flood import nearest_peak
 from figures import ThresholdHist, FloodHist
-from data_loader import DataLoaderPopup, singles_filetypes
+from data_loader import (
+        SinglesLoader,
+        CoincidenceLoader,
+        CoincidenceSorter,
+        SinglesValidate)
 
 pd.options.mode.chained_assignment = None
 
@@ -24,73 +26,38 @@ class WrappingLabel(tk.Label):
 class FileSelector:
     def __init__(self, root, update_data_cb):
         self.root = root
-        self.sort_coin = tk.IntVar()
 
         """ callbacks to get the reference data from the caller,
         or to set the reference data held by the caller """
         self.update_data_cb = update_data_cb 
 
         self.frame = tk.Frame(self.root)
-
-        self.load_button = tk.Button(self.frame, text = "Select files", command = self.load)
-        self.validate_button = tk.Button(self.frame, text = "Validate files", command = self.validate)
-        self.coincidences = tk.Checkbutton(self.frame, text = "Sort Coincidences", variable = self.sort_coin)
+        self.load_sgls_button = tk.Button(self.frame, text = "Load Singles", command = self.load_sgls)
+        self.load_coin_button = tk.Button(self.frame, text = "Load Coincidences", command = self.load_coin)
+        self.sort_coin_button = tk.Button(self.frame, text = "Sort Coincidences", command = self.sort_coin)
+        self.validate_button = tk.Button(self.frame, text = "Validate files", command = SinglesValidate)
 
     def pack(self, **kwds):
         self.frame.pack(**kwds)
-
-        self.load_button.pack(side = tk.TOP, padx = 5, pady = 10)
+        self.load_sgls_button.pack(side = tk.TOP, padx = 5, pady = 10)
+        self.load_coin_button.pack(side = tk.TOP, padx = 5, pady = 10)
+        self.sort_coin_button.pack(side = tk.TOP, padx = 5, pady = 10)
         self.validate_button.pack(side = tk.TOP, padx = 5, pady = 10)
-        self.coincidences.pack(side = tk.BOTTOM, padx = 5, pady = 10)
-
-    def loading_error(self, err):
-        tk.messagebox.showerror(message = f'{err}')
 
     def update_data_cb_wrapper(self, d):
-        """ Wrap the process of updating the data set in the app 
-        to catch any potential errors that happened when retreiving
-        the data
-        """
         if isinstance(d, Exception):
-            self.loading_error(d)
+            tk.messagebox.showerror(message = f'{d}')
         else:
             self.update_data_cb(d)
 
-    def load(self):
-        """ Start the data loading process, and show a popup if
-        the input is invalid
-        """
-        try:
-            DataLoaderPopup(self.root, self, self.update_data_cb_wrapper)
-        except (ValueError, RuntimeError) as err:
-            self.loading_error(err)
+    def load_sgls(self):
+        self.loader = SinglesLoader(self.update_data_cb_wrapper)
 
-    def validate(self):
-        fnames = list(tk.filedialog.askopenfilenames(
-                title = "Validate singles files",
-                initialdir = "/",
-                filetypes = singles_filetypes))
+    def load_coin(self):
+        self.loader = CoincidenceLoader(self.update_data_cb_wrapper)
 
-        if not fnames: return
-
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            futures = [executor.submit(petmr.validate_singles_file, f) for f in fnames]
-
-        valid = [fut.result() for fut in futures]
-
-        messages = []
-        for f, v in zip(fnames, valid):
-            base = os.path.basename(f) + ': '
-            if v is True:
-                messages.append(base + 'valid')
-            else:
-                if not v[0]: messages.append(base + 'no reset')
-                if not v[1]: messages.append(base + 'm0 no timetags')
-                if not v[2]: messages.append(base + 'm1 no timetags')
-                if not v[3]: messages.append(base + 'm2 no timetags')
-                if not v[4]: messages.append(base + 'm3 no timetags')
-
-        tk.messagebox.showinfo(message = '\n'.join(messages))
+    def sort_coin(self):
+        self.loader = CoincidenceSorter(self.update_data_cb_wrapper)
 
 class ScrolledListbox:
     def __init__(self, root, title = None):

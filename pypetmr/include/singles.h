@@ -45,10 +45,11 @@ namespace Record
     { f.read((char*)d, n); };
 
     void align(std::ifstream&, uint8_t[]);
-    bool go_to_tt(std::ifstream&, uint64_t, std::atomic_bool&, const bool=false);
+    bool go_to_tt(std::ifstream&, uint64_t, std::atomic_bool&);
 };
 
-struct TimeTag {
+struct TimeTag
+{
     const static uint64_t clks_per_tt = 800'000;
 
     uint8_t mod;
@@ -57,7 +58,8 @@ struct TimeTag {
     TimeTag(): mod(0), value(0) {};
 };
 
-struct Single {
+struct Single
+{
     static const int nch = 8;
     static const int nblocks = 64;
 
@@ -72,7 +74,8 @@ struct Single {
     static PyObject* to_py_data(std::vector<Single>&);
 };
 
-struct SingleData {
+struct SingleData
+{
     constexpr static double scale = 511;
 
     double xF, yF, xR, yR;

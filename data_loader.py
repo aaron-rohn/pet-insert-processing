@@ -1,118 +1,79 @@
 import os, threading, queue, traceback, tempfile, petmr
+import concurrent.futures
 import pandas as pd
 import tkinter as tk
 import numpy as np
 from tkinter.ttk import Progressbar
 
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure, SubplotParams
+
 singles_filetypes = [("Singles",".SGL")]
 coincidence_filetypes = [("Coincidences",".COIN")]
 
 n_doi_bins = 4096
-max_events = int(500e6)
+max_events = int(50e6)
+coincidence_cols = 11
 
-class DataLoaderPopup:
-    def __init__(self, root, fileselector, update_data_cb):
-        self.fileselector = fileselector
-        self.update_data_cb = update_data_cb 
+class ProgressPopup(tk.Toplevel):
+    def __init__(self, stat_queue, data_queue, terminate, callback):
+        super().__init__()
+        self.stat_queue = stat_queue
+        self.data_queue = data_queue
+        self.terminate = terminate
+        self.callback = callback
+
+        self.title('Progress')
+        self.attributes('-type', 'dialog')
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.progbar = Progressbar(self, length = 500)
+        self.counts_label = tk.Label(self, text = '')
+
+        self.progbar.pack(fill = tk.X, expand = True, padx = 10, pady = 10)
+        self.counts_label.pack(pady = 10)
+
+    def on_close(self):
+        self.terminate.set()
+
+    def update(self, interval = 100):
+        while not self.stat_queue.empty():
+            perc, counts = self.stat_queue.get()
+            self.counts_label.config(text = f'Counts: {counts:,}')
+            self.progbar['value'] = perc
+
+        if self.data_queue.empty():
+            self.after(interval, self.update)
+        else:
+            self.destroy()
+            self.callback(self.data_queue.get())
+
+class SinglesLoader:
+    def __init__(self, callback):
         self.terminate = threading.Event()
         self.data_queue = queue.Queue()
         self.stat_queue = queue.Queue()
-        self.output_file = None
 
-        self.input_files = []
+        self.input_file = tk.filedialog.askopenfilename(
+            title = "Load singles listmode data",
+            initialdir = "/",
+            filetypes = singles_filetypes)
 
-        while True:
-            self.input_files += list(tk.filedialog.askopenfilenames(
-                title = "Load listmode data",
-                initialdir = "/",
-                filetypes = singles_filetypes + coincidence_filetypes))
-            if not tk.messagebox.askyesno(message = "Select additional files?"):
-                break
-
-        if not self.input_files: raise ValueError("No input file specified")
-        _, ext = os.path.splitext(self.input_files[0])
-
-        if ext == '.COIN':
-            # Just load the coincidences, regardless of coincidence sorting checkbox
-            self.bg = threading.Thread(target = self.load_coincidences)
-
-        elif ext == '.SGL':
-            if self.fileselector.sort_coin.get():
-                # Sort singles to coincidences
-                self.output_file = tk.filedialog.asksaveasfilename(
-                        title = "Output file, or none",
-                        initialdir = os.path.dirname(self.input_files[0]),
-                        filetypes = coincidence_filetypes) or None
-                self.bg = threading.Thread(target = self.sort_coincidences)
-
-            else:
-                # Just load the singles
-                self.bg = threading.Thread(target = self.load_singles)
-
-        else:
-            # Got an invalid filetype
-            raise ValueError("Unsupported file type")
+        if not self.input_file: raise ValueError("No file specified")
         
-        self.popup = tk.Toplevel(root)
-        self.popup.title('Progress')
-        self.popup.attributes('-type', 'dialog')
-        self.popup.protocol("WM_DELETE_WINDOW", self.on_close)
-        self.progbar = Progressbar(self.popup, length = 500)
-        self.progbar.pack(fill = tk.X, expand = True, padx = 10, pady = 10)
-        self.counts_label = tk.Label(self.popup, text = '')
-        self.counts_label.pack(pady = 10)
-
-        self.fileselector.load_button.config(state = tk.DISABLED)
+        self.bg = threading.Thread(target = self.load_singles)
         self.bg.start()
-        self.check()
 
-    def check(self, interval = 1000):
-        """ Check (in the UI thread) if the data loader thread has
-        completed. When implemented, update the status information
-        in the popup.
-        Once the thread is completed, retrieve the result from the
-        data queue, return it to the caller via the provided callback,
-        update UI elements to reflect the exit state, and finish
-        """
-
-        while not self.stat_queue.empty():
-            perc, counts, *label = self.stat_queue.get()
-            label = label[0] if label else 'Counts'
-            self.counts_label.config(text = f'{label}: {counts:,}')
-            self.progbar['value'] = perc
-
-        if self.bg.is_alive():
-            self.popup.after(interval, self.check)
-
-        else:
-            if not self.data_queue.empty():
-                self.update_data_cb(self.data_queue.get())
-            else:
-                self.update_data_cb(RuntimeError("Data loading failed"))
-
-            self.popup.destroy()
-            self.fileselector.load_button.config(state = tk.NORMAL)
-
-    def on_close(self):
-        """ If the popup is asked to close before the background thread has completed,
-        ask the background thread to exit gracefully, then check for any output data
-        before returning
-        """
-        self.terminate.set()
-        self.bg.join()
-        self.check()
+        self.popup = ProgressPopup(self.stat_queue,
+                                   self.data_queue,
+                                   self.terminate,
+                                   callback)
+        self.popup.update()
 
     def load_singles(self):
-        """ Load singles data from one .SGL file and
-        group events by block
-        """
+        """ Load singles data from one .SGL file and group events by block """
 
-        try:
-            d = petmr.singles(self.input_files[0], max_events)
-        except Exception as ex:
-            print(traceback.format_exc())
-            self.data_queue.put(ex)
-            return
+        args = [self.terminate, self.stat_queue, self.input_file, max_events]
+        d = petmr.singles(*args)
 
         blocks = d[0]
         unique_blocks = np.unique(blocks).tolist()
@@ -140,6 +101,52 @@ class DataLoaderPopup:
 
         self.data_queue.put(block_files)
 
+class CoincidenceLoader:
+    def __init__(self, callback):
+        self.input_file = tk.filedialog.askopenfilename(
+                title = "Load coincidence listmode data",
+                initialdir = "/",
+                filetypes = coincidence_filetypes)
+
+        if not self.input_file: raise ValueError("No file specified")
+
+        self.data = np.memmap(self.input_file, np.uint16).reshape((-1,coincidence_cols))
+        self.prof = CoincidenceProfilePlot(self.data, callback)
+
+class CoincidenceSorter:
+    def __init__(self, outside_callback):
+        self.terminate = threading.Event()
+        self.data_queue = queue.Queue()
+        self.stat_queue = queue.Queue()
+
+        # this is the callback given to the CoincidenceProfilePlot
+        self.outside_callback = outside_callback
+
+        self.input_files = []
+        while True:
+            self.input_files += list(tk.filedialog.askopenfilenames(
+                title = "Select singles listmode data to sort",
+                initialdir = "/",
+                filetypes = singles_filetypes + coincidence_filetypes))
+            if not tk.messagebox.askyesno(message = "Select additional files?"):
+                break
+
+        if not self.input_files: raise ValueError("No files specified")
+
+        self.output_file = tk.filedialog.asksaveasfilename(
+                title = "Output file, or none",
+                initialdir = os.path.dirname(self.input_files[0]),
+                filetypes = coincidence_filetypes) or None
+        
+        self.bg = threading.Thread(target = self.sort_coincidences)
+        self.bg.start()
+
+        self.popup = ProgressPopup(self.stat_queue,
+                                   self.data_queue,
+                                   self.terminate,
+                                   self.callback)
+        self.popup.update()
+
     def sort_coincidences(self):
         """ Load coincicdence data by sorting the events in one or more singles files. If
         multiple files are provided, they must be time-aligned from a single acquisition
@@ -147,44 +154,149 @@ class DataLoaderPopup:
         
         args = [self.terminate, self.stat_queue, self.input_files]
 
-        try:
-            if self.output_file is not None:
-                args += [0, self.output_file]
-                petmr.coincidences(*args)
-                self.data_queue.put({})
-            else:
-                tf = tempfile.NamedTemporaryFile()
-                args += [max_events, tf.name]
-                petmr.coincidences(*args)
-                self.load_coincidences(tf.name)
+        if self.output_file is not None:
+            args += [self.output_file]
+            petmr.coincidences(*args)
+            self.data_queue.put(self.output_file)
+        else:
+            tf = tempfile.NamedTemporaryFile()
+            args += [tf.name, max_events]
+            petmr.coincidences(*args)
+            self.data_queue.put(tf)
 
-        except Exception as ex:
-            print(traceback.format_exc())
-            self.data_queue.put(ex)
+    def callback(self, data_file):
+        """ this is called from the context of the ProgressPopup once
+        data is put on the data queue """
+        data = np.memmap(data_file, np.uint16).reshape((-1,coincidence_cols))
+        self.prof = CoincidenceProfilePlot(data, self.outside_callback)
 
-    def load_coincidences(self, coincidence_file = None):
-        """ Load coincidence data from a file on disk, and
-        group events by block to visualize flood, energy, and
-        doi histograms.
-        """
+class CoincidenceProfilePlot(tk.Toplevel):
+    def __init__(self, data, callback):
+        super().__init__()
+        self.attributes('-type', 'dialog')
 
-        if coincidence_file is None:
-            coincidence_file = self.input_files[0]
+        self.callback = callback 
+        self.data = data
 
-        d = np.memmap(coincidence_file, np.uint16).reshape((-1,10))
+        self.fig = Figure()
+        self.plt = self.fig.add_subplot()
+        self.canvas = FigureCanvasTkAgg(self.fig, master = self)
+        self.load_button = tk.Button(self, text = 'Load Selected',
+                command = self.load_start)
 
-        blocks = d[:,0]
+        self.canvas.get_tk_widget().pack(padx = 10, pady = 10)
+        self.load_button.pack(pady = 10)
+
+        self.canvas.mpl_connect('button_press_event', self.drag_start)
+        self.canvas.mpl_connect('button_release_event', self.drag_stop)
+
+        self.bins = np.arange(self.data[0,10], self.data[-1,10], 10)
+        self.lims = (self.bins[0], self.bins[-1])
+        self.init_lines(self.lims)
+
+        self.connection = None
+        self.active_line = None
+
+        self.create_hist_start()
+
+    def set_title(self, status = None):
+        title = 'Coincidence time distribution'
+        if status is not None:
+            title += (' - ' + status)
+        self.title(title)
+
+    """ Methods for moving the cursors to select a time span """
+
+    def init_lines(self, lims):
+        self.lines = [self.plt.axvline(x,linewidth=3,color='r') for x in lims]
+
+    def drag_start(self, ev):
+        if ev.xdata is not None:
+            self.connection = self.canvas.mpl_connect('motion_notify_event', self.cursor_set)
+
+            # set the nearest line as active
+            xpos = np.array([l.get_xdata()[0] for l in self.lines])
+            idx = np.argmin(np.abs(ev.xdata - xpos))
+            self.active_line = self.lines[idx]
+
+    def drag_stop(self, ev):
+        if self.connection is not None:
+            self.canvas.mpl_disconnect(self.connection)
+            self.connection = None
+            self.active_line = None
+
+    def cursor_set(self, ev):
+        if ev.xdata is not None and self.active_line is not None:
+            if (ev.xdata > self.lims[0]) & (ev.xdata < self.lims[1]):
+                self.active_line.set_xdata([ev.xdata]*2)
+                self.canvas.draw()
+
+    """ Methods for creating the time histogram.
+    This may take a long time for large listmode files """
+
+    def create_hist_start(self):
+        self.bg = threading.Thread(target = self.create_hist, daemon = True)
+        self.load_button.config(state = tk.DISABLED)
+        self.set_title('compute histogram')
+
+        self.bg.start()
+        self.create_hist_check()
+
+    def create_hist_check(self):
+        if self.bg.is_alive():
+            self.after(100, self.create_hist_check)
+        else:
+            self.set_title()
+            self.load_button.config(state = tk.NORMAL)
+            self.plt.plot(self.bins[:-1], self.h)
+            self.canvas.draw()
+
+    def create_hist(self):
+        self.h, _ = np.histogram(self.data[:,10], self.bins)
+
+    """ Methods for loading a subset of the coincidence data """
+
+    def load_start(self):
+        self.bg = threading.Thread(target = self.load, daemon = True)
+        self.load_button.config(state = tk.DISABLED)
+        self.bg.start()
+        self.set_title('subset data')
+        self.load_check()
+
+    def load_check(self):
+        if self.bg.is_alive():
+            self.after(100, self.load_check)
+        else:
+            self.set_title()
+            self.load_button.config(state = tk.NORMAL)
+            self.callback(self.block_files)
+
+    def load(self):
+        start, end = [l.get_xdata()[0] for l in self.lines]
+        print(f'Load from {round(start/10)}s to {round(end/10)}s')
+
+        data_time = self.data[:,10]
+        data_subset_idx = (data_time > start) & (data_time < end)
+        data_subset = self.data[data_subset_idx,:]
+        nev = data_subset.shape[0]
+
+        if nev > max_events:
+            data_subset = data_subset[0:max_events,:]
+
+        print(f'Load {data_subset.shape[0] / 1e6}M events')
+
+        blocks = data_subset[:,0]
         blka = blocks >> 8
         blkb = blocks & 0xFF
         unique_blocks = np.unique(np.concatenate([blka,blkb])).tolist()
-        block_files = {}
+        self.block_files = {}
 
         for ub in unique_blocks:
             idxa = np.where(blka == ub)[0]
             idxb = np.where(blkb == ub)[0]
 
-            rowa = d[idxa,:]
-            rowb = d[idxb,:]
+            rowa = data_subset[idxa,:]
+            rowb = data_subset[idxb,:]
 
             tf = tempfile.NamedTemporaryFile()
 
@@ -205,6 +317,31 @@ class DataLoaderPopup:
             arr[:,2] = np.concatenate([rowa[:,6], rowb[:,8]])
             arr[:,3] = np.concatenate([rowa[:,7], rowb[:,9]])
 
-            block_files[ub] = arr
+            self.block_files[ub] = arr
 
-        self.data_queue.put(block_files)
+def SinglesValidate():
+    fnames = list(tk.filedialog.askopenfilenames(
+            title = "Validate singles files",
+            initialdir = "/",
+            filetypes = singles_filetypes))
+
+    if not fnames: return
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = [executor.submit(petmr.validate_singles_file, f) for f in fnames]
+
+    valid = [fut.result() for fut in futures]
+
+    messages = []
+    for f, v in zip(fnames, valid):
+        base = os.path.basename(f) + ': '
+        if v is True:
+            messages.append(base + 'valid')
+        else:
+            if not v[0]: messages.append(base + 'no reset')
+            if not v[1]: messages.append(base + 'm0 no timetags')
+            if not v[2]: messages.append(base + 'm1 no timetags')
+            if not v[3]: messages.append(base + 'm2 no timetags')
+            if not v[4]: messages.append(base + 'm3 no timetags')
+
+    tk.messagebox.showinfo(message = '\n'.join(messages))

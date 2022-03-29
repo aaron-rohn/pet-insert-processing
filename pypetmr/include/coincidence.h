@@ -9,10 +9,11 @@
 
 #include "singles.h"
 
-struct CoincidenceData {
+struct CoincidenceData
+{
     // Columns in python data - block, eF, eR, x, y
     static const long ncol = 5;
-    static const size_t vals_per_ev = 10;
+    static const size_t vals_per_ev = 11;
 
     // only data member of the struct is an array of uint16's
     uint16_t data[vals_per_ev] = {0};
@@ -28,7 +29,7 @@ struct CoincidenceData {
 
     inline uint8_t blka()  const { return data[0] >> 8; }
     inline uint8_t blkb()  const { return data[0] & 0xFF; }
-    inline  int16_t time() const { return *((int16_t*)&data[1]); }
+    inline int16_t tdiff() const { return *((int16_t*)&data[1]); }
     inline uint16_t e_aF() const { return data[2]; }
     inline uint16_t e_aR() const { return data[3]; }
     inline uint16_t e_bF() const { return data[4]; }
@@ -37,9 +38,10 @@ struct CoincidenceData {
     inline uint16_t y_a()  const { return data[7]; }
     inline uint16_t x_b()  const { return data[8]; }
     inline uint16_t y_b()  const { return data[9]; }
+    inline uint16_t abstime() const { return data[10]; }
 
     inline void blk(uint16_t a, uint16_t b) { data[0] = (a << 8) | b; }
-    inline void time(int16_t val)  { data[1] = *((uint16_t*)&val); }
+    inline void tdiff(int16_t val) { data[1] = *((uint16_t*)&val); }
     inline void e_aF(uint16_t val) { data[2] = val; }
     inline void e_aR(uint16_t val) { data[3] = val; }
     inline void e_bF(uint16_t val) { data[4] = val; }
@@ -48,6 +50,7 @@ struct CoincidenceData {
     inline void  y_a(uint16_t val) { data[7] = val; }
     inline void  x_b(uint16_t val) { data[8] = val; }
     inline void  y_b(uint16_t val) { data[9] = val; }
+    inline void abstime(uint16_t val) { data[10] = val; }
 
     inline std::tuple<uint8_t,uint8_t> blk() const
     { return std::make_tuple(blka(), blkb()); };
@@ -63,7 +66,7 @@ void find_tt_offset(
         std::string,
         std::mutex&,
         std::condition_variable_any&,
-        std::queue<std::streampos>&,
+        std::queue<std::tuple<uint64_t,std::streampos>>&,
         std::atomic_bool&
 );
 

@@ -82,10 +82,14 @@ pylist_to_strings(PyObject *file_list)
 static PyObject *
 petmr_singles(PyObject *self, PyObject *args)
 {
+    PyObject *status_queue, *terminate;
     const char *fname;
     uint64_t max_events = 0;
-    if (!PyArg_ParseTuple(args, "s|K", &fname, &max_events))
-        return NULL;
+    if (!PyArg_ParseTuple(args, "OOsK",
+                          &terminate,
+                          &status_queue,
+                          &fname,
+                          &max_events)) return NULL;
 
     std::ifstream f (fname, std::ios::binary);
     if (!f.good()) 
@@ -97,18 +101,22 @@ petmr_singles(PyObject *self, PyObject *args)
     uint64_t nevents_approx = fsize(fname) / Record::event_size;
     if (max_events > 0) nevents_approx = std::min(nevents_approx, max_events);
 
+    bool stop = false;
     uint64_t nevents = 0;
     uint8_t data[Record::event_size];
     std::vector<TimeTag> last_tt (Record::nmodules);
     std::vector<Single> events;
 
-    Py_BEGIN_ALLOW_THREADS
+    PyThreadState *_save = PyEval_SaveThread();
 
     events.reserve(nevents_approx);
 
-    while (f.good())
+    while (f.good() && !stop)
     {
-        if (max_events > 0 && nevents++ > max_events) break;
+        nevents++;
+
+        if (max_events > 0 && nevents > max_events)
+            break;
 
         f.read((char*)data, Record::event_size);
         Record::align(f, data);
@@ -119,10 +127,20 @@ petmr_singles(PyObject *self, PyObject *args)
             events.emplace_back(data, last_tt[mod]);
         else
             last_tt[mod] = TimeTag(data);
+
+        if (nevents % 100'000 == 0)
+        {
+            double perc = ((double)nevents) / nevents_approx* 100.0;
+
+            PyEval_RestoreThread(_save);
+            PyObject *term = PyObject_CallMethod(terminate, "is_set", "");
+            PyObject_CallMethod(status_queue, "put", "((dK))", perc, nevents);
+            stop = (term == Py_True);
+            _save = PyEval_SaveThread();
+        }
     }
 
-    Py_END_ALLOW_THREADS
-
+    PyEval_RestoreThread(_save);
     return Single::to_py_data(events);
 }
 
@@ -134,13 +152,13 @@ static PyObject *
 petmr_coincidences(PyObject *self, PyObject *args)
 {
     PyObject *status_queue, *terminate, *py_file_list;
-    uint64_t max_events = 100'000'000;
+    uint64_t max_events = 0;
     char *output_file_str = NULL;
-    if (!PyArg_ParseTuple(args, "OOO|Ks", &terminate,
+    if (!PyArg_ParseTuple(args, "OOOs|Ks", &terminate,
                                           &status_queue,
                                           &py_file_list,
-                                          &max_events,
-                                          &output_file_str)) return NULL;
+                                          &output_file_str,
+                                          &max_events)) return NULL;
 
     // Parse the input files
     auto file_list = pylist_to_strings(py_file_list);
@@ -150,7 +168,7 @@ petmr_coincidences(PyObject *self, PyObject *args)
     std::ofstream output_file_handle (
             output_file_str, std::ios::out | std::ios::binary);
 
-    if (output_file_str && !output_file_handle)
+    if (!output_file_handle)
     {
         PyErr_SetString(PyExc_IOError, strerror(errno));
         return NULL;
@@ -167,13 +185,13 @@ petmr_coincidences(PyObject *self, PyObject *args)
     std::vector<std::thread> tt_scan;
     std::vector<std::mutex> all_lock (n);
     std::vector<std::condition_variable_any> all_cv (n);
-    std::vector<std::queue<std::streampos>> all_pos (n);
+    std::vector<std::queue<std::tuple<uint64_t,std::streampos>>> all_pos (n);
 
     // Items used for sorting coincidences within a file range
     uint64_t ncoin = 0;
-    std::vector<CoincidenceData> cd;
     std::deque<std::future<sorted_values>> workers;
     std::vector<std::streampos> start_pos(n), end_pos(n);
+    std::vector<uint64_t> current_tt(n);
 
     // Begin multithreading
     PyThreadState *_save = PyEval_SaveThread();
@@ -201,7 +219,8 @@ petmr_coincidences(PyObject *self, PyObject *args)
     {
         std::unique_lock<std::mutex> lck(all_lock[i]);
         all_cv[i].wait(lck, [&]{ return !all_pos[i].empty(); });
-        start_pos[i] = all_pos[i].front();
+
+        std::tie(current_tt[i], start_pos[i]) = all_pos[i].front();
         all_pos[i].pop();
     }
 
@@ -222,39 +241,32 @@ petmr_coincidences(PyObject *self, PyObject *args)
         return NULL;
     }
 
-    while (!stop || workers.size() > 0)
+    // spawn workers as the file is processed
+    while (true)
     {
         // Get next time-tag increment to read until, for each file
-        for (size_t i = 0; !stop && i < n; i++)
+        for (size_t i = 0; i < n; i++)
         {
             std::unique_lock<std::mutex> lck(all_lock[i]);
             all_cv[i].wait(lck, [&]{ return !all_pos[i].empty(); });
-            end_pos[i] = all_pos[i].front();
+
+            std::tie(current_tt[i], end_pos[i]) = all_pos[i].front();
             all_pos[i].pop();
 
-            if (end_pos[i] == -1) stop = true;
+            if (end_pos[i] == -1) goto exit;
         }
 
-        // If no file has completed yet, create a new worker to sort singles
-        if (!stop)
-        {
-            workers.push_back(std::async(std::launch::async,
-                &sort_span, file_list, start_pos, end_pos, std::ref(stop)));
+        // spawn a new worker each iteration
+        workers.push_back(std::async(std::launch::async,
+            &sort_span, file_list, start_pos, end_pos, std::ref(stop)));
 
-            start_pos = end_pos;
-        }
+        start_pos = end_pos;
 
-        // If a file is completed or there are sufficient workers, collect results
-        if (stop || workers.size() >= sorter_threads)
+        if (workers.size() >= sorter_threads)
         {
             auto [pos, new_cd] = workers.front().get();
             workers.pop_front();
-
-            // either save the data or copy it to a buffer
-            if (output_file_handle)
-                CoincidenceData::write(output_file_handle, new_cd);
-            else
-                cd.insert(cd.end(), new_cd.begin(), new_cd.end());
+            CoincidenceData::write(output_file_handle, new_cd);
 
             // calculate data to update the UI
             ncoin += new_cd.size();
@@ -263,26 +275,36 @@ petmr_coincidences(PyObject *self, PyObject *args)
 
             // update the UI and interact with python
             PyEval_RestoreThread(_save);
-
             PyObject *term = PyObject_CallMethod(terminate, "is_set", "");
             PyObject_CallMethod(status_queue, "put", "((dK))", perc, ncoin);
-
-            if ((term == Py_True) || (max_events > 0 && ncoin > max_events))
-            {
-                stop = true;
-            }
-
+            stop = (term == Py_True);
             _save = PyEval_SaveThread();
+
+            if (stop || (max_events > 0 && ncoin > max_events))
+            {
+                std::cout << "Stop coincidence sorting with " << ncoin << " events" << std::endl;
+                goto exit;
+            }
         }
     }
 
+exit:
+
     stop = true;
+
     for (auto &scanner : tt_scan)
+    {
         scanner.join();
+    }
+
+    while (workers.size() > 0)
+    {
+        workers.front().get();
+        workers.pop_front();
+    }
 
     PyEval_RestoreThread(_save);
-
-    return CoincidenceData::to_py_data(cd);
+    Py_RETURN_NONE;
 }
 
 /*

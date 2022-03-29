@@ -98,22 +98,31 @@ void Record::align(std::ifstream &f, uint8_t data[])
 bool Record::go_to_tt(
         std::ifstream &f,
         uint64_t value,
-        std::atomic_bool &stop,
-        const bool exact
+        std::atomic_bool &stop
 ) {
     uint8_t data[event_size];
 
-    const auto comp = exact ? 
-        [](uint64_t a, uint64_t b){ return a == b; } :
-        [](uint64_t a, uint64_t b){ return a >= b; };
+    uint64_t last_tt_value = 0;
+    bool synced = false;
 
     while(f.good() && !stop)
     {
         read(f, data);
         align(f, data);
 
-        if (!is_single(data) && comp(TimeTag(data).value, value))
-            break;
+        if (!is_single(data))
+        {
+            TimeTag tt(data);
+
+            synced = (tt.value == (last_tt_value+1));
+            last_tt_value = tt.value;
+
+            if ((value == 0 && tt.value == 0) ||
+                (synced && value > 0 && tt.value >= value))
+            {
+                break;
+            }
+        }
     }
 
     return f.good() && !stop;

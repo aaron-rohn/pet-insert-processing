@@ -12,7 +12,7 @@ singles_filetypes = [("Singles",".SGL")]
 coincidence_filetypes = [("Coincidences",".COIN")]
 
 n_doi_bins = 4096
-max_events = int(50e6)
+max_events = int(1e9)
 coincidence_cols = 11
 
 class ProgressPopup(tk.Toplevel):
@@ -70,8 +70,6 @@ class SinglesLoader:
         self.popup.update()
 
     def load_singles(self):
-        """ Load singles data from one .SGL file and group events by block """
-
         args = [self.terminate, self.stat_queue, self.input_file, max_events]
         d = petmr.singles(*args)
 
@@ -110,8 +108,8 @@ class CoincidenceLoader:
 
         if not self.input_file: raise ValueError("No file specified")
 
-        self.data = np.memmap(self.input_file, np.uint16).reshape((-1,coincidence_cols))
-        self.prof = CoincidenceProfilePlot(self.data, callback)
+        data = np.memmap(self.input_file, np.uint16).reshape((-1,coincidence_cols))
+        self.prof = CoincidenceProfilePlot(data, callback)
 
 class CoincidenceSorter:
     def __init__(self, outside_callback):
@@ -174,6 +172,7 @@ class CoincidenceProfilePlot(tk.Toplevel):
     def __init__(self, data, callback):
         super().__init__()
         self.attributes('-type', 'dialog')
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.callback = callback 
         self.data = data
@@ -190,20 +189,51 @@ class CoincidenceProfilePlot(tk.Toplevel):
         self.canvas.mpl_connect('button_press_event', self.drag_start)
         self.canvas.mpl_connect('button_release_event', self.drag_stop)
 
-        self.bins = np.arange(self.data[0,10], self.data[-1,10], 10)
-        self.lims = (self.bins[0], self.bins[-1])
-        self.init_lines(self.lims)
-
         self.connection = None
         self.active_line = None
+        self.draw_hist()
+        self.set_title()
 
-        self.create_hist_start()
+    def on_close(self):
+        pass
 
     def set_title(self, status = None):
         title = 'Coincidence time distribution'
         if status is not None:
             title += (' - ' + status)
         self.title(title)
+
+    def draw_hist(self):
+        t = self.data[:,10]
+        nevents = t.shape[0]
+        time_span = t[-1] - t[0]
+        time_span_sec = time_span / 10
+
+        if time_span_sec < 10:
+            sec_to_avg = 0.1
+        elif time_span_sec < 100:
+            sec_to_avg = 1.0
+        else:
+            sec_to_avg = 10.0
+
+        self.ev_per_period = int(nevents / time_span_sec * sec_to_avg)
+
+        self.times = self.data[::self.ev_per_period,10]
+        self.lims = (self.times[0], self.times[-1])
+        self.init_lines(self.lims)
+
+        self.ev_rate = self.ev_per_period / np.diff(self.times)
+
+        k_samples = 6
+        kernel = np.ones(k_samples) / k_samples
+
+        padded = np.concatenate((np.repeat(self.ev_rate[0],  k_samples/2),
+                                 self.ev_rate,
+                                 np.repeat(self.ev_rate[-1], k_samples/2)))
+
+        self.ev_rate = np.convolve(padded, kernel, mode = 'valid')
+        self.plt.plot(self.times, self.ev_rate)
+        self.canvas.draw()
 
     """ Methods for moving the cursors to select a time span """
 
@@ -231,29 +261,6 @@ class CoincidenceProfilePlot(tk.Toplevel):
                 self.active_line.set_xdata([ev.xdata]*2)
                 self.canvas.draw()
 
-    """ Methods for creating the time histogram.
-    This may take a long time for large listmode files """
-
-    def create_hist_start(self):
-        self.bg = threading.Thread(target = self.create_hist, daemon = True)
-        self.load_button.config(state = tk.DISABLED)
-        self.set_title('compute histogram')
-
-        self.bg.start()
-        self.create_hist_check()
-
-    def create_hist_check(self):
-        if self.bg.is_alive():
-            self.after(100, self.create_hist_check)
-        else:
-            self.set_title()
-            self.load_button.config(state = tk.NORMAL)
-            self.plt.plot(self.bins[:-1], self.h)
-            self.canvas.draw()
-
-    def create_hist(self):
-        self.h, _ = np.histogram(self.data[:,10], self.bins)
-
     """ Methods for loading a subset of the coincidence data """
 
     def load_start(self):
@@ -272,12 +279,11 @@ class CoincidenceProfilePlot(tk.Toplevel):
             self.callback(self.block_files)
 
     def load(self):
-        start, end = [l.get_xdata()[0] for l in self.lines]
+        start, end = sorted([l.get_xdata()[0] for l in self.lines])
         print(f'Load from {round(start/10)}s to {round(end/10)}s')
 
-        data_time = self.data[:,10]
-        data_subset_idx = (data_time > start) & (data_time < end)
-        data_subset = self.data[data_subset_idx,:]
+        start, end = np.searchsorted(self.times, [start,end]) * self.ev_per_period
+        data_subset = self.data[start:end,:]
         nev = data_subset.shape[0]
 
         if nev > max_events:
@@ -292,6 +298,7 @@ class CoincidenceProfilePlot(tk.Toplevel):
         self.block_files = {}
 
         for ub in unique_blocks:
+            print(f'Block {ub}')
             idxa = np.where(blka == ub)[0]
             idxb = np.where(blkb == ub)[0]
 
@@ -319,7 +326,7 @@ class CoincidenceProfilePlot(tk.Toplevel):
 
             self.block_files[ub] = arr
 
-def SinglesValidate():
+def validate_singles():
     fnames = list(tk.filedialog.askopenfilenames(
             title = "Validate singles files",
             initialdir = "/",

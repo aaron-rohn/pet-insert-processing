@@ -6,30 +6,24 @@ from sinogram_elements import SinogramDisplay
 import pandas as pd
 import numpy as np
 
-class App:
+class App(ttk.Notebook):
     def collect_data(self, d):
         self.d = d
-        if isinstance(self.d, dict):
-            self.block.set(list(self.d.keys()))
+        self.block.set(list(self.d.keys()))
 
     """ Allow member elements to query the current data or selected block """
-    def return_data(self, block):
-        if block is not None:
-            return self.d[block]
-
+    def return_data(self, block): return self.d[block]
     def return_block(self, *args, **kwds): return self.block.get_active(*args, **kwds)
     def set_block(self, *args, **kwds): return self.block.set_active(*args, **kwds)
 
     def __init__(self, root):
-        self.d = None
-        self.d_idx = None
+        super().__init__(root)
 
-        self.base = ttk.Notebook(root)
-        listmode_frame = tk.Frame(self.base)
-        sinogram_frame = tk.Frame(self.base)
-        self.base.add(listmode_frame, text = "Listmode Processing")
-        self.base.add(sinogram_frame, text = "Sinogram Processing")
-        self.base.pack(fill = tk.BOTH, expand = True)
+        listmode_frame = tk.Frame(self)
+        sinogram_frame = tk.Frame(self)
+        self.add(listmode_frame, text = "Listmode Processing")
+        self.add(sinogram_frame, text = "Sinogram Processing")
+        self.pack(fill = tk.BOTH, expand = True)
 
         lm_top_frame = tk.Frame(listmode_frame)
         lm_top_frame.pack(fill = tk.X, expand = True)

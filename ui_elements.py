@@ -6,11 +6,12 @@ from tkinter.ttk import Separator
 
 from flood import nearest_peak
 from figures import ThresholdHist, FloodHist
+
 from data_loader import (
         SinglesLoader,
         CoincidenceLoader,
         CoincidenceSorter,
-        SinglesValidate)
+        validate_singles)
 
 pd.options.mode.chained_assignment = None
 
@@ -23,57 +24,64 @@ class WrappingLabel(tk.Label):
         super().__init__(master, **kwargs)
         self.bind('<Configure>', self.reconfig)
 
-class FileSelector:
-    def __init__(self, root, update_data_cb):
-        self.root = root
+class FileSelector(tk.Frame):
+    def __init__(self, root, callback):
+        super().__init__(root)
+        self.callback = callback 
 
-        """ callbacks to get the reference data from the caller,
-        or to set the reference data held by the caller """
-        self.update_data_cb = update_data_cb 
-
-        self.frame = tk.Frame(self.root)
-        self.load_sgls_button = tk.Button(self.frame, text = "Load Singles", command = self.load_sgls)
-        self.load_coin_button = tk.Button(self.frame, text = "Load Coincidences", command = self.load_coin)
-        self.sort_coin_button = tk.Button(self.frame, text = "Sort Coincidences", command = self.sort_coin)
-        self.validate_button = tk.Button(self.frame, text = "Validate files", command = SinglesValidate)
+        self.load_sgls_button = tk.Button(self, text = "Load Singles", command = self.load_sgls)
+        self.load_coin_button = tk.Button(self, text = "Load Coincidences", command = self.load_coin)
+        self.sort_coin_button = tk.Button(self, text = "Sort Coincidences", command = self.sort_coin)
+        self.validate_button = tk.Button(self, text = "Validate files", command = validate_singles)
 
     def pack(self, **kwds):
-        self.frame.pack(**kwds)
-        self.load_sgls_button.pack(side = tk.TOP, padx = 5, pady = 10)
-        self.load_coin_button.pack(side = tk.TOP, padx = 5, pady = 10)
-        self.sort_coin_button.pack(side = tk.TOP, padx = 5, pady = 10)
-        self.validate_button.pack(side = tk.TOP, padx = 5, pady = 10)
+        super().pack(**kwds)
+        args = {'side': tk.TOP, 'padx': 5, 'pady': 5, 'fill': tk.X, 'expand': True}
+        self.load_sgls_button.pack(**args)
+        self.load_coin_button.pack(**args)
+        self.sort_coin_button.pack(**args)
+        self.validate_button.pack(**args)
 
-    def update_data_cb_wrapper(self, d):
-        if isinstance(d, Exception):
-            tk.messagebox.showerror(message = f'{d}')
+    def cfg_buttons(self, state):
+        self.load_sgls_button.config(state = state) 
+        self.load_coin_button.config(state = state) 
+        self.sort_coin_button.config(state = state) 
+        self.validate_button.config(state = state)
+
+    def callback_wrapper(self, response):
+        self.cfg_buttons(tk.NORMAL)
+        if isinstance(response, Exception):
+            tk.messagebox.showerror(message = f'{response}')
         else:
-            self.update_data_cb(d)
+            self.callback(response)
 
     def load_sgls(self):
-        self.loader = SinglesLoader(self.update_data_cb_wrapper)
+        self.cfg_buttons(tk.DISABLED)
+        self.loader = SinglesLoader(self.callback_wrapper)
 
     def load_coin(self):
-        self.loader = CoincidenceLoader(self.update_data_cb_wrapper)
+        self.cfg_buttons(tk.DISABLED)
+        self.loader = CoincidenceLoader(self.callback_wrapper)
 
     def sort_coin(self):
-        self.loader = CoincidenceSorter(self.update_data_cb_wrapper)
+        self.cfg_buttons(tk.DISABLED)
+        self.loader = CoincidenceSorter(self.callback_wrapper)
 
-class ScrolledListbox:
+class ScrolledListbox(tk.Frame):
     def __init__(self, root, title = None):
-        self.root = root
-        self.frame = tk.Frame(self.root)
+        super().__init__(root)
         self.active_var = tk.Variable()
-        self.title = tk.Label(self.frame, text = title) if title else None
-        self.active = tk.Listbox(self.frame, listvariable = self.active_var, exportselection = False)
-        self.scroll = tk.Scrollbar(self.frame, orient = tk.VERTICAL, command = self.active.yview)
+        self.title = tk.Label(self, text = title) if title else None
+        self.active = tk.Listbox(self, listvariable = self.active_var, exportselection = False)
+        self.scroll = tk.Scrollbar(self, orient = tk.VERTICAL, command = self.active.yview)
         self.active.config(yscrollcommand = self.scroll.set)
 
     def pack(self, **kwds):
-        self.frame.pack(**kwds)
+        super().pack(**kwds)
 
         if self.title is not None:
             self.title.pack(side = tk.TOP, pady = 5)
+
         self.active.pack(fill = tk.X, expand = True, side = tk.LEFT)
         self.scroll.pack(fill = tk.Y, side = tk.RIGHT)
 

@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import tkinter as tk
 from tkinter.ttk import Separator
+import matplotlib.pyplot as plt
 
 from flood import nearest_peak
 from figures import ThresholdHist, FloodHist
@@ -29,9 +30,15 @@ class FileSelector(tk.Frame):
         super().__init__(root)
         self.callback = callback 
 
-        self.load_sgls_button = tk.Button(self, text = "Load Singles", command = self.load_sgls)
-        self.load_coin_button = tk.Button(self, text = "Load Coincidences", command = self.load_coin)
-        self.sort_coin_button = tk.Button(self, text = "Sort Coincidences", command = self.sort_coin)
+        self.load_sgls_button = tk.Button(self, text = "Load Singles",
+                command = lambda: self.loader_wrapper(SinglesLoader))
+
+        self.load_coin_button = tk.Button(self, text = "Load Coincidences",
+                command = lambda: self.loader_wrapper(CoincidenceLoader))
+
+        self.sort_coin_button = tk.Button(self, text = "Sort Coincidences",
+                command = lambda: self.loader_wrapper(CoincidenceSorter))
+
         self.validate_button = tk.Button(self, text = "Validate files", command = validate_singles)
 
     def pack(self, **kwds):
@@ -55,17 +62,12 @@ class FileSelector(tk.Frame):
         else:
             self.callback(response)
 
-    def load_sgls(self):
+    def loader_wrapper(self, loader):
         self.cfg_buttons(tk.DISABLED)
-        self.loader = SinglesLoader(self.callback_wrapper)
-
-    def load_coin(self):
-        self.cfg_buttons(tk.DISABLED)
-        self.loader = CoincidenceLoader(self.callback_wrapper)
-
-    def sort_coin(self):
-        self.cfg_buttons(tk.DISABLED)
-        self.loader = CoincidenceSorter(self.callback_wrapper)
+        try:
+            self.loader = loader(self.callback_wrapper)
+        except Exception as e:
+            self.callback_wrapper(e)
 
 class ScrolledListbox(tk.Frame):
     def __init__(self, root, title = None):
@@ -231,6 +233,7 @@ class Plots:
             return
 
         blk = self.get_block()
+        print(f'Store LUT for block {blk}')
 
         """ store the LUT for this block to the specified directory """
         lut_fname = os.path.join(output_dir, f'block{blk}.lut')
@@ -240,7 +243,7 @@ class Plots:
         lut.astype(np.intc).tofile(lut_fname)
 
         """ update json file with photopeak position for this block """
-        config_file = os.path.join(output_dir, 'conig.json')
+        config_file = os.path.join(output_dir, 'config.json')
 
         try:
             with open(config_file, 'r') as f:
@@ -261,14 +264,13 @@ class Plots:
             })
 
             lm_df = pd.DataFrame(self.d, columns = ['es', 'doi', 'x', 'y'])
-            lm_df.loc[:,['x','y']] *= 511.0
-            lm_df = lm_df.astype({'x': int, 'y': int})
             lm_df = lm_df.merge(lut_df, on = ['x', 'y'])
             lm_df = lm_df.groupby(['lut'])
 
             # find the photopeak for each crystal
             def get_photopeak(grp):
-                n,bins = np.histogram(grp['es'].values, bins = 100)
+                n,bins = np.histogram(grp['es'].values, bins = 100,
+                        range = np.quantile(grp['es'].values, [0, 0.95]))
                 return round(bins[np.argmax(bins[:-1] * n**2)])
 
             pks = lm_df.apply(get_photopeak)

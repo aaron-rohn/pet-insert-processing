@@ -152,7 +152,7 @@ class ThresholdHist:
             rng = [(1-self.e_window)*self.peak, (1+self.e_window)*self.peak]
         else:
             # DOI histogram
-            rng = np.quantile(data, [0.30, 0.70])
+            rng = np.quantile(data, [0.20, 0.99])
 
         self.init_lines(rng)
         self.canvas.draw()
@@ -186,7 +186,7 @@ class ThresholdHist:
 
     def __init__(self, frame, is_energy, **kwargs):
         self.is_energy = is_energy
-        self.e_window = 0.2
+        self.e_window = 0.4
         self.peak = 0
 
         self.fig = Figure()

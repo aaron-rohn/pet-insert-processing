@@ -195,7 +195,8 @@ class CoincidenceProfilePlot(tk.Toplevel):
         self.set_title()
 
     def on_close(self):
-        pass
+        self.callback({})
+        self.destroy()
 
     def set_title(self, status = None):
         title = 'Coincidence time distribution'

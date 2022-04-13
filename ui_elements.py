@@ -73,7 +73,9 @@ class ScrolledListbox(tk.Frame):
     def __init__(self, root, title = None):
         super().__init__(root)
         self.active_var = tk.Variable()
-        self.title = tk.Label(self, text = title) if title else None
+
+        self.title_text = title
+        self.title = tk.Label(self, text = self.title_text) if self.title_text else None
         self.active = tk.Listbox(self, listvariable = self.active_var, exportselection = False)
         self.scroll = tk.Scrollbar(self, orient = tk.VERTICAL, command = self.active.yview)
         self.active.config(yscrollcommand = self.scroll.set)
@@ -101,6 +103,7 @@ class ScrolledListbox(tk.Frame):
             self.active.activate(position)
 
     def set(self, blks):
+        self.title.config(text = f'{self.title_text} ({len(blks)})')
         return self.active_var.set(blks)
 
     def bind(self, new_block_cb):

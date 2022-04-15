@@ -9,7 +9,7 @@ def sort_sinogram(*args):
         data.put(e)
 
 class SinogramLoaderPopup:
-    def __init__(self, root, callback, fname, cfgdir, flip_y):
+    def __init__(self, root, callback, fname, cfgdir):
         self.callback = callback 
 
         self.popup = tk.Toplevel(root)
@@ -29,8 +29,7 @@ class SinogramLoaderPopup:
                         self.terminate,
                         self.stat_queue,
                         self.data_queue,
-                        0.3,
-                        flip_y])
+                        0.3])
 
         self.bg.start()
         self.check()

@@ -15,7 +15,6 @@ class SinogramDisplay:
         self.ldr = None
         self.root = root
         self.button_frame = tk.Frame(self.root)
-        self.flip = tk.IntVar()
 
         self.load_coin = tk.Button(self.button_frame, text = "Load Coincidences", command = self.sort_sinogram)
         self.load_sino = tk.Button(self.button_frame, text = "Load Sinogram", command = self.load_sinogram)
@@ -23,7 +22,6 @@ class SinogramDisplay:
         self.save_lm   = tk.Button(self.button_frame, text = "Save Listmode", command = self.save_listmode)
         self.create_norm_button = tk.Button(self.button_frame, text = "Create Norm", command = self.create_norm)
         self.apply_norm_button = tk.Button(self.button_frame, text = "Apply Norm", command = self.apply_norm)
-        self.flip_y_coord = tk.Checkbutton(self.button_frame, text = "Flip LUT Y coordinate", variable = self.flip)
 
         self.plot_frame = tk.Frame(self.root)
         self.plot_frame.rowconfigure(0, weight = 1)
@@ -60,7 +58,6 @@ class SinogramDisplay:
         self.save_lm.pack(side = tk.LEFT, padx = 5)
         self.create_norm_button.pack(side = tk.LEFT, padx = 5)
         self.apply_norm_button.pack(side = tk.LEFT, padx = 5)
-        self.flip_y_coord.pack(side = tk.LEFT, padx = 5)
         self.plot_frame.pack(fill = tk.BOTH, expand = True, padx = 5, pady = 5)
 
     def count_map_draw(self):
@@ -111,7 +108,7 @@ class SinogramDisplay:
             self.ldr = None
 
         self.ldr = SinogramLoaderPopup(self.root,
-                sorting_callback, fname, cfgdir, self.flip.get())
+                sorting_callback, fname, cfgdir)
 
     """
     def interp_sinogram(self):
@@ -171,7 +168,7 @@ class SinogramDisplay:
                 filetypes = [("Listmode file", ".lm")])
         if not lmfname: return
         
-        petmr.save_listmode(fname, lmfname, cfgdir, self.flip.get())
+        petmr.save_listmode(fname, lmfname, cfgdir)
 
     def create_norm(self):
         fnames = tk.filedialog.askopenfilenames(

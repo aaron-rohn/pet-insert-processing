@@ -109,7 +109,7 @@ Michelogram::event_to_coords(const CoincidenceData& c)
     if (!ppeak.in_window(ba,xa,ea) || !ppeak.in_window(bb,xb,eb))
         return invalid_ev;
 
-    int ra = ring(ba, xa, flip), rb = ring(bb, xb, flip);
+    int ra = ring(ba, xa), rb = ring(bb, xb);
     int idxa = idx(ba, xa), idxb = idx(bb, xb);
     return std::make_tuple(true, ra, rb, idxa, idxb);
 }

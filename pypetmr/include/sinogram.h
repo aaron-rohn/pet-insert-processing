@@ -33,19 +33,17 @@ class Geometry
     static const int dim_theta = ncrystals_per_ring / 2;
     static const int dim_r     = ncrystals_per_ring;
 
-    static inline int ring(int blk, int xtal, bool flip = false)
+    static inline int ring(int blk, int xtal)
     {
         int row = xtal / ncrystals;
-        if (flip) row = (ncrystals - 1) - row;
         int blk_ax = blk % nblocks_axial;
         return row + (ncrystals + ncrystals_axial_gap)*blk_ax;
     }
 
-    static inline int idx(int blk, int xtal, bool flip = false)
+    static inline int idx(int blk, int xtal)
     {
         // crystals are indexed in the opposite direction from increasing module number
-        int col = (ncrystals - 1) - (xtal % ncrystals);
-        if (flip) col = (ncrystals - 1) - col;
+        int col = xtal % ncrystals;
         int mod = blk >> 2;
         return col + (ncrystals + ncrystals_transverse_gap)*mod;
     }
@@ -138,7 +136,6 @@ class Sinogram: Geometry
 
 class Michelogram: Geometry
 {
-    const bool flip;
     std::vector<Sinogram> m;
 
     public:
@@ -165,8 +162,7 @@ class Michelogram: Geometry
 
     PyObject *to_py_data();
     Michelogram(PyObject*);
-    Michelogram(double energy_window = 0.2, bool flip = false):
-        flip(flip),
+    Michelogram(double energy_window = 0.2):
         m(std::vector<Sinogram> (nring*nring)),
         ppeak(energy_window) {};
 

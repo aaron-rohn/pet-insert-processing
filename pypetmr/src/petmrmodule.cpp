@@ -348,20 +348,18 @@ petmr_sort_sinogram(PyObject *self, PyObject *args)
 {
     double energy_window = 0.2;
     const char *fname, *cfg_dir;
-    int flip_flood_y_coord = 0;
     PyObject *terminate, *status_queue, *data_queue;
-    if (!PyArg_ParseTuple(args, "ssOOO|di",
+    if (!PyArg_ParseTuple(args, "ssOOO|d",
                 &fname,
                 &cfg_dir,
                 &terminate,
                 &status_queue,
                 &data_queue,
-                &energy_window,
-                &flip_flood_y_coord)) return NULL;
+                &energy_window)) return NULL;
 
     PyThreadState *_save = PyEval_SaveThread();
 
-    Michelogram m(energy_window, flip_flood_y_coord);
+    Michelogram m(energy_window);
 
     try
     {
@@ -427,15 +425,13 @@ petmr_sort_sinogram(PyObject *self, PyObject *args)
 static PyObject*
 petmr_save_listmode(PyObject* self, PyObject* args)
 {
-    int flip_flood_y_coord = 0;
     const char *coincidence_file, *listmode_file, *cfg_dir;
-    if (!PyArg_ParseTuple(args, "sss|i",
+    if (!PyArg_ParseTuple(args, "sss",
                 &coincidence_file,
                 &listmode_file,
-                &cfg_dir,
-                &flip_flood_y_coord)) return NULL;
+                &cfg_dir)) return NULL;
 
-    Michelogram m(0.2, flip_flood_y_coord);
+    Michelogram m(0.2);
 
     try
     {

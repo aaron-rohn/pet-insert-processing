@@ -3,6 +3,7 @@ import tkinter as tk
 import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure, SubplotParams
+import matplotlib.pyplot as plt
 
 from scipy import ndimage
 import petmr
@@ -205,6 +206,19 @@ class SinogramDisplay:
 
         # average over angular dimension
         proj = sinogram.mean(2)
+
+        for idx in np.ndindex(proj.shape[0:2]):
+            sino = sinogram[idx]
+            prof = proj[idx]
+
+            thr = prof > (np.max(prof)/2)
+            fst = np.argmax(thr)
+            lst = len(thr) - np.argmax(thr[::-1]) - 1
+
+            msk = np.ones_like(thr)
+            msk[fst:lst] = 0
+            sino[:,msk] = 1
+
         sinogram = proj[:,:,None,:] / sinogram
         self.sino_data = np.nan_to_num(sinogram,
                 nan = 1, posinf = 1, neginf = 1)
@@ -230,7 +244,6 @@ class SinogramDisplay:
         self.sino_data = petmr.load_sinogram(fname)
         norm_sino      = petmr.load_sinogram(norm)
 
-        # divide sinogram by norm, suppress invalid values
         self.sino_data *= norm_sino
         self.sino_data = np.nan_to_num(self.sino_data,
                 nan = 1, posinf = 1, neginf = 1)

@@ -108,7 +108,10 @@ class CoincidenceLoader:
 
         if not self.input_file: raise ValueError("No file specified")
 
-        data = np.memmap(self.input_file, np.uint16).reshape((-1,coincidence_cols))
+        sz = os.path.getsize(self.input_file)
+        nrow = int((sz/2) // coincidence_cols)
+        #data = np.memmap(self.input_file, np.uint16).reshape((-1,coincidence_cols))
+        data = np.memmap(self.input_file, np.uint16, shape = (nrow, coincidence_cols))
         self.prof = CoincidenceProfilePlot(data, callback)
 
 class CoincidenceSorter:
@@ -165,7 +168,10 @@ class CoincidenceSorter:
     def callback(self, data_file):
         """ this is called from the context of the ProgressPopup once
         data is put on the data queue """
-        data = np.memmap(data_file, np.uint16).reshape((-1,coincidence_cols))
+        sz = os.path.getsize(data_file)
+        nrow = int((sz/2) // coincidence_cols)
+        #data = np.memmap(data_file, np.uint16).reshape((-1,coincidence_cols))
+        data = np.memmap(data_file, np.uint16, shape = (nrow, coincidence_cols))
         self.prof = CoincidenceProfilePlot(data, self.outside_callback)
 
 class CoincidenceProfilePlot(tk.Toplevel):

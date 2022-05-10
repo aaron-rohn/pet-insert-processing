@@ -30,7 +30,7 @@ class Geometry
     static const int ncrystals_per_ring = Record::nmodules *
         (ncrystals + ncrystals_transverse_gap);
 
-    static const int dim_theta = ncrystals_per_ring / 2;
+    static const int dim_theta = ncrystals_per_ring;
     static const int dim_r     = ncrystals_per_ring;
 
     static inline int ring(int blk, int xtal)
@@ -109,11 +109,8 @@ class Sinogram: Geometry
     {
         // note that LORs with theta = 0 are tangent to crystal #0
         // theta increases in the same direction as the crystal numbering
-        int theta = (idx1 + idx2) % ncrystals_per_ring;
-        int r = std::abs(idx1 - idx2);
-
-        if (idx1 + idx2 >= ncrystals_per_ring)
-            r = ncrystals_per_ring - r;
+        int theta = idx1 + idx2;
+        int r = idx2 - idx1;
 
         // Reduce the number of proj. angles by 1/2 and
         // allow 2x sampling of FOV

@@ -81,6 +81,27 @@ class SinogramDisplay:
             self.sinogram_plt.invert_yaxis()
             self.sinogram_canvas.draw()
 
+    def remap_sinogram(self, s):
+        nr = s.shape[0]
+        nt = s.shape[2]
+        nt2 = int(nt/2)
+        npos = s.shape[3]
+
+        s0 = np.copy(s)
+        sout = np.zeros((nr,nr,nt2,npos), s.dtype)
+
+        for i in range(nr):
+            for j in range(nr):
+                if i <= j:
+                    s[i,j] = np.roll(s[i,j], nt2, 0)
+                    s[i,j] += np.fliplr(s0[j,i])
+
+                    sout[i,j]  = s[i,j,0:nt2]
+                    if i != j:
+                        sout[j,i] += np.fliplr(s[i,j,nt2:nt])
+
+        return sout
+
     def sort_sinogram(self):
         fname = tk.filedialog.askopenfilename(
                 title = "Select coincidence file",
@@ -102,6 +123,7 @@ class SinogramDisplay:
                 tk.messagebox.showerror(message =
                         f'{type(result).__name__}: {" ".join(result.args)}')
             else:
+                result = self.remap_sinogram(result)
                 self.sino_data = result
 
             self.count_map_draw()
@@ -109,13 +131,6 @@ class SinogramDisplay:
 
         self.ldr = SinogramLoaderPopup(self.root,
                 sorting_callback, fname, cfgdir)
-
-    """
-    def interp_sinogram(self):
-        d = self.sino_data
-        init_shape = d.shape
-    """
-
 
     def load_sinogram(self):
         fname = tk.filedialog.askopenfilename(
@@ -193,21 +208,6 @@ class SinogramDisplay:
         sinogram = proj[:,:,None,:] / sinogram
         self.sino_data = np.nan_to_num(sinogram,
                 nan = 1, posinf = 1, neginf = 1)
-        """
-        sinogram = sinogram / proj[:,:,None,:]
-        sinogram = np.nan_to_num(sinogram,
-                nan = 1, posinf = 1, neginf = 1)
-        sinogram[sinogram == 0] = 1
-
-        # set norm coeff. to 1 outside of norm phantom
-        for a in range(sinogram.shape[0]):
-            for b in range(sinogram.shape[1]):
-                p = proj[a,b]
-                s = sinogram[a,b]
-                s[:, p < p.max() / 4] = 1
-
-        self.sino_data = 1.0 / (sinogram + np.finfo(float).eps)
-        """
         self.count_map_draw()
 
     def apply_norm(self):

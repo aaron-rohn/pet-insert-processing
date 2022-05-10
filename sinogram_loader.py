@@ -28,8 +28,7 @@ class SinogramLoaderPopup:
                         cfgdir,
                         self.terminate,
                         self.stat_queue,
-                        self.data_queue,
-                        0.3])
+                        self.data_queue])
 
         self.bg.start()
         self.check()

@@ -346,20 +346,18 @@ petmr_store(PyObject *self, PyObject *args)
 static PyObject*
 petmr_sort_sinogram(PyObject *self, PyObject *args)
 {
-    double energy_window = 0.2;
     const char *fname, *cfg_dir;
     PyObject *terminate, *status_queue, *data_queue;
-    if (!PyArg_ParseTuple(args, "ssOOO|d",
+    if (!PyArg_ParseTuple(args, "ssOOO",
                 &fname,
                 &cfg_dir,
                 &terminate,
                 &status_queue,
-                &data_queue,
-                &energy_window)) return NULL;
+                &data_queue)) return NULL;
 
     PyThreadState *_save = PyEval_SaveThread();
 
-    Michelogram m(energy_window);
+    Michelogram m(Geometry::dim_theta_full);
 
     try
     {
@@ -431,7 +429,7 @@ petmr_save_listmode(PyObject* self, PyObject* args)
                 &listmode_file,
                 &cfg_dir)) return NULL;
 
-    Michelogram m(0.2);
+    Michelogram m(Geometry::dim_theta_full);
 
     try
     {
@@ -464,7 +462,7 @@ petmr_load_sinogram(PyObject* self, PyObject* args)
     if (!PyArg_ParseTuple(args, "s", &sinogram_file))
         return NULL;
 
-    Michelogram m;
+    Michelogram m(Geometry::dim_theta_half);
     m.read_from(sinogram_file);
     return m.to_py_data();
 }

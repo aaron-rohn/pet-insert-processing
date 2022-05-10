@@ -30,8 +30,11 @@ class Geometry
     static const int ncrystals_per_ring = Record::nmodules *
         (ncrystals + ncrystals_transverse_gap);
 
-    static const int dim_theta = ncrystals_per_ring;
-    static const int dim_r     = ncrystals_per_ring;
+    static const int dim_theta_full = ncrystals_per_ring;
+    static const int dim_theta_half = ncrystals_per_ring/2;
+    static const int dim_r          = ncrystals_per_ring;
+
+    static constexpr double energy_window = 0.2;
 
     static inline int ring(int blk, int xtal)
     {
@@ -74,14 +77,13 @@ class PhotopeakLookupTable
     std::vector<std::vector<double>> photopeaks;
 
     public:
-    const double energy_window = 0.15;
+    const double energy_window = Geometry::energy_window;
 
-    PhotopeakLookupTable(double energy_window = 0.15):
+    PhotopeakLookupTable():
         photopeaks(std::vector<std::vector<double>> (
                     Single::nblocks,
                     std::vector<double>(
-                        Geometry::ncrystals_total, -1))),
-        energy_window(energy_window) {};
+                        Geometry::ncrystals_total, -1))) {};
 
     void load(std::string);
     static std::string find_cfg_file(std::string);
@@ -101,7 +103,9 @@ class Sinogram: Geometry
     public:
 
     std::vector<stype> s;
-    Sinogram(): s(std::vector<stype> (dim_theta*dim_r, 0)) {};
+    Sinogram(int dt):
+        s(std::vector<stype> (dt*dim_r, 0)) {};
+    Sinogram(const Sinogram &other): m(), s(other.s) {};
 
     inline stype& operator() (int theta, int r){ return s[theta*dim_r + r]; };
 
@@ -159,9 +163,8 @@ class Michelogram: Geometry
 
     PyObject *to_py_data();
     Michelogram(PyObject*);
-    Michelogram(double energy_window = 0.2):
-        m(std::vector<Sinogram> (nring*nring)),
-        ppeak(energy_window) {};
+    Michelogram(int dt):
+        m(std::vector<Sinogram> (nring*nring, Sinogram(dt))) {};
 
     std::streampos sort_span(
             std::string, std::streampos, std::streampos);

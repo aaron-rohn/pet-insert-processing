@@ -150,8 +150,7 @@ void Michelogram::read_from(std::string fname)
         s.read_from(f);
 }
 
-Michelogram::Michelogram(PyObject *arr):
-    Michelogram()
+Michelogram::Michelogram(PyObject *arr)
 {
     if (PyArray_TYPE((PyArrayObject*)arr) != npy_type)
     {
@@ -168,9 +167,12 @@ Michelogram::Michelogram(PyObject *arr):
     }
 
     npy_intp *dims = PyArray_DIMS((PyArrayObject*)arr);
+    
+    int dim_theta = dims[2];
+    m = std::vector<Sinogram> (nring*nring, Sinogram(dim_theta));
+
     if (dims[0] != nring ||
         dims[1] != nring ||
-        dims[2] != dim_theta ||
         dims[3] != dim_r)
     {
         std::cout << "Invalid sinogram dimensions: ";
@@ -188,6 +190,8 @@ Michelogram::Michelogram(PyObject *arr):
 
 PyObject *Michelogram::to_py_data()
 {
+    int dim_theta = begin()->s.size() / dim_r;
+
     npy_intp dims[] = {nring, nring, dim_theta, dim_r};
     PyObject *arr = PyArray_SimpleNew(4, dims, npy_type);
 

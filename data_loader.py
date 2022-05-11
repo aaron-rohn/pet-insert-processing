@@ -168,7 +168,12 @@ class CoincidenceSorter:
     def callback(self, data_file):
         """ this is called from the context of the ProgressPopup once
         data is put on the data queue """
-        sz = os.path.getsize(data_file)
+
+        if isinstance(data_file, str):
+            sz = os.path.getsize(data_file)
+        else:
+            sz = os.fstat(data_file.fileno()).st_size
+
         nrow = int((sz/2) // coincidence_cols)
         #data = np.memmap(data_file, np.uint16).reshape((-1,coincidence_cols))
         data = np.memmap(data_file, np.uint16, shape = (nrow, coincidence_cols))

@@ -110,7 +110,6 @@ class CoincidenceLoader:
 
         sz = os.path.getsize(self.input_file)
         nrow = int((sz/2) // coincidence_cols)
-        #data = np.memmap(self.input_file, np.uint16).reshape((-1,coincidence_cols))
         data = np.memmap(self.input_file, np.uint16, shape = (nrow, coincidence_cols))
         self.prof = CoincidenceProfilePlot(data, callback)
 
@@ -175,7 +174,6 @@ class CoincidenceSorter:
             sz = os.fstat(data_file.fileno()).st_size
 
         nrow = int((sz/2) // coincidence_cols)
-        #data = np.memmap(data_file, np.uint16).reshape((-1,coincidence_cols))
         data = np.memmap(data_file, np.uint16, shape = (nrow, coincidence_cols))
         self.prof = CoincidenceProfilePlot(data, self.outside_callback)
 
@@ -191,11 +189,17 @@ class CoincidenceProfilePlot(tk.Toplevel):
         self.fig = Figure()
         self.plt = self.fig.add_subplot()
         self.canvas = FigureCanvasTkAgg(self.fig, master = self)
-        self.load_button = tk.Button(self, text = 'Load Selected',
-                command = self.load_start)
+
+        button_frame = tk.Frame(self)
+        self.load_button = tk.Button(button_frame, text = 'Load Selected',
+                command = lambda: self.load_start(self.load))
+        self.save_button = tk.Button(button_frame, text = 'Save Selected',
+                command = lambda: self.load_start(self.save))
 
         self.canvas.get_tk_widget().pack(padx = 10, pady = 10)
-        self.load_button.pack(pady = 10)
+        button_frame.pack()
+        self.load_button.pack(padx = 10, pady = 10, side = tk.LEFT)
+        self.save_button.pack(padx = 10, pady = 10, side = tk.LEFT)
 
         self.canvas.mpl_connect('button_press_event', self.drag_start)
         self.canvas.mpl_connect('button_release_event', self.drag_stop)
@@ -218,6 +222,16 @@ class CoincidenceProfilePlot(tk.Toplevel):
     def draw_hist(self):
         t = self.data[:,10]
         nevents = t.shape[0]
+
+        self.ev_per_period = int(nevents / 500)
+        self.times = self.data[::self.ev_per_period,10].astype(float)
+
+        rollover = np.diff(self.times)
+        rollover = np.where(rollover < 0)[0]
+        for i in rollover:
+            self.times[i+1:] += 2**16
+
+        """
         time_span = t[-1] - t[0]
         time_span_sec = time_span / 10
 
@@ -229,21 +243,20 @@ class CoincidenceProfilePlot(tk.Toplevel):
             sec_to_avg = 10.0
 
         self.ev_per_period = int(nevents / time_span_sec * sec_to_avg)
+        """
 
-        self.times = self.data[::self.ev_per_period,10]
         self.lims = (self.times[0], self.times[-1])
         self.init_lines(self.lims)
 
         self.ev_rate = self.ev_per_period / np.diff(self.times)
 
-        k_samples = 6
+        k_samples = 12
         kernel = np.ones(k_samples) / k_samples
-
         padded = np.concatenate((np.repeat(self.ev_rate[0],  k_samples/2),
                                  self.ev_rate,
                                  np.repeat(self.ev_rate[-1], k_samples/2)))
-
         self.ev_rate = np.convolve(padded, kernel, mode = 'valid')
+
         self.plt.plot(self.times, self.ev_rate)
         self.canvas.draw()
 
@@ -273,11 +286,12 @@ class CoincidenceProfilePlot(tk.Toplevel):
                 self.active_line.set_xdata([ev.xdata]*2)
                 self.canvas.draw()
 
-    """ Methods for loading a subset of the coincidence data """
+    """ Methods for loading or saving a subset of the coincidence data """
 
-    def load_start(self):
-        self.bg = threading.Thread(target = self.load, daemon = True)
+    def load_start(self, target):
+        self.bg = threading.Thread(target = target, daemon = True)
         self.load_button.config(state = tk.DISABLED)
+        self.save_button.config(state = tk.DISABLED)
         self.bg.start()
         self.set_title('subset data')
         self.load_check()
@@ -288,6 +302,7 @@ class CoincidenceProfilePlot(tk.Toplevel):
         else:
             self.set_title()
             self.load_button.config(state = tk.NORMAL)
+            self.save_button.config(state = tk.NORMAL)
             self.callback(self.block_files)
 
     def load(self):
@@ -337,6 +352,29 @@ class CoincidenceProfilePlot(tk.Toplevel):
             arr[:,3] = np.concatenate([rowa[:,7], rowb[:,9]])
 
             self.block_files[ub] = arr
+
+    def save(self):
+        self.block_files = {}
+
+        startt, endt = sorted([l.get_xdata()[0] for l in self.lines])
+        start, end = np.searchsorted(self.times, [startt,endt]) * self.ev_per_period
+        data_subset = self.data[start:end,:]
+        nev = data_subset.shape[0]
+
+        idx = int(np.clip(np.log10(nev) / 3, 1, 4))
+        char = ['K', 'M', 'B', 'T'][idx-1]
+        print(f'Save {round(nev/(1e3 ** idx), 1)}{char} events from {round(startt/10)}s to {round(endt/10)}s')
+
+        newfile = tk.filedialog.asksaveasfilename(
+                title = "New coincidence file",
+                initialdir = os.path.abspath(os.path.sep),
+                filetypes = coincidence_filetypes)
+
+        if not newfile: return
+
+        arr = np.memmap(newfile, np.uint16,
+                mode = 'w+', shape = data_subset.shape)
+        arr[:,:] = data_subset[:,:]
 
 def validate_singles():
     fnames = list(tk.filedialog.askopenfilenames(

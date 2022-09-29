@@ -2,12 +2,12 @@ import os, json
 import numpy as np
 import pandas as pd
 import tkinter as tk
-from tkinter.ttk import Separator
 import matplotlib.pyplot as plt
 
-from flood import nearest_peak
+from flood import nearest_peak, PerspectiveTransformDialog
 from figures import ThresholdHist, FloodHist
 
+import crystal
 from data_loader import (
         SinglesLoader,
         CoincidenceLoader,
@@ -111,24 +111,17 @@ class ScrolledListbox(tk.Frame):
 
 class Plots:
     def __init__(self, root, data, get_block, set_block):
+        self.root = root
         self.d = None
         self.data = data
         self.get_block = get_block
         self.set_block = set_block
+        self.output_dir = None
+        self.transformation_matrix = None
 
-        self.save_xtal_photopeak = tk.IntVar()
-        self.transform_flood = tk.IntVar()
+        # Flood operation buttons
 
         self.button_frame = tk.Frame(root)
-
-        self.register_button = tk.Button(self.button_frame,
-                text = "Register peaks",
-                command = lambda: self.flood.register())
-
-        self.transform_flood_cb = tk.Checkbutton(self.button_frame,
-                text = "Transform flood",
-                variable = self.transform_flood,
-                command = self.flood_cb)
 
         self.select_dir_button = tk.Button(self.button_frame,
                 text = "Select Directory",
@@ -142,21 +135,26 @@ class Plots:
                 text = "Store LUT",
                 command = self.store_lut_cb)
 
-        self.save_xtal_cb = tk.Checkbutton(self.button_frame,
-                text = "Store crystal photopeak",
-                variable = self.save_xtal_photopeak)
+        self.transform_button = tk.Button(self.button_frame,
+                text = "Perspective Transform", command = self.perspective_transform)
+
+        self.overlay_lut = tk.IntVar()
+        self.overlay_lut_cb = tk.Checkbutton(self.button_frame,
+                text = "Overlay LUT", variable = self.overlay_lut)
+
+        self.show_voronoi = tk.IntVar()
+        self.show_voronoi_cb = tk.Checkbutton(self.button_frame,
+                text = "Overlay Voronoi", variable = self.show_voronoi)
 
         self.button_frame.pack(pady = 10);
-        self.register_button.pack(side = tk.LEFT, padx = 5)
-        self.transform_flood_cb.pack(side = tk.LEFT, padx = 5)
-
-        Separator(self.button_frame, orient = tk.VERTICAL).pack(
-                side = tk.LEFT, fill = tk.Y, padx = 20, pady = 5)
-
         self.select_dir_button.pack(side = tk.LEFT, padx = 5)
         self.store_flood_button.pack(side = tk.LEFT, padx = 5)
         self.store_lut_button.pack(side = tk.LEFT, padx = 5)
-        self.save_xtal_cb.pack(side = tk.LEFT, padx = 5)
+        self.transform_button.pack(side = tk.LEFT, padx = 5)
+        self.overlay_lut_cb.pack(side = tk.LEFT, padx = 5)
+        self.show_voronoi_cb.pack(side = tk.LEFT, padx = 5)
+
+        # Flood, energy and DOI plots
 
         self.frame = tk.Frame(root)
         self.frame.pack(padx = 5, pady = 5)
@@ -175,10 +173,15 @@ class Plots:
         self.doi.callback.append(self.flood_cb)
         self.doi.callback.append(self.energy_cb)
 
-        self.output_dir = None
+    def perspective_transform(self):
+        def callback(mat):
+            self.transformation_matrix = mat
+            self.flood_cb()
+        PerspectiveTransformDialog(self.root, self.flood.f.fld, callback)
 
     def plots_update(self, *args):
         """ Update all plots when new data is available """
+        self.transformation_matrix = None
         blk = self.get_block()
         self.d = self.data(blk)
 
@@ -186,8 +189,25 @@ class Plots:
         self.doi_cb(retain = False)
         self.flood_cb()
 
+    def create_lut_borders(self):
+        lut = None
+        if self.overlay_lut.get() and self.output_dir:
+            try:
+                blk = self.get_block()
+                lut_fname = os.path.join(self.output_dir, f'block{blk}.lut')
+                lut = np.fromfile(lut_fname, np.intc).reshape((512,512))
+                yd = np.diff(lut, axis = 0, prepend = lut.max()) != 0
+                xd = np.diff(lut, axis = 1, prepend = lut.max()) != 0
+                lut = np.logical_or(xd, yd)
+            except Exception as e:
+                lut = None
+        return lut
+
     def flood_cb(self):
         """ Update the flood according to energy and DOI thresholds """
+        if self.d is None: return
+        lut = self.create_lut_borders()
+
         eth = self.energy.thresholds()
         dth = self.doi.thresholds()
 
@@ -197,7 +217,9 @@ class Plots:
                        (dth[0] < doi) & (doi < dth[1]))[0]
 
         self.flood.update(self.d[idx,2], self.d[idx,3],
-                smoothing = 1.5, warp = self.transform_flood.get())
+                          warp = self.transformation_matrix,
+                          overlay = lut,
+                          voronoi = self.show_voronoi.get())
 
     def doi_cb(self, retain = True):
         """ Update the DOI according to the energy thresholds """
@@ -238,14 +260,15 @@ class Plots:
         blk = self.get_block()
         print(f'Store LUT for block {blk}')
 
-        """ store the LUT for this block to the specified directory """
+        # store the LUT for this block to the specified directory
         lut_fname = os.path.join(output_dir, f'block{blk}.lut')
         lut = nearest_peak((self.flood.img_size,)*2,
                 self.flood.pts.reshape(-1,2))
         lut = self.flood.f.warp_lut(lut)
         lut.astype(np.intc).tofile(lut_fname)
+        self.transformation_matrix = None
 
-        """ update json file with photopeak position for this block """
+        # update json file with photopeak position for this block
         config_file = os.path.join(output_dir, 'config.json')
 
         try:
@@ -253,41 +276,41 @@ class Plots:
                 cfg = json.load(f)
         except FileNotFoundError: cfg = {}
 
-        if blk not in cfg: cfg[blk] = {}
-        cfg[blk]['block'] = round(self.energy.peak)
+        """
+        - block
+            - photopeak
+            - FWHM
+            - crystal
+                - energy
+                    - photopeak
+                    - FWHM 
+                - DOI
+                    - thresholds
+        """
 
-        """ if requested, add the photopeak position for each LUT value """
-        if self.save_xtal_photopeak.get():
-            # create df grouped by LUT number
+        cfg[blk] = {}
+        blk_vals = cfg[blk]
+        blk_vals['crystal'] = {}
+        xtal_vals = blk_vals['crystal']
 
-            lut_df = pd.DataFrame({
-                'x'  : np.tile(np.arange(lut.shape[1]), lut.shape[0]),
-                'y'  : np.repeat(np.arange(lut.shape[0]), lut.shape[1]),
-                'lut': lut.flat
-            })
+        peak, fwhm, *_ = crystal.fit_photopeak(
+                n = self.energy.counts, bins = self.energy.bins[:-1])
 
-            lm_df = pd.DataFrame(self.d, columns = ['es', 'doi', 'x', 'y'])
-            lm_df = lm_df.merge(lut_df, on = ['x', 'y'])
-            lm_df = lm_df.groupby(['lut'])
+        blk_vals['photopeak'] = peak
+        blk_vals['FWHM'] = fwhm 
 
-            # find the photopeak for each crystal
-            def get_photopeak(grp):
-                n,bins = np.histogram(grp['es'].values, bins = 100,
-                        range = np.quantile(grp['es'].values, [0, 0.95]))
-                return round(bins[np.argmax(bins[:-1] * n**2)])
-
-            pks = lm_df.apply(get_photopeak)
-
-            # record the crystal photopeak
-            for lut,pk in pks.iteritems():
-                cfg[blk][str(lut)] = pk
+        pks = crystal.calculate_lut_statistics(lut, self.d)
+        for (lut,_), row in pks.iterrows():
+            this_xtal = {}
+            xtal_vals[lut] = this_xtal
+            this_xtal['energy'] = {'photopeak': row['peak'], 'FWHM': row['FWHM']}
+            this_xtal['DOI'] = row[['5mm','10mm','15mm']].tolist()
 
         # save the config file
         with open(config_file, 'w') as f:
             json.dump(cfg, f)
 
-        """ increment the active block and update the UI """
-
+        # increment the active block and update the UI
         all_blks = self.get_block(all_blocks = True)
         try: 
             self.set_block(all_blks.index(blk) + 1)

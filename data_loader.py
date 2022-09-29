@@ -250,14 +250,17 @@ class CoincidenceProfilePlot(tk.Toplevel):
 
         self.ev_rate = self.ev_per_period / np.diff(self.times)
 
+        """
         k_samples = 12
         kernel = np.ones(k_samples) / k_samples
         padded = np.concatenate((np.repeat(self.ev_rate[0],  k_samples/2),
                                  self.ev_rate,
                                  np.repeat(self.ev_rate[-1], k_samples/2)))
         self.ev_rate = np.convolve(padded, kernel, mode = 'valid')
+        """
 
-        self.plt.plot(self.times, self.ev_rate)
+        self.plt.plot(self.times[:-1], self.ev_rate)
+        self.plt.grid()
         self.canvas.draw()
 
     """ Methods for moving the cursors to select a time span """

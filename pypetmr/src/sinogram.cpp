@@ -56,29 +56,21 @@ void PhotopeakLookupTable::load(std::string base_dir)
     std::ifstream(cfg_file) >> cfg;
 
     // iterate over each block in the json file
-    for (auto &[blk, values]: cfg.items())
+    for (auto &[blk, blk_values]: cfg.items())
     {
         size_t blk_num = std::stoi(blk);
-
         if (blk_num >= Single::nblocks)
             continue;
 
-        double blk_ppeak = -1;
+        double blk_ppeak = blk_values["photopeak"];
 
-        // iterate over each item within the block
-        for (auto &[elem, ppeak]: values.items())
+        for (auto &[crystal, xtal_values]: blk_values["crystal"].items())
         {
-            // record the block photopeak
-            if (elem == "block" || elem == "photopeak")
+            size_t xtal_num = std::stoi(crystal);
+            if (xtal_num < Geometry::ncrystals_total)
             {
-                blk_ppeak = ppeak;
-            }
-            else
-            {
-                // record the crystal photopeak
-                size_t xtal_num = std::stoi(elem);
-                if (xtal_num < Geometry::ncrystals_total)
-                    photopeaks[blk_num][xtal_num] = ppeak;
+                double xtal_ppeak = xtal_values["energy"]["photopeak"];
+                photopeaks[blk_num][xtal_num] = xtal_ppeak;
             }
         }
 

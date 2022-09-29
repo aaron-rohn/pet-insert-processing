@@ -5,6 +5,11 @@ from scipy.spatial import Voronoi, voronoi_plot_2d, KDTree
 import pyelastix
 import matplotlib.pyplot as plt
 
+import tkinter as tk
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure, SubplotParams
+from matplotlib.patches import Circle
+
 def nearest_peak(shape, pks):
     tree = KDTree(pks)
     x,y = [np.arange(l) for l in shape]
@@ -20,20 +25,13 @@ def sort_polar(points):
     return points[np.argsort(acos)]
 
 class Flood:
-    def __init__(self, f, ksize = 1.5, warp = False):
-        self.fld = np.copy(f).astype(np.float64)
+    def __init__(self, flood, warp = None):
+        self.fld = np.copy(flood).astype(np.float64)
 
         self.field = None # 2d nonrigid deformation field
-
-        # warp flood to rectangle
-        self.transformation_matrix = None
-        self.warped = False
-        if warp:
-            try:
-                self.fld, self.transformation_matrix = self.apply_warp(self.fld)
-                self.warped = True
-            except RuntimeError as e:
-                print(f'Failed to warp flood: {e}')
+        self.warp = warp # perspective transform matrix
+        if self.warp is not None:
+            self.fld = cv.warpPerspective(self.fld, self.warp, self.fld.shape)
 
         # remove the background
         blur = ndimage.gaussian_filter(self.fld, 5)
@@ -44,7 +42,7 @@ class Flood:
         self.fld[mask] = 0
 
         # log filter and normalize
-        self.fld = ndimage.gaussian_laplace(self.fld, ksize)
+        self.fld = ndimage.gaussian_laplace(self.fld, 1.5)
         self.fld /= np.min(self.fld)
         self.fld[self.fld < 0] = 0
 
@@ -58,65 +56,11 @@ class Flood:
         filt = ndimage.median_filter(self.fld, 5)
         self.fld = np.where(self.fld < q, self.fld, filt)
 
-    def apply_warp(self, f):
-        """ Warping the flood tries to apply a perspective transform to
-        make the flood nearly rectangular. This is used to compensate for
-        gain differences between the readout channels, and should be the
-        first step in processing. The inverse warp should be applied to the
-        LUT before saving it.
-        """
-        gaussian_filter_sigma = 10
-        binary_mask_threshold = 10
-        contour_threshold = 50
-
-        blur = ndimage.gaussian_filter(f, gaussian_filter_sigma)
-        blur = cv.convertScaleAbs(blur, alpha = 255.0/blur.max())
-
-        mask = (blur > binary_mask_threshold).astype(np.uint8)
-        ctor, hier = cv.findContours(mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
-
-        for _ in range(10):
-            ctor_approx = cv.approxPolyDP(ctor[0], contour_threshold, True)
-            nvertex = ctor_approx.shape[0]
-
-            if nvertex == 4:
-                break
-            elif nvertex > 4:
-                contour_threshold += 5
-            elif nvertex < 4:
-                contour_threshold -= 5
-
-            print(f'contour threshold: {contour_threshold}')
-
-        else:
-            raise RuntimeError('Could not find approximate bounding rectangle')
-
-        ctor_approx = ctor_approx.squeeze()
-        cmin, rmin  = ctor_approx.min(0)
-        cmax, rmax  = ctor_approx.max(0)
-        ctor_target = np.array([[cmin,rmin], [cmin,rmax], [cmax,rmax], [cmax,rmin]])
-
-        ctor_approx = sort_polar(ctor_approx)
-        ctor_target = sort_polar(ctor_target)
-
-        idx = np.argwhere((ctor_target == [cmin,rmin]).all(1)).flatten()[0]
-        ctor_approx = np.roll(ctor_approx, idx)
-        ctor_target = np.roll(ctor_target, idx)
-
-        mat = cv.getPerspectiveTransform(
-                ctor_approx.astype(np.float32), ctor_target.astype(np.float32))
-
-        f_out = cv.warpPerspective(f, mat, f.shape)
-        return f_out, mat
-
     def warp_lut(self, lut):
-        """ If the flood was warped before processing, apply the inverse warp
-        to the LUT before saving.
-        """
-        if self.transformation_matrix is None:
+        if self.warp is None:
             return lut
         else:
-            return cv.warpPerspective(lut, self.transformation_matrix, lut.shape,
+            return cv.warpPerspective(lut, self.warp, lut.shape,
                     flags = cv.WARP_INVERSE_MAP | cv.INTER_NEAREST,
                     borderMode = cv.BORDER_CONSTANT, borderValue = int(lut.max()))
 
@@ -166,7 +110,6 @@ class Flood:
         else:
             return cv.remap(lut, self.field[0], self.field[1], cv.INTER_NEAREST,
                     borderMode = cv.BORDER_CONSTANT, borderValue = int(lut.max()))
-
 
     def edges(self, f, axis = 0, qtl = [0.02, 0.98]):
         p = np.sum(f, axis)
@@ -229,7 +172,6 @@ class Flood:
 
         pks = lpk + [center_pk_idx] + rpk
         pks.sort()
-
         return pks
 
     def estimate_peaks(self):
@@ -237,3 +179,99 @@ class Flood:
         cols = self.find_1d_peaks(0)
         pks = np.array(np.meshgrid(cols,rows)).reshape(2, len(rows)*len(cols))
         return pks
+
+class PerspectiveTransformDialog(tk.Toplevel):
+    def __init__(self, root, flood, callback):
+        super().__init__(root)
+        self.title('Perspective Transform')
+        self.attributes('-type', 'dialog')
+
+        self.fig = Figure(subplotpars = SubplotParams(0,0,1,1))
+        self.plot = self.fig.add_subplot(frame_on = False)
+        self.canvas = FigureCanvasTkAgg(self.fig, master = self)
+        self.canvas.get_tk_widget().config(bd = 3, relief = tk.GROOVE)
+        self.canvas.draw()
+
+        self.button_frame = tk.Frame(self)
+        self.preview_button = tk.Button(self, text = 'Preview', command = self.preview)
+        self.revert_button = tk.Button(self, text = 'Revert', command = self.revert)
+        self.apply_button = tk.Button(self, text = 'Apply', command = self.apply)
+        self.close_button = tk.Button(self, text = 'Close', command = self.destroy)
+
+        self.canvas.get_tk_widget().pack(side = tk.TOP, fill = tk.BOTH, expand = True)
+        self.button_frame.pack()
+        self.preview_button.pack(side = tk.LEFT)
+        self.revert_button.pack(side = tk.LEFT)
+        self.apply_button.pack(side = tk.LEFT)
+        self.close_button.pack(side = tk.LEFT)
+
+        self.canvas.mpl_connect('button_press_event', self.drag_start)
+        self.canvas.mpl_connect('button_release_event', self.drag_stop)
+
+        x0 = 20
+        x1 = 511 - x0
+        self.default_points = np.array(
+                [[x0,x0],[x0,x1],[x1,x1],[x1,x0]])
+        self.points = [Circle(pt, 4, zorder = 10) for pt in self.default_points]
+        self.flood = flood
+        self.revert()
+        self.active_point = None
+        self.mat = None
+        self.callback = callback
+
+    def get_points(self):
+        return np.array([pt.center for pt in self.points])
+
+    def drag_start(self, ev):
+        self.connection = self.canvas.mpl_connect('motion_notify_event', self.cursor_set)
+        pt_centers = self.get_points()
+        pt = np.array([ev.xdata, ev.ydata])
+        dst = np.linalg.norm(pt_centers - pt, axis = 1)
+        self.active_point = self.points[np.argmin(dst)]
+
+    def drag_stop(self, ev):
+        self.canvas.mpl_disconnect(self.connection)
+        self.active_point = None
+
+    def cursor_set(self, ev):
+        if self.active_point is not None:
+            self.active_point.set(center = [ev.xdata,ev.ydata])
+            self.canvas.draw()
+
+    def apply(self):
+        self.preview()
+        self.callback(self.mat)
+        self.destroy()
+
+    def preview(self):
+        pts = self.get_points()
+        xmin, ymin  = pts.min(0)
+        xmax, ymax  = pts.max(0)
+        target = np.array([[xmin,ymin], [xmin,ymax], [xmax,ymax], [xmax,ymin]])
+
+        self.mat = cv.getPerspectiveTransform(
+                pts.astype(np.float32), target.astype(np.float32))
+        warped_flood = cv.warpPerspective(self.flood, self.mat, self.flood.shape)
+
+        self.plot.clear()
+        self.plot.imshow(warped_flood, aspect = 'auto', zorder = 0)
+        self.plot.invert_yaxis()
+        self.plot.set_xlim(0,511)
+        self.plot.set_ylim(0,511)
+        self.canvas.draw()
+
+        self.preview_button.config(state = tk.DISABLED)
+        self.revert_button.config(state = tk.NORMAL)
+
+    def revert(self):
+        self.plot.clear()
+        self.plot.imshow(self.flood, aspect = 'auto', zorder = 0)
+        [self.plot.add_patch(pt) for pt in self.points]
+        self.plot.invert_yaxis()
+        self.plot.set_xlim(0,511)
+        self.plot.set_ylim(0,511)
+        self.canvas.draw()
+
+        self.preview_button.config(state = tk.NORMAL)
+        self.revert_button.config(state = tk.DISABLED)
+

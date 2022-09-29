@@ -1,6 +1,7 @@
+import copy, matplotlib
 import numpy as np
 import tkinter as tk
-import flood as fld
+from flood import Flood
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure, SubplotParams
 from scipy.spatial import Voronoi, voronoi_plot_2d
@@ -22,6 +23,8 @@ class FloodHist:
         self.selection = None
         self.pts = None
         self.pts_active = None
+        self.overlay = None
+        self.voronoi = True
 
         self.canvas.mpl_connect('button_press_event', self.click)
 
@@ -42,6 +45,7 @@ class FloodHist:
             self.pts.sort(0)
             self.pts.sort(1)
             self.selection = None
+            self.register()
 
         self.redraw()
 
@@ -82,16 +86,20 @@ class FloodHist:
         self.plot.clear()
         self.plot.imshow(self.f.fld, aspect = 'auto')
 
+        if self.overlay is not None:
+            self.plot.imshow(self.overlay, aspect = 'auto', alpha = 0.5)
+
         if self.pts is not None:
             active = self.pts[self.pts_active].T
             inactive = self.pts[~self.pts_active].T
 
-            vor = Voronoi(self.pts.reshape(-1,2))
-            voronoi_plot_2d(vor, ax = self.plot, 
-                    show_vertices = False, 
-                    show_points = False, 
-                    line_colors = 'grey',
-                    line_alpha = 0.5)
+            if self.voronoi:
+                vor = Voronoi(self.pts.reshape(-1,2))
+                voronoi_plot_2d(vor, ax = self.plot, 
+                        show_vertices = False, 
+                        show_points = False, 
+                        line_colors = 'grey',
+                        line_alpha = 0.5)
 
             self.plot.plot(*active, '.b', *inactive, '.r', ms = 2)
 
@@ -105,31 +113,31 @@ class FloodHist:
         """ Apply a deformable 2D registration to the current point set
         based on the loaded flood.
         """
-
         if self.pts is None: return
-
         self.pts = self.pts.reshape(self.npts*self.npts, 2)
         self.pts = self.f.register_peaks(self.pts)
         self.pts = self.pts.reshape(self.npts, self.npts, 2)
-        self.redraw()
 
-    def update(self, x, y, smoothing, warp):
+    def update(self, x, y, warp = None, overlay = None, voronoi = True):
         # First coord -> rows -> y
         # Second coord -> cols -> x
         self.img, *_ = np.histogram2d(y, x, bins = self.img_size,
                 range = [[0,self.img_size-1],[0,self.img_size-1]])
 
-        self.f = fld.Flood(self.img, smoothing, warp)
+        self.f = Flood(self.img, warp)
 
         try:
             self.pts = self.f.estimate_peaks()
             self.pts = self.pts.T.reshape(self.npts, self.npts, 2)
+            self.register()
         except RuntimeError as e:
-            # Failed to find sufficient peaks - smoothing may be too high
+            # Failed to find sufficient peaks
             print(repr(e))
             self.pts = None
 
         self.pts_active = np.zeros((self.npts, self.npts), dtype = bool)
+        self.voronoi = voronoi
+        self.overlay = overlay
         self.redraw()
 
 class ThresholdHist:
@@ -139,6 +147,9 @@ class ThresholdHist:
         rng = np.quantile(data, [0.01, 0.99])
         nbins = int(round((rng[1] - rng[0]) / 10))
         n,bins,_ = self.plot.hist(data, bins = nbins, range = rng)
+
+        self.counts = n
+        self.bins = bins
 
         # search for the photopeak
         self.peak = (
@@ -186,7 +197,7 @@ class ThresholdHist:
 
     def __init__(self, frame, is_energy, **kwargs):
         self.is_energy = is_energy
-        self.e_window = 0.4
+        self.e_window = 0.2
         self.peak = 0
 
         self.fig = Figure()

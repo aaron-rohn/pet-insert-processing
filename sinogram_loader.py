@@ -2,11 +2,6 @@ import threading, queue, petmr
 import tkinter as tk
 from tkinter.ttk import Progressbar
 
-def sort_sinogram(*args):
-    try:
-        petmr.sort_sinogram(*args)
-    except RuntimeError as e:
-        data.put(e)
 
 class SinogramLoaderPopup:
     def __init__(self, root, callback, fname, cfgdir):
@@ -23,7 +18,7 @@ class SinogramLoaderPopup:
         self.data_queue = queue.Queue()
         self.stat_queue = queue.Queue()
 
-        self.bg = threading.Thread(target = sort_sinogram, 
+        self.bg = threading.Thread(target = self.sort_sinogram, 
                 args = [fname, 
                         cfgdir,
                         self.terminate,
@@ -51,3 +46,9 @@ class SinogramLoaderPopup:
             else:
                 self.callback(RuntimeError("Sinogram sorting failed"))
             self.popup.destroy()
+
+    def sort_sinogram(self, *args):
+        try:
+            petmr.sort_sinogram(*args)
+        except RuntimeError as e:
+            self.data_queue.put(e)

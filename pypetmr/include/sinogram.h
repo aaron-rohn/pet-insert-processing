@@ -38,7 +38,7 @@ class Geometry
 
     static inline int ring(int blk, int xtal)
     {
-        int row = xtal / ncrystals;
+        int row = ncrystals - (xtal / ncrystals) - 1;
         int blk_ax = blk % nblocks_axial;
         return row + (ncrystals + ncrystals_axial_gap)*blk_ax;
     }
@@ -82,8 +82,7 @@ class PhotopeakLookupTable
     PhotopeakLookupTable():
         photopeaks(std::vector<std::vector<double>> (
                     Single::nblocks,
-                    std::vector<double>(
-                        Geometry::ncrystals_total, -1))) {};
+                    std::vector<double>(Geometry::ncrystals_total, -1))) {};
 
     void load(std::string);
     static std::string find_cfg_file(std::string);

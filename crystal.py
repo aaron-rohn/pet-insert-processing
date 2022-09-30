@@ -49,7 +49,7 @@ def get_doi(doi):
     bins = bins[:-1]
     n, bins = n[::-1], bins[::-1]
 
-    n = np.cumsum(n).astype(np.float64)
+    n = np.cumsum(n).astype(float)
     n = n / n[-1] * doi_quantiles[-1]
     thresholds = np.interp(doi_quantiles[:-1], n, bins)
     return thresholds.round(1)

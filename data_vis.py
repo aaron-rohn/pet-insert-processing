@@ -48,12 +48,12 @@ class FileSelector(tk.Frame):
         self.sort_coin_button.config(state = state) 
         self.validate_button.config(state = state)
 
-    def callback_wrapper(self, response):
+    def callback_wrapper(self, response, *args, **kwds):
         self.cfg_buttons(tk.NORMAL)
         if isinstance(response, Exception):
             tk.messagebox.showerror(message = f'{response}')
         else:
-            self.callback(response)
+            self.callback(response, *args, **kwds)
 
     def loader_wrapper(self, loader):
         self.cfg_buttons(tk.DISABLED)
@@ -104,17 +104,18 @@ class ScrolledListbox(tk.Frame):
         self.active.bind('<<ListboxSelect>>', new_block_cb)
 
 class App(ttk.Notebook):
-    def collect_data(self, d):
+    def collect_data(self, d, scaling = 1):
         def fmt(num):
             n = math.log10(num) // 3
             suffix = ['', 'K', 'M'][int(n)]
             return f'{round(num / 10**(n*3), 1)}{suffix}'
 
+        self.scaling = scaling
         self.d = d
         self.block.set([f'{a}  -  {fmt(b.shape[0])}' for a,b in d.items()])
 
     def return_data(self, block):
-        return self.d[block]
+        return self.d[block], self.scaling
     
     def return_block(self, all_blocks = False):
         return self.block.get_active(all_blocks)

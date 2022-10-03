@@ -153,9 +153,9 @@ class Michelogram: Geometry
     inline Sinogram& operator() (int h, int v){ return m[v*nring + h]; };
 
     std::tuple<bool, int, int, int, int> event_to_coords(
-            const CoincidenceData&);
+            const CoincidenceData&, double);
 
-    void add_event(const CoincidenceData&);
+    void add_event(const CoincidenceData&, double=1.0);
     void write_event(std::ofstream&, const CoincidenceData&);
     void write_to(std::string);
     void read_from(std::string);
@@ -166,7 +166,8 @@ class Michelogram: Geometry
         m(std::vector<Sinogram> (nring*nring, Sinogram(dt))) {};
 
     std::streampos sort_span(
-            std::string, std::streampos, std::streampos);
+            std::string, std::streampos, std::streampos,
+            double const*, uint64_t const*, size_t);
 
     class Iterator
     {

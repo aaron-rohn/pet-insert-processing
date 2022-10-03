@@ -348,12 +348,38 @@ petmr_sort_sinogram(PyObject *self, PyObject *args)
 {
     const char *fname, *cfg_dir;
     PyObject *terminate, *status_queue, *data_queue;
-    if (!PyArg_ParseTuple(args, "ssOOO",
-                &fname,
-                &cfg_dir,
+    PyArrayObject *scaling, *fpos;
+    if (!PyArg_ParseTuple(args, "ssOOOOO",
+                &fname, &cfg_dir,
+                &scaling, &fpos,
                 &terminate,
                 &status_queue,
                 &data_queue)) return NULL;
+
+    if (PyArray_NDIM(scaling) != 1 || PyArray_NDIM(fpos) != 1)
+    {
+        PyErr_SetString(PyExc_RuntimeError, "Wrong number of dimensions for scaling array");
+        return NULL;
+    }
+
+    if (PyArray_TYPE(scaling) != NPY_DOUBLE || PyArray_TYPE(fpos) != NPY_ULONGLONG)
+    {
+        PyErr_SetString(PyExc_RuntimeError, "Wrong data type for scaling array");
+        return NULL;
+    }
+
+    npy_intp *scaling_shape, *fpos_shape;
+    scaling_shape = PyArray_DIMS(scaling);
+    fpos_shape = PyArray_DIMS(fpos);
+
+    if (scaling_shape[0] != fpos_shape[0])
+    {
+        PyErr_SetString(PyExc_RuntimeError, "Size of scaling and time arrays are different");
+        return NULL;
+    }
+
+    double *scaling_array = (double*)PyArray_DATA(scaling);
+    uint64_t *fpos_array = (uint64_t*)PyArray_DATA(fpos);
 
     PyThreadState *_save = PyEval_SaveThread();
 
@@ -393,7 +419,8 @@ petmr_sort_sinogram(PyObject *self, PyObject *args)
             }
 
             workers.push_back(std::async(std::launch::async,
-                &Michelogram::sort_span, &m, fname, start, end));
+                &Michelogram::sort_span, &m, fname, start, end,
+                scaling_array, fpos_array, scaling_shape[0]));
 
             start = end;
         }

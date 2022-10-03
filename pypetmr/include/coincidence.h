@@ -3,6 +3,7 @@
 
 #include <queue>
 #include <future>
+#include <algorithm>
 #include <Python.h>
 #include <numpy/ndarraytypes.h>
 #include <numpy/arrayobject.h>
@@ -60,6 +61,14 @@ struct CoincidenceData
     
     inline std::tuple<uint16_t,uint16_t,uint16_t,uint16_t> pos() const
     { return std::make_tuple(x_a(),y_a(),x_b(),y_b()); };
+
+    // rescale value must be <=1.0
+    static uint16_t rescale(uint16_t val, double scale, double offset = 255.0)
+    { return std::round(((double)val - offset)*scale + offset); }
+
+    std::tuple<uint16_t,uint16_t,uint16_t,uint16_t> pos_scaled(double scale) const
+    { return std::make_tuple(rescale(x_a(), scale), rescale(y_a(), scale),
+                             rescale(x_b(), scale), rescale(y_b(), scale)); }
 };
 
 void find_tt_offset(

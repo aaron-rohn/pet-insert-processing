@@ -8,12 +8,17 @@ from tkinter.ttk import Progressbar
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure, SubplotParams
 
+import matplotlib.pyplot as plt
+
 singles_filetypes = [("Singles",".SGL")]
 coincidence_filetypes = [("Coincidences",".COIN")]
 
 n_doi_bins = 4096
 max_events = int(1e9)
 coincidence_cols = 11
+
+scaling_nevents = 150e3
+scaling_factor  = 0.05
 
 class ProgressPopup(tk.Toplevel):
     def __init__(self, stat_queue, data_queue, terminate, callback):
@@ -210,7 +215,7 @@ class CoincidenceProfilePlot(tk.Toplevel):
         self.set_title()
 
     def on_close(self):
-        self.callback({})
+        #self.callback({})
         self.destroy()
 
     def set_title(self, status = None):
@@ -231,33 +236,13 @@ class CoincidenceProfilePlot(tk.Toplevel):
         for i in rollover:
             self.times[i+1:] += 2**16
 
-        """
-        time_span = t[-1] - t[0]
-        time_span_sec = time_span / 10
-
-        if time_span_sec < 10:
-            sec_to_avg = 0.1
-        elif time_span_sec < 100:
-            sec_to_avg = 1.0
-        else:
-            sec_to_avg = 10.0
-
-        self.ev_per_period = int(nevents / time_span_sec * sec_to_avg)
-        """
-
         self.lims = (self.times[0], self.times[-1])
         self.init_lines(self.lims)
 
         self.ev_rate = self.ev_per_period / np.diff(self.times)
 
-        """
-        k_samples = 12
-        kernel = np.ones(k_samples) / k_samples
-        padded = np.concatenate((np.repeat(self.ev_rate[0],  k_samples/2),
-                                 self.ev_rate,
-                                 np.repeat(self.ev_rate[-1], k_samples/2)))
-        self.ev_rate = np.convolve(padded, kernel, mode = 'valid')
-        """
+        # The scaling reflects the expansion of the flood due to count rate
+        self.scaling = 1 - (self.ev_rate / scaling_nevents * scaling_factor)
 
         self.plt.plot(self.times[:-1], self.ev_rate)
         self.plt.grid()
@@ -306,13 +291,16 @@ class CoincidenceProfilePlot(tk.Toplevel):
             self.set_title()
             self.load_button.config(state = tk.NORMAL)
             self.save_button.config(state = tk.NORMAL)
-            self.callback(self.block_files)
+            self.callback(self.block_files, self.current_scaling)
 
     def load(self):
         start, end = sorted([l.get_xdata()[0] for l in self.lines])
         print(f'Load from {round(start/10)}s to {round(end/10)}s')
 
-        start, end = np.searchsorted(self.times, [start,end]) * self.ev_per_period
+        start_end = np.searchsorted(self.times, [start,end])
+        self.current_scaling = self.scaling[start_end[0]]
+        start, end = start_end * self.ev_per_period
+
         data_subset = self.data[start:end,:]
         nev = data_subset.shape[0]
 

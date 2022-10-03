@@ -1,7 +1,31 @@
-import threading, queue, petmr
+import os, threading, queue, petmr
 import tkinter as tk
 from tkinter.ttk import Progressbar
+import numpy as np
+import matplotlib.pyplot as plt
 
+from data_loader import coincidence_cols, scaling_nevents, scaling_factor
+
+def read_times(fname, nperiods = 500):
+    sz = os.path.getsize(fname)
+    nrow = int((sz/2) // coincidence_cols)
+    data = np.memmap(fname, np.uint16, shape = (nrow, coincidence_cols))
+
+    t = data[:,10]
+    nevents = t.shape[0]
+
+    ev_per_period = int(nevents / nperiods)
+    times = data[::ev_per_period,10].astype(np.double)
+
+    rollover = np.diff(times)
+    rollover = np.where(rollover < 0)[0]
+    for i in rollover:
+        times[i+1:] += 2**16
+
+    ev_rate = ev_per_period / np.diff(times)
+    scaling = 1 - (ev_rate / scaling_nevents * scaling_factor)
+    fpos = np.linspace(0, sz, len(scaling), dtype = np.ulonglong)
+    return scaling, fpos
 
 class SinogramLoaderPopup:
     def __init__(self, root, callback, fname, cfgdir):
@@ -18,9 +42,10 @@ class SinogramLoaderPopup:
         self.data_queue = queue.Queue()
         self.stat_queue = queue.Queue()
 
+        scaling, fpos = read_times(fname)
         self.bg = threading.Thread(target = self.sort_sinogram, 
-                args = [fname, 
-                        cfgdir,
+                args = [fname, cfgdir,
+                        scaling, fpos,
                         self.terminate,
                         self.stat_queue,
                         self.data_queue])

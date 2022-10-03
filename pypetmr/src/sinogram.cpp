@@ -84,14 +84,15 @@ void PhotopeakLookupTable::load(std::string base_dir)
 }
 
 std::tuple<bool, int, int, int, int>
-Michelogram::event_to_coords(const CoincidenceData& c)
+Michelogram::event_to_coords(const CoincidenceData& c, double scaling)
 {
     static const auto invalid_ev =
         std::make_tuple(false, -1, -1, -1, -1);
 
     // Lookup crystal index
     auto [ba, bb] = c.blk();
-    auto [pos_xa, pos_ya, pos_xb, pos_yb] = c.pos();
+    auto [pos_xa, pos_ya, pos_xb, pos_yb] = c.pos_scaled(scaling);
+
     int xa = lut(ba, pos_ya, pos_xa), xb = lut(bb, pos_yb, pos_xb);
     if (xa >= ncrystals_total || xb >= ncrystals_total)
         return invalid_ev;
@@ -106,9 +107,9 @@ Michelogram::event_to_coords(const CoincidenceData& c)
     return std::make_tuple(true, ra, rb, idxa, idxb);
 }
 
-void Michelogram::add_event(const CoincidenceData &c)
+void Michelogram::add_event(const CoincidenceData &c, double scaling)
 {
-    auto [valid, ra, rb, idxa, idxb] = event_to_coords(c);
+    auto [valid, ra, rb, idxa, idxb] = event_to_coords(c, scaling);
 
     if (valid)
     {
@@ -118,7 +119,7 @@ void Michelogram::add_event(const CoincidenceData &c)
 
 void Michelogram::write_event(std::ofstream &f, const CoincidenceData &c)
 {
-    auto [valid, ra, rb, idxa, idxb] = event_to_coords(c);
+    auto [valid, ra, rb, idxa, idxb] = event_to_coords(c, 1.0);
 
     if (valid)
     {
@@ -196,19 +197,45 @@ PyObject *Michelogram::to_py_data()
     return arr;
 }
 
+size_t searchsorted(uint64_t const *arr, uint64_t val, size_t arr_size)
+{
+    for (size_t i = 1; i < arr_size; i++)
+        if (arr[i] > val) return i;
+    return arr_size;
+}
+
 std::streampos Michelogram::sort_span(
         std::string fname,
         std::streampos start,
-        std::streampos end
+        std::streampos end,
+        double const *scaling,
+        uint64_t const *fpos,
+        size_t array_size
 ) {
     CoincidenceData c;
     std::ifstream f(fname, std::ios::binary);
     f.seekg(start);
 
-    while (f.good() && f.tellg() < end)
+    double scale_factor = scaling[0];
+    size_t idx = 0;
+    uint16_t last_time = 0xFFFF, curr_time = 0;
+
+    while (f.good())
     {
+        std::streampos cpos = f.tellg();
+        if (cpos >= end) break;
+
         f.read((char*)&c, sizeof(c));
-        add_event(c);
+
+        curr_time = c.abstime();
+        if (curr_time != last_time)
+        {
+            idx = searchsorted(fpos, cpos, array_size);
+            scale_factor = scaling[idx-1];
+        }
+
+        add_event(c, scale_factor);
+        last_time = curr_time;
     }
 
     return f.tellg();

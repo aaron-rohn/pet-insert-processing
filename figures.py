@@ -132,11 +132,23 @@ class FloodHist(MPLFigure):
         self.pts = self.pts.reshape(self.npts, self.npts, 2)
         self.redraw()
 
-    def update(self, x, y, warp = None, overlay = None, voronoi = True):
+    def update(self, x, y, scaling, warp = None, overlay = None, voronoi = True):
         # First coord -> rows -> y
         # Second coord -> cols -> x
+        y = round((y.astype(float) - 255)*scaling + 255).astype(np.uint16)
+        x = round((x.astype(float) - 255)*scaling + 255).astype(np.uint16)
+
         self.img, *_ = np.histogram2d(y, x, bins = self.img_size,
                 range = [[0,self.img_size-1],[0,self.img_size-1]])
+
+        """
+        shape_in = self.img.shape
+        self.img = ndimage.zoom(self.img, scaling)
+        shape_out = self.img.shape
+        lpads = [int((a - b)/2) for a,b in zip(shape_in, shape_out)]
+        rpads = [a - b for a,b in zip(shape_in, lpads)]
+        self.img = np.pad(self.img, list(zip(lpads, rpads)))
+        """
 
         self.f = Flood(self.img, warp)
 
@@ -296,7 +308,7 @@ class Plots(tk.Frame):
         """ Update all plots when new data is available """
         self.transformation_matrix = None
         blk = self.return_block()
-        self.d = self.return_data(blk)
+        self.d, self.scaling = self.return_data(blk)
 
         self.energy.update(self.d[:,0], retain = False)
         self.doi_cb(retain = False)
@@ -331,7 +343,8 @@ class Plots(tk.Frame):
         idx = np.where((eth[0] < es) & (es < eth[1]) &
                        (dth[0] < doi) & (doi < dth[1]))[0]
 
-        self.flood.update(self.d[idx,2], self.d[idx,3],
+        x, y = self.d[idx,2], self.d[idx,3]
+        self.flood.update(x, y, self.scaling,
                           warp = self.transformation_matrix,
                           overlay = lut,
                           voronoi = self.show_voronoi.get())

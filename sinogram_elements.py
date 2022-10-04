@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from scipy import ndimage
 import petmr
 from data_loader import coincidence_filetypes
-from sinogram_loader import SinogramLoaderPopup
+from sinogram_loader import SinogramLoaderPopup, read_times
 
 class SinogramDisplay:
     def __init__(self, root):
@@ -131,7 +131,8 @@ class SinogramDisplay:
             self.ldr = None
 
         self.ldr = SinogramLoaderPopup(self.root,
-                sorting_callback, fname, cfgdir)
+                sorting_callback, petmr.sort_sinogram,
+                fname, cfgdir)
 
     def load_sinogram(self):
         fname = tk.filedialog.askopenfilename(
@@ -154,17 +155,6 @@ class SinogramDisplay:
 
         petmr.save_sinogram(fname, self.sino_data)
 
-        """
-        # Michelogram ordering parameters for interfile header
-        nring = self.sino_data.shape[0]
-        span_len = [nring] + list(np.repeat(np.arange(nring-1, 0, -1), 2))
-        pos_rd = np.arange(1, nring)
-        rd = np.zeros(pos_rd.size*2 + 1, int)
-        rd[1::2] = pos_rd
-        rd[2::2] = -pos_rd
-        rd = list(rd)
-        """
-
     def save_listmode(self):
         fname = tk.filedialog.askopenfilename(
                 title = "Select coincidence file",
@@ -172,19 +162,22 @@ class SinogramDisplay:
                 filetypes = coincidence_filetypes)
         if not fname: return
         base = os.path.dirname(fname)
+        parent = os.path.dirname(base)
 
         cfgdir = tk.filedialog.askdirectory(
                 title = "Select configuration directory",
-                initialdir = base)
+                initialdir = parent)
         if not cfgdir: return
 
         lmfname = tk.filedialog.asksaveasfilename(
                 title = "Save listmode file",
-                initialdir = base,
+                initialdir = parent,
                 filetypes = [("Listmode file", ".lm")])
         if not lmfname: return
-        
-        petmr.save_listmode(fname, lmfname, cfgdir)
+
+        self.ldr = SinogramLoaderPopup(self.root,
+                None, petmr.save_listmode,
+                fname, cfgdir, lmfname)
 
     def create_norm(self):
         fnames = tk.filedialog.askopenfilenames(

@@ -58,6 +58,11 @@ struct CoincidenceData
 
     inline std::tuple<uint16_t,uint16_t> e_sum() const
     { return std::make_tuple(e_aF()+e_aR(), e_bF()+e_bR()); };
+
+    inline std::tuple<double,double> doi(double scale = 4096.0) const
+    { return std::make_tuple(
+            (double)e_aF() / (e_aF() + e_aR()) * scale,
+            (double)e_bF() / (e_bF() + e_bR()) * scale); }
     
     inline std::tuple<uint16_t,uint16_t,uint16_t,uint16_t> pos() const
     { return std::make_tuple(x_a(),y_a(),x_b(),y_b()); };

@@ -13,7 +13,7 @@ flags = [
     '-fexceptions',
     '-ferror-limit=10000',
     '-DNDEBUG',
-    '-std=c++17',
+    '-std=c++20',
     '-xc++',
     '-I/usr/include/python3.10',
     '-I' + os.path.dirname(__file__) + "/include",

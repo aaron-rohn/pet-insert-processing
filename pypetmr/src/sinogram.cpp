@@ -67,11 +67,15 @@ void PhotopeakLookupTable::load(std::string base_dir)
         for (auto &[crystal, xtal_values]: blk_values["crystal"].items())
         {
             size_t xtal_num = std::stoi(crystal);
-            if (xtal_num < Geometry::ncrystals_total)
-            {
-                double xtal_ppeak = xtal_values["energy"]["photopeak"];
-                photopeaks[blk_num][xtal_num] = xtal_ppeak;
-            }
+
+            if (xtal_num > Geometry::ncrystals_total)
+                throw std::invalid_argument("Invalid crystal number in config");
+
+            if (xtal_num == Geometry::ncrystals_total)
+                continue;
+
+            photopeaks[blk_num][xtal_num] = xtal_values["energy"]["photopeak"];
+            doi[blk_num][xtal_num] = xtal_values["DOI"].get<vec<double>>();
         }
 
         // If found, assign the block photopeak to any missed crystals
@@ -83,11 +87,11 @@ void PhotopeakLookupTable::load(std::string base_dir)
     }
 }
 
-std::tuple<bool, int, int, int, int>
+std::tuple<bool, int, int, int, int, int, int>
 Michelogram::event_to_coords(const CoincidenceData& c, double scaling)
 {
     static const auto invalid_ev =
-        std::make_tuple(false, -1, -1, -1, -1);
+        std::make_tuple(false, -1, -1, -1, -1, -1, -1);
 
     // Lookup crystal index
     auto [ba, bb] = c.blk();
@@ -102,14 +106,18 @@ Michelogram::event_to_coords(const CoincidenceData& c, double scaling)
     if (!ppeak.in_window(ba,xa,ea) || !ppeak.in_window(bb,xb,eb))
         return invalid_ev;
 
+    auto [doia_val, doib_val] = c.doi();
+    int doia = ppeak.doi_window(ba, xa, doia_val);
+    int doib = ppeak.doi_window(ba, xa, doib_val);
+
     int ra = ring(ba, xa), rb = ring(bb, xb);
     int idxa = idx(ba, xa), idxb = idx(bb, xb);
-    return std::make_tuple(true, ra, rb, idxa, idxb);
+    return std::make_tuple(true, ra, rb, idxa, idxb, doia, doib);
 }
 
 void Michelogram::add_event(const CoincidenceData &c, double scaling)
 {
-    auto [valid, ra, rb, idxa, idxb] = event_to_coords(c, scaling);
+    auto [valid, ra, rb, idxa, idxb, doia, doib] = event_to_coords(c, scaling);
 
     if (valid)
     {
@@ -117,14 +125,15 @@ void Michelogram::add_event(const CoincidenceData &c, double scaling)
     }
 }
 
-void Michelogram::write_event(std::ofstream &f, const CoincidenceData &c)
+void Michelogram::write_event(std::ofstream &f, const CoincidenceData &c, double scaling)
 {
-    auto [valid, ra, rb, idxa, idxb] = event_to_coords(c, 1.0);
+    auto [valid, ra, rb, idxa, idxb, doia, doib] = event_to_coords(c, scaling);
 
     if (valid)
     {
         int16_t data[] = {(int16_t)idxa, (int16_t)ra,
-                          (int16_t)idxb, (int16_t)rb, 0}; 
+                          (int16_t)idxb, (int16_t)rb,
+                          (int16_t)(doia << 8 | doib)}; 
         f.write((char*)data, sizeof(data));
     }
 }
@@ -197,13 +206,6 @@ PyObject *Michelogram::to_py_data()
     return arr;
 }
 
-size_t searchsorted(uint64_t const *arr, uint64_t val, size_t arr_size)
-{
-    for (size_t i = 1; i < arr_size; i++)
-        if (arr[i] > val) return i;
-    return arr_size;
-}
-
 std::streampos Michelogram::sort_span(
         std::string fname,
         std::streampos start,
@@ -216,7 +218,6 @@ std::streampos Michelogram::sort_span(
     std::ifstream f(fname, std::ios::binary);
     f.seekg(start);
 
-    double scale_factor = scaling[0];
     size_t idx = 0;
     uint16_t last_time = 0xFFFF, curr_time = 0;
 
@@ -230,11 +231,11 @@ std::streampos Michelogram::sort_span(
         curr_time = c.abstime();
         if (curr_time != last_time)
         {
-            idx = searchsorted(fpos, cpos, array_size);
-            scale_factor = scaling[idx-1];
+            for (idx = 1; idx < array_size; idx++)
+                if (fpos[idx] > (uint64_t)cpos) break;
         }
 
-        add_event(c, scale_factor);
+        add_event(c, scaling[idx-1]);
         last_time = curr_time;
     }
 

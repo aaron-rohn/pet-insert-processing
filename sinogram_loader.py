@@ -28,8 +28,11 @@ def read_times(fname, nperiods = 500):
     return scaling, fpos
 
 class SinogramLoaderPopup:
-    def __init__(self, root, callback, fname, cfgdir):
+    def __init__(self, root, callback, target,
+                 fname, cfgdir, *args):
+
         self.callback = callback 
+        self.target = target
 
         self.popup = tk.Toplevel(root)
         self.popup.title('Progress')
@@ -43,12 +46,12 @@ class SinogramLoaderPopup:
         self.stat_queue = queue.Queue()
 
         scaling, fpos = read_times(fname)
-        self.bg = threading.Thread(target = self.sort_sinogram, 
-                args = [fname, cfgdir,
-                        scaling, fpos,
-                        self.terminate,
-                        self.stat_queue,
-                        self.data_queue])
+        self.bg = threading.Thread(target = self.handle_listmode, 
+                args = list(args) + [fname, cfgdir,
+                                     scaling, fpos,
+                                     self.terminate,
+                                     self.stat_queue,
+                                     self.data_queue])
 
         self.bg.start()
         self.check()
@@ -66,14 +69,15 @@ class SinogramLoaderPopup:
         if self.bg.is_alive():
             self.popup.after(interval, self.check)
         else:
-            if not self.data_queue.empty():
-                self.callback(self.data_queue.get())
-            else:
-                self.callback(RuntimeError("Sinogram sorting failed"))
+            if self.callback is not None:
+                if not self.data_queue.empty():
+                    self.callback(self.data_queue.get())
+                else:
+                    self.callback(RuntimeError("Sinogram sorting failed"))
             self.popup.destroy()
 
-    def sort_sinogram(self, *args):
+    def handle_listmode(self, *args):
         try:
-            petmr.sort_sinogram(*args)
+            self.target(*args)
         except RuntimeError as e:
             self.data_queue.put(e)

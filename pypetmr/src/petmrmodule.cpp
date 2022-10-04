@@ -75,6 +75,38 @@ pylist_to_strings(PyObject *file_list)
     return cfile_list;
 }
 
+std::tuple<double*,uint64_t*,size_t> validate_scaling_array(PyArrayObject *scaling, PyArrayObject *fpos)
+{
+    auto nullarr = std::make_tuple((double*)NULL,(uint64_t*)NULL,0);
+
+    if (PyArray_NDIM(scaling) != 1 || PyArray_NDIM(fpos) != 1)
+    {
+        PyErr_SetString(PyExc_RuntimeError, "Wrong number of dimensions for scaling array");
+        return nullarr;
+    }
+
+    if (PyArray_TYPE(scaling) != NPY_DOUBLE || PyArray_TYPE(fpos) != NPY_ULONGLONG)
+    {
+        PyErr_SetString(PyExc_RuntimeError, "Wrong data type for scaling array");
+        return nullarr;
+    }
+
+    npy_intp *scaling_shape, *fpos_shape;
+    scaling_shape = PyArray_DIMS(scaling);
+    fpos_shape = PyArray_DIMS(fpos);
+
+    if (scaling_shape[0] != fpos_shape[0])
+    {
+        PyErr_SetString(PyExc_RuntimeError, "Size of scaling and time arrays are different");
+        return nullarr;
+    }
+
+    return std::make_tuple(
+            (double*)PyArray_DATA(scaling),
+            (uint64_t*)PyArray_DATA(fpos),
+            scaling_shape[0]);
+}
+
 /*
  * Load singles data from a single file
  */
@@ -346,40 +378,20 @@ petmr_store(PyObject *self, PyObject *args)
 static PyObject*
 petmr_sort_sinogram(PyObject *self, PyObject *args)
 {
-    const char *fname, *cfg_dir;
+    const char *fname, *cfgdir;
     PyObject *terminate, *status_queue, *data_queue;
     PyArrayObject *scaling, *fpos;
     if (!PyArg_ParseTuple(args, "ssOOOOO",
-                &fname, &cfg_dir,
+                &fname, &cfgdir,
                 &scaling, &fpos,
                 &terminate,
                 &status_queue,
                 &data_queue)) return NULL;
 
-    if (PyArray_NDIM(scaling) != 1 || PyArray_NDIM(fpos) != 1)
-    {
-        PyErr_SetString(PyExc_RuntimeError, "Wrong number of dimensions for scaling array");
-        return NULL;
-    }
+    auto [scaling_array, fpos_array, scaling_shape] =
+        validate_scaling_array(scaling, fpos);
 
-    if (PyArray_TYPE(scaling) != NPY_DOUBLE || PyArray_TYPE(fpos) != NPY_ULONGLONG)
-    {
-        PyErr_SetString(PyExc_RuntimeError, "Wrong data type for scaling array");
-        return NULL;
-    }
-
-    npy_intp *scaling_shape, *fpos_shape;
-    scaling_shape = PyArray_DIMS(scaling);
-    fpos_shape = PyArray_DIMS(fpos);
-
-    if (scaling_shape[0] != fpos_shape[0])
-    {
-        PyErr_SetString(PyExc_RuntimeError, "Size of scaling and time arrays are different");
-        return NULL;
-    }
-
-    double *scaling_array = (double*)PyArray_DATA(scaling);
-    uint64_t *fpos_array = (uint64_t*)PyArray_DATA(fpos);
+    if (scaling_array == NULL) return NULL;
 
     PyThreadState *_save = PyEval_SaveThread();
 
@@ -387,7 +399,7 @@ petmr_sort_sinogram(PyObject *self, PyObject *args)
 
     try
     {
-        m.cfg_load(cfg_dir);
+        m.cfg_load(cfgdir);
     }
     catch (std::invalid_argument &e)
     {
@@ -420,7 +432,7 @@ petmr_sort_sinogram(PyObject *self, PyObject *args)
 
             workers.push_back(std::async(std::launch::async,
                 &Michelogram::sort_span, &m, fname, start, end,
-                scaling_array, fpos_array, scaling_shape[0]));
+                scaling_array, fpos_array, scaling_shape));
 
             start = end;
         }
@@ -450,35 +462,78 @@ petmr_sort_sinogram(PyObject *self, PyObject *args)
 static PyObject*
 petmr_save_listmode(PyObject* self, PyObject* args)
 {
-    const char *coincidence_file, *listmode_file, *cfg_dir;
-    if (!PyArg_ParseTuple(args, "sss",
-                &coincidence_file,
-                &listmode_file,
-                &cfg_dir)) return NULL;
+    const char *fname, *lmfname, *cfgdir;
+    PyArrayObject *scaling_array, *fpos_array;
+    PyObject *terminate, *status_queue, *data_queue;
+    if (!PyArg_ParseTuple(args, "sssOOOOO",
+                &lmfname,
+                &fname, &cfgdir,
+                &scaling_array, &fpos_array,
+                &terminate,
+                &status_queue,
+                &data_queue)) return NULL;
+
+    auto [scaling, fpos, sz] =
+        validate_scaling_array(scaling_array,fpos_array);
+    if (scaling == NULL) return NULL;
+
+    PyThreadState *_save = PyEval_SaveThread();
 
     Michelogram m(Geometry::dim_theta_full);
 
     try
     {
-        m.cfg_load(cfg_dir);
+        m.cfg_load(cfgdir);
     }
     catch (std::invalid_argument &e)
     {
+        PyEval_RestoreThread(_save);
         auto err_str = std::string("Error loading configuration data (") + e.what() + ")";
         PyErr_SetString(PyExc_RuntimeError, err_str.c_str());
         return NULL;
     };
 
-    std::ifstream cf(coincidence_file, std::ios::binary);
-    std::ofstream lf(listmode_file, std::ios::binary);
+    std::ifstream cf(fname, std::ios::binary);
+    std::ofstream lf(lmfname, std::ios::binary);
+
+    size_t idx = 1;
+    uint16_t last_time = 0xFFFF, curr_time = 0;
+
+    int n = 0, iters = 1e6;
+    bool stop = false;
+    std::streampos coincidence_file_size = fsize(fname);
 
     CoincidenceData c;
-    while (cf)
+    while (!stop && cf)
     {
         cf.read((char*)&c, sizeof(c));
-        m.write_event(lf, c);
+
+        // find the appropriate scaling for this time span
+        curr_time = c.abstime();
+        if (curr_time != last_time)
+        {
+            for (idx = 1; idx < sz; idx++)
+                if (fpos[idx] > (uint64_t)cf.tellg()) break;
+        }
+
+        m.write_event(lf, c, scaling[idx-1]);
+        last_time = curr_time;
+
+        // update progress on UI
+        n = (n + 1) % iters;
+        if (n == 0)
+        {
+            double perc = (double)cf.tellg() / coincidence_file_size * 100;
+            PyEval_RestoreThread(_save);
+            PyObject *term = PyObject_CallMethod(terminate, "is_set", "");
+            PyObject_CallMethod(status_queue, "put", "d", perc);
+            if (term == Py_True) stop = true;
+            _save = PyEval_SaveThread();
+        }
     }
 
+    PyEval_RestoreThread(_save);
+    PyObject_CallMethod(data_queue, "put", "O", Py_None);
     Py_RETURN_NONE;
 }
 

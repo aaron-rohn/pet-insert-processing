@@ -15,6 +15,8 @@ using json = nlohmann::json;
 using stype = float;
 static const auto npy_type = NPY_FLOAT32;
 
+template<typename T> using vec = std::vector<T>;
+
 class Geometry
 {
     public:
@@ -74,15 +76,21 @@ class CrystalLookupTable
 
 class PhotopeakLookupTable
 {
-    std::vector<std::vector<double>> photopeaks;
+    vec<vec<double>> photopeaks;
+    vec<vec<vec<double>>> doi;
 
     public:
     const double energy_window = Geometry::energy_window;
 
     PhotopeakLookupTable():
-        photopeaks(std::vector<std::vector<double>> (
+        photopeaks(vec<vec<double>> (
                     Single::nblocks,
-                    std::vector<double>(Geometry::ncrystals_total, -1))) {};
+                    vec<double>(Geometry::ncrystals_total, -1))),
+        doi(vec<vec<vec<double>>> (
+                    Single::nblocks,
+                    vec<vec<double>>(
+                        Geometry::ncrystals_total,
+                        vec<double>()))) {};
 
     void load(std::string);
     static std::string find_cfg_file(std::string);
@@ -92,6 +100,14 @@ class PhotopeakLookupTable
         double th = photopeaks[blk][xtal];
         return (th < 0) || ((e > (1.0-energy_window)*th) &&
                             (e < (1.0+energy_window)*th));
+    }
+
+    inline int doi_window(size_t blk, size_t xtal, double val)
+    {
+        const auto &doi_vals = doi[blk][xtal];
+        for (size_t i = 0; i < doi_vals.size(); i++)
+            if (val > doi_vals[i]) return i;
+        return doi_vals.size();
     }
 };
 
@@ -152,11 +168,11 @@ class Michelogram: Geometry
     // first arg is horiz. index, second arg is vert. index
     inline Sinogram& operator() (int h, int v){ return m[v*nring + h]; };
 
-    std::tuple<bool, int, int, int, int> event_to_coords(
+    std::tuple<bool, int, int, int, int, int, int> event_to_coords(
             const CoincidenceData&, double);
 
     void add_event(const CoincidenceData&, double=1.0);
-    void write_event(std::ofstream&, const CoincidenceData&);
+    void write_event(std::ofstream&, const CoincidenceData&, double=1.0);
     void write_to(std::string);
     void read_from(std::string);
 

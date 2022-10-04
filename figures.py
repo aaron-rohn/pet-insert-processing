@@ -135,20 +135,17 @@ class FloodHist(MPLFigure):
     def update(self, x, y, scaling, warp = None, overlay = None, voronoi = True):
         # First coord -> rows -> y
         # Second coord -> cols -> x
-        y = round((y.astype(float) - 255)*scaling + 255).astype(np.uint16)
-        x = round((x.astype(float) - 255)*scaling + 255).astype(np.uint16)
-
         self.img, *_ = np.histogram2d(y, x, bins = self.img_size,
                 range = [[0,self.img_size-1],[0,self.img_size-1]])
 
-        """
         shape_in = self.img.shape
         self.img = ndimage.zoom(self.img, scaling)
         shape_out = self.img.shape
-        lpads = [int((a - b)/2) for a,b in zip(shape_in, shape_out)]
-        rpads = [a - b for a,b in zip(shape_in, lpads)]
+
+        diffs = [a - b for a,b in zip(shape_in, shape_out)]
+        lpads = [int(d/2) for d in diffs]
+        rpads = [d - l for d,l in zip(diffs, lpads)]
         self.img = np.pad(self.img, list(zip(lpads, rpads)))
-        """
 
         self.f = Flood(self.img, warp)
 

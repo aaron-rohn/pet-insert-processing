@@ -182,7 +182,7 @@ class Michelogram: Geometry
         m(std::vector<Sinogram> (nring*nring, Sinogram(dt))) {};
 
     std::streampos sort_span(
-            std::string, std::streampos, std::streampos,
+            std::string, uint64_t, uint64_t,
             double const*, uint64_t const*, size_t);
 
     class Iterator

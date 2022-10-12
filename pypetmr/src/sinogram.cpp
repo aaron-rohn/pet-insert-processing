@@ -108,7 +108,7 @@ Michelogram::event_to_coords(const CoincidenceData& c, double scaling)
 
     auto [doia_val, doib_val] = c.doi();
     int doia = ppeak.doi_window(ba, xa, doia_val);
-    int doib = ppeak.doi_window(ba, xa, doib_val);
+    int doib = ppeak.doi_window(bb, xb, doib_val);
 
     int ra = ring(ba, xa), rb = ring(bb, xb);
     int idxa = idx(ba, xa), idxb = idx(bb, xb);
@@ -208,36 +208,23 @@ PyObject *Michelogram::to_py_data()
 
 std::streampos Michelogram::sort_span(
         std::string fname,
-        std::streampos start,
-        std::streampos end,
-        double const *scaling,
-        uint64_t const *fpos,
-        size_t array_size
+        uint64_t start, uint64_t end,
+        double const *scaling, uint64_t const *fpos, size_t sz 
 ) {
     CoincidenceData c;
     std::ifstream f(fname, std::ios::binary);
     f.seekg(start);
 
     size_t idx = 0;
-    uint16_t last_time = 0xFFFF, curr_time = 0;
+    uint64_t pos = start;
 
-    while (f.good())
+    while (f.good() && pos < end)
     {
-        std::streampos cpos = f.tellg();
-        if (cpos >= end) break;
-
+        pos = f.tellg();
         f.read((char*)&c, sizeof(c));
-
-        curr_time = c.abstime();
-        if (curr_time != last_time)
-        {
-            for (idx = 1; idx < array_size; idx++)
-                if (fpos[idx] > (uint64_t)cpos) break;
-        }
-
-        add_event(c, scaling[idx-1]);
-        last_time = curr_time;
+        for (; idx < sz-1 && fpos[idx+1] < pos; idx++) ;
+        add_event(c, scaling[idx]);
     }
 
-    return f.tellg();
+    return pos;
 }

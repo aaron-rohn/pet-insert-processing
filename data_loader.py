@@ -18,7 +18,7 @@ max_events = int(1e9)
 coincidence_cols = 11
 
 scaling_nevents = 150e3
-scaling_factor  = 0.05
+scaling_factor  = 0.06
 
 class ProgressPopup(tk.Toplevel):
     def __init__(self, stat_queue, data_queue, terminate, callback):
@@ -242,7 +242,7 @@ class CoincidenceProfilePlot(tk.Toplevel):
         self.ev_rate = self.ev_per_period / np.diff(self.times)
 
         # The scaling reflects the expansion of the flood due to count rate
-        self.scaling = 1 - (self.ev_rate / scaling_nevents * scaling_factor)
+        self.scaling = 1 + (self.ev_rate / scaling_nevents * scaling_factor)
 
         self.plt.plot(self.times[:-1], self.ev_rate)
         self.plt.grid()
@@ -300,6 +300,7 @@ class CoincidenceProfilePlot(tk.Toplevel):
         start_end = np.searchsorted(self.times, [start,end])
         self.current_scaling = self.scaling[start_end[0]]
         start, end = start_end * self.ev_per_period
+        print(f'Flood scaling factor: {self.current_scaling}')
 
         data_subset = self.data[start:end,:]
         nev = data_subset.shape[0]

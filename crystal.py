@@ -84,16 +84,4 @@ def calculate_lut_statistics(lut, data):
     lm_df = lm_df.merge(lut_df, on = ['x', 'y'])
     lm_df = lm_df.drop(columns = ['x', 'y'])
     lm_df = lm_df.groupby(['lut'])
-
     return lm_df.apply(summarize_crystal)
-
-    """
-    def get_photopeak(grp):
-        n,bins = np.histogram(grp['es'].values, bins = 100,
-                range = np.quantile(grp['es'].values, [0, 0.95]))
-        ppeak_idx = np.argmax(bins[:-1] * n**2)
-        return round(bins[ppeak_idx])
-    pks = lm_df.apply(get_photopeak)
-    for lut,pk in pks.iteritems():
-        cfg[blk][str(lut)] = pk
-    """

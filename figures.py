@@ -138,6 +138,13 @@ class FloodHist(MPLFigure):
         self.img, *_ = np.histogram2d(y, x, bins = self.img_size,
                 range = [[0,self.img_size-1],[0,self.img_size-1]])
 
+        if overlay is not None:
+            overlay = ndimage.zoom(overlay, scaling, order = 0)
+            nr, nc = [int(rc/2) for rc in overlay.shape]
+            overlay = overlay[nr-256:nr+256, nc-256:nc+256]
+            overlay = np.ma.array(overlay, mask = (overlay == 0))
+
+        """
         shape_in = self.img.shape
         self.img = ndimage.zoom(self.img, scaling)
         shape_out = self.img.shape
@@ -146,6 +153,7 @@ class FloodHist(MPLFigure):
         lpads = [int(d/2) for d in diffs]
         rpads = [d - l for d,l in zip(diffs, lpads)]
         self.img = np.pad(self.img, list(zip(lpads, rpads)))
+        """
 
         self.f = Flood(self.img, warp)
 
@@ -322,7 +330,6 @@ class Plots(tk.Frame):
                 xd = np.diff(lut, axis = 1, prepend = lut.max()) != 0
                 lut = np.logical_or(xd, yd)
                 lut = ndimage.binary_dilation(lut)
-                lut = np.ma.array(lut, mask = ~lut)
             except Exception as e:
                 lut = None
         return lut

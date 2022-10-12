@@ -23,8 +23,12 @@ def read_times(fname, nperiods = 500):
         times[i+1:] += 2**16
 
     ev_rate = ev_per_period / np.diff(times)
-    scaling = 1 - (ev_rate / scaling_nevents * scaling_factor)
+    scaling = 1 + (ev_rate / scaling_nevents * scaling_factor)
     fpos = np.linspace(0, sz, len(scaling), dtype = np.ulonglong)
+
+    plt.plot(times, scaling)
+    plt.show()
+
     return scaling, fpos
 
 class SinogramLoaderPopup:
@@ -45,7 +49,7 @@ class SinogramLoaderPopup:
         self.data_queue = queue.Queue()
         self.stat_queue = queue.Queue()
 
-        scaling, fpos = read_times(fname)
+        scaling, fpos = read_times(fname, 100)
         self.bg = threading.Thread(target = self.handle_listmode, 
                 args = list(args) + [fname, cfgdir,
                                      scaling, fpos,

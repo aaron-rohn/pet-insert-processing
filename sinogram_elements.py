@@ -74,7 +74,7 @@ class SinogramDisplay:
     def click(self, ev):
         self.sinogram_plt.clear()
         h = int(np.floor(ev.xdata))
-        v = int(np.floor(ev.ydata))
+        v = int(np.ceil(ev.ydata))
         if self.sino_data is not None:
             print(f'row: {v} col: {h}')
             self.sinogram_plt.imshow(self.sino_data[v,h,:,:],

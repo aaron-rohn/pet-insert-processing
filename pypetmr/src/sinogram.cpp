@@ -4,13 +4,10 @@
 
 #include <sinogram.h>
 
-void CrystalLookupTable::load(std::string dir)
+CrystalLookupTable::CrystalLookupTable(std::string dir, std::vector<double> scaling):
+        scaled_luts(vec<vec<cv::Mat>> (Single::nblocks, vec<cv::Mat>(scaling.size())))
 {
-    if (dir == std::string())
-    {
-        std::cout << "Skipping LUT loading" << std::endl;
-        return;
-    }
+    if (dir == std::string()) return;
 
     for (auto &p : std::filesystem::recursive_directory_iterator(dir))
     {
@@ -22,35 +19,49 @@ void CrystalLookupTable::load(std::string dir)
 
             if (n != 1 || blk >= Single::nblocks)
             {
-                std::cout << "Error: " << curr_path << std::endl;
-                throw std::invalid_argument(curr_path);
+                std::cout << "Error: Invalid LUT filename " << curr_path << std::endl;
+                return;
             }
 
-            auto &l = luts[blk];
             std::ifstream f(p.path(), std::ios::in | std::ios::binary);
+            std::vector<int> l (lut_dim*lut_dim, Geometry::ncrystals_total);
             f.read((char*)l.data(), l.size()*sizeof(int));
+            cv::Mat m_in(lut_dim, lut_dim, CV_32S, l.data());
+
+            for (size_t i = 0; i < scaling.size(); i++)
+            {
+                cv::Mat m_out;
+                cv::resize(m_in, m_out, cv::Size(), scaling[i], scaling[i], cv::INTER_NEAREST);
+                int sz = (m_out.cols / 2) - (lut_dim/2);
+                scaled_luts[blk][i] = cv::Mat(m_out, cv::Rect(sz, sz, lut_dim, lut_dim)).clone();
+            }
         }
     }
+
+    loaded = true;
 }
 
 std::string PhotopeakLookupTable::find_cfg_file(std::string base_dir)
 {
+    if (base_dir == std::string()) return base_dir;
+
     for (auto &p : std::filesystem::recursive_directory_iterator(base_dir))
         if (p.path().extension() == ".json") return p.path();
 
-    std::cout << "No photopeak file found" << std::endl;
     return std::string();
 }
 
-void PhotopeakLookupTable::load(std::string base_dir)
+PhotopeakLookupTable::PhotopeakLookupTable(std::string base_dir):
+        photopeaks(vec<vec<double>> (
+                    Single::nblocks,
+                    vec<double>(Geometry::ncrystals_total, -1))),
+
+        doi(vec<vec<vec<double>>> (
+                    Single::nblocks,
+                    vec<vec<double>>(Geometry::ncrystals_total)))
 {
     std::string cfg_file = find_cfg_file(base_dir);
-
-    if (cfg_file == std::string())
-    {
-        std::cout << "Skipping photopeak loading" << std::endl;
-        return;
-    }
+    if (cfg_file == std::string()) return;
 
     json cfg;
     std::ifstream(cfg_file) >> cfg;
@@ -60,7 +71,10 @@ void PhotopeakLookupTable::load(std::string base_dir)
     {
         size_t blk_num = std::stoi(blk);
         if (blk_num >= Single::nblocks)
-            continue;
+        {
+            std::cerr << "Error: Invalid block number in config " << blk_num << std::endl;
+            return;
+        }
 
         double blk_ppeak = blk_values["photopeak"];
 
@@ -69,7 +83,10 @@ void PhotopeakLookupTable::load(std::string base_dir)
             size_t xtal_num = std::stoi(crystal);
 
             if (xtal_num > Geometry::ncrystals_total)
-                throw std::invalid_argument("Invalid crystal number in config");
+            {
+                std::cerr << "Error: Invalid crystal number in config " << xtal_num << std::endl;
+                return;
+            }
 
             if (xtal_num == Geometry::ncrystals_total)
                 continue;
@@ -85,19 +102,22 @@ void PhotopeakLookupTable::load(std::string base_dir)
                 if (xtal_ppeak < 0) xtal_ppeak = blk_ppeak;
         }
     }
+
+    loaded = true;
 }
 
 std::tuple<bool, int, int, int, int, int, int>
-Michelogram::event_to_coords(const CoincidenceData& c, double scaling)
+Michelogram::event_to_coords(const CoincidenceData& c, size_t scale_idx)
 {
     static const auto invalid_ev =
         std::make_tuple(false, -1, -1, -1, -1, -1, -1);
 
     // Lookup crystal index
     auto [ba, bb] = c.blk();
-    auto [pos_xa, pos_ya, pos_xb, pos_yb] = c.pos_scaled(scaling);
+    auto [pos_xa, pos_ya, pos_xb, pos_yb] = c.pos();
 
-    int xa = lut(ba, pos_ya, pos_xa), xb = lut(bb, pos_yb, pos_xb);
+    int xa = lut(ba, scale_idx, pos_ya, pos_xa);
+    int xb = lut(bb, scale_idx, pos_yb, pos_xb);
     if (xa >= ncrystals_total || xb >= ncrystals_total)
         return invalid_ev;
 
@@ -115,9 +135,9 @@ Michelogram::event_to_coords(const CoincidenceData& c, double scaling)
     return std::make_tuple(true, ra, rb, idxa, idxb, doia, doib);
 }
 
-void Michelogram::add_event(const CoincidenceData &c, double scaling)
+void Michelogram::add_event(const CoincidenceData &c, size_t scale_idx)
 {
-    auto [valid, ra, rb, idxa, idxb, doia, doib] = event_to_coords(c, scaling);
+    auto [valid, ra, rb, idxa, idxb, doia, doib] = event_to_coords(c, scale_idx);
 
     if (valid)
     {
@@ -125,9 +145,9 @@ void Michelogram::add_event(const CoincidenceData &c, double scaling)
     }
 }
 
-void Michelogram::write_event(std::ofstream &f, const CoincidenceData &c, double scaling)
+void Michelogram::write_event(std::ofstream &f, const CoincidenceData &c, size_t scale_idx)
 {
-    auto [valid, ra, rb, idxa, idxb, doia, doib] = event_to_coords(c, scaling);
+    auto [valid, ra, rb, idxa, idxb, doia, doib] = event_to_coords(c, scale_idx);
 
     if (valid)
     {
@@ -152,7 +172,9 @@ void Michelogram::read_from(std::string fname)
         s.read_from(f);
 }
 
-Michelogram::Michelogram(PyObject *arr)
+Michelogram::Michelogram(PyObject *arr):
+    lut(std::string(), vec<double>()),
+    ppeak(std::string())
 {
     if (PyArray_TYPE((PyArrayObject*)arr) != npy_type)
     {
@@ -209,7 +231,7 @@ PyObject *Michelogram::to_py_data()
 std::streampos Michelogram::sort_span(
         std::string fname,
         uint64_t start, uint64_t end,
-        double const *scaling, uint64_t const *fpos, size_t sz 
+        vec<uint64_t> fpos
 ) {
     CoincidenceData c;
     std::ifstream f(fname, std::ios::binary);
@@ -217,13 +239,14 @@ std::streampos Michelogram::sort_span(
 
     size_t idx = 0;
     uint64_t pos = start;
+    size_t sz = fpos.size();
 
     while (f.good() && pos < end)
     {
         pos = f.tellg();
         f.read((char*)&c, sizeof(c));
         for (; idx < sz-1 && fpos[idx+1] < pos; idx++) ;
-        add_event(c, scaling[idx]);
+        add_event(c, idx);
     }
 
     return pos;

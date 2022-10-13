@@ -75,9 +75,10 @@ pylist_to_strings(PyObject *file_list)
     return cfile_list;
 }
 
-std::tuple<double*,uint64_t*,size_t> validate_scaling_array(PyArrayObject *scaling, PyArrayObject *fpos)
+std::tuple<std::vector<double>,std::vector<uint64_t>>
+validate_scaling_array(PyArrayObject *scaling, PyArrayObject *fpos)
 {
-    auto nullarr = std::make_tuple((double*)NULL,(uint64_t*)NULL,0);
+    auto nullarr = std::make_tuple(std::vector<double>(),std::vector<uint64_t>());
 
     if (PyArray_NDIM(scaling) != 1 || PyArray_NDIM(fpos) != 1)
     {
@@ -100,11 +101,15 @@ std::tuple<double*,uint64_t*,size_t> validate_scaling_array(PyArrayObject *scali
         PyErr_SetString(PyExc_RuntimeError, "Size of scaling and time arrays are different");
         return nullarr;
     }
+    size_t n = scaling_shape[0];
 
-    return std::make_tuple(
-            (double*)PyArray_DATA(scaling),
-            (uint64_t*)PyArray_DATA(fpos),
-            scaling_shape[0]);
+    std::vector<double> scaling_vec (n);
+    std::memcpy(scaling_vec.data(), (double*)PyArray_DATA(scaling), n*sizeof(double));
+
+    std::vector<uint64_t> fpos_vec (n);
+    std::memcpy(fpos_vec.data(), (double*)PyArray_DATA(fpos), n*sizeof(double));
+
+    return std::make_tuple(scaling_vec, fpos_vec);
 }
 
 /*
@@ -380,34 +385,30 @@ petmr_sort_sinogram(PyObject *self, PyObject *args)
 {
     const char *fname, *cfgdir;
     PyObject *terminate, *status_queue, *data_queue;
-    PyArrayObject *scaling, *fpos;
+    PyArrayObject *scaling_array, *fpos_array;
     if (!PyArg_ParseTuple(args, "ssOOOOO",
                 &fname, &cfgdir,
-                &scaling, &fpos,
+                &scaling_array, &fpos_array,
                 &terminate,
                 &status_queue,
                 &data_queue)) return NULL;
 
-    auto [scaling_array, fpos_array, scaling_shape] =
-        validate_scaling_array(scaling, fpos);
+    auto [scaling, fpos] =
+        validate_scaling_array(scaling_array, fpos_array);
 
-    if (scaling_array == NULL) return NULL;
+    if (scaling.size() == 0)
+        return NULL;
 
     PyThreadState *_save = PyEval_SaveThread();
+    Michelogram m(Geometry::dim_theta_full, cfgdir, scaling);
 
-    Michelogram m(Geometry::dim_theta_full);
-
-    try
-    {
-        m.cfg_load(cfgdir);
-    }
-    catch (std::invalid_argument &e)
+    if (!m.lut.loaded || !m.ppeak.loaded)
     {
         PyEval_RestoreThread(_save);
-        auto err_str = std::string("Error loading configuration data (") + e.what() + ")";
+        std::string err_str = "Failed to load configuration data";
         PyErr_SetString(PyExc_RuntimeError, err_str.c_str());
         return NULL;
-    };
+    }
 
     std::streampos coincidence_file_size = fsize(fname);
 
@@ -431,8 +432,7 @@ petmr_sort_sinogram(PyObject *self, PyObject *args)
             }
 
             workers.push_back(std::async(std::launch::async,
-                &Michelogram::sort_span, &m, fname, start, end,
-                scaling_array, fpos_array, scaling_shape));
+                &Michelogram::sort_span, &m, fname, start, end, fpos));
 
             start = end;
         }
@@ -473,22 +473,18 @@ petmr_save_listmode(PyObject* self, PyObject* args)
                 &status_queue,
                 &data_queue)) return NULL;
 
-    auto [scaling, fpos, sz] =
+    auto [scaling, fpos] =
         validate_scaling_array(scaling_array,fpos_array);
-    if (scaling == NULL) return NULL;
+    if (scaling.size() == 0) return NULL;
 
     PyThreadState *_save = PyEval_SaveThread();
 
-    Michelogram m(Geometry::dim_theta_full);
+    Michelogram m(Geometry::dim_theta_full, cfgdir, scaling);
 
-    try
-    {
-        m.cfg_load(cfgdir);
-    }
-    catch (std::invalid_argument &e)
+    if (!m.lut.loaded || !m.ppeak.loaded)
     {
         PyEval_RestoreThread(_save);
-        auto err_str = std::string("Error loading configuration data (") + e.what() + ")";
+        std::string err_str = "Error loading configuration data";
         PyErr_SetString(PyExc_RuntimeError, err_str.c_str());
         return NULL;
     };
@@ -496,28 +492,21 @@ petmr_save_listmode(PyObject* self, PyObject* args)
     std::ifstream cf(fname, std::ios::binary);
     std::ofstream lf(lmfname, std::ios::binary);
 
-    size_t idx = 1;
-    uint16_t last_time = 0xFFFF, curr_time = 0;
-
     int n = 0, iters = 1e6;
     bool stop = false;
     std::streampos coincidence_file_size = fsize(fname);
+    size_t sz = scaling.size(), idx = 0;
+    uint64_t pos = 0;
 
     CoincidenceData c;
     while (!stop && cf)
     {
+        pos = cf.tellg();
         cf.read((char*)&c, sizeof(c));
 
-        // find the appropriate scaling for this time span
-        curr_time = c.abstime();
-        if (curr_time != last_time)
-        {
-            for (idx = 1; idx < sz; idx++)
-                if (fpos[idx] > (uint64_t)cf.tellg()) break;
-        }
+        for (; idx < sz-1 && fpos[idx+1] < pos; idx++) ;
 
-        m.write_event(lf, c, scaling[idx-1]);
-        last_time = curr_time;
+        m.write_event(lf, c, idx);
 
         // update progress on UI
         n = (n + 1) % iters;
@@ -544,7 +533,9 @@ petmr_load_sinogram(PyObject* self, PyObject* args)
     if (!PyArg_ParseTuple(args, "s", &sinogram_file))
         return NULL;
 
-    Michelogram m(Geometry::dim_theta_half);
+    Michelogram m(Geometry::dim_theta_half, 
+            std::string(), std::vector<double>());
+
     m.read_from(sinogram_file);
     return m.to_py_data();
 }

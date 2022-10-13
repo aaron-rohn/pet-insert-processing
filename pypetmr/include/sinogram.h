@@ -11,6 +11,9 @@
 #include <numpy/arrayobject.h>
 #include <numpy/ndarraytypes.h>
 
+#include <opencv2/opencv.hpp>
+#include <map>
+
 using json = nlohmann::json;
 using stype = float;
 static const auto npy_type = NPY_FLOAT32;
@@ -56,22 +59,18 @@ class Geometry
 
 class CrystalLookupTable
 {
-    std::vector<std::vector<int>> luts;
+    vec<vec<cv::Mat>> scaled_luts;
 
     public:
     static const int lut_dim = 512;
+    bool loaded = false;
 
-    CrystalLookupTable():
-        luts(std::vector<std::vector<int>> (
-                    Single::nblocks,
-                    std::vector<int>(
-                        lut_dim*lut_dim,
-                        Geometry::ncrystals_total))) {};
+    CrystalLookupTable(std::string, std::vector<double>);
 
-    inline int& operator() (size_t blk, size_t pos_y, size_t pos_x)
-    { return luts[blk][pos_y*lut_dim + pos_x]; }
-
-    void load(std::string);
+    inline int& operator() (size_t blk, size_t scale_idx, size_t y, size_t x)
+    {
+        return scaled_luts[blk][scale_idx].at<int>(y,x);
+    }
 };
 
 class PhotopeakLookupTable
@@ -81,19 +80,9 @@ class PhotopeakLookupTable
 
     public:
     const double energy_window = Geometry::energy_window;
-
-    PhotopeakLookupTable():
-        photopeaks(vec<vec<double>> (
-                    Single::nblocks,
-                    vec<double>(Geometry::ncrystals_total, -1))),
-        doi(vec<vec<vec<double>>> (
-                    Single::nblocks,
-                    vec<vec<double>>(
-                        Geometry::ncrystals_total,
-                        vec<double>()))) {};
-
-    void load(std::string);
+    PhotopeakLookupTable(std::string);
     static std::string find_cfg_file(std::string);
+    bool loaded = false;
 
     inline bool in_window(size_t blk, size_t xtal, double e)
     {
@@ -152,38 +141,36 @@ class Sinogram: Geometry
 
 class Michelogram: Geometry
 {
-    std::vector<Sinogram> m;
+    vec<Sinogram> m;
 
     public:
 
     CrystalLookupTable lut;
     PhotopeakLookupTable ppeak;
 
-    void cfg_load(std::string cfg_dir)
-    {
-        lut.load(cfg_dir);
-        ppeak.load(cfg_dir);
-    }
-
     // first arg is horiz. index, second arg is vert. index
     inline Sinogram& operator() (int h, int v){ return m[v*nring + h]; };
 
     std::tuple<bool, int, int, int, int, int, int> event_to_coords(
-            const CoincidenceData&, double);
+            const CoincidenceData&, size_t);
 
-    void add_event(const CoincidenceData&, double=1.0);
-    void write_event(std::ofstream&, const CoincidenceData&, double=1.0);
+    void add_event(const CoincidenceData&, size_t);
+    void write_event(std::ofstream&, const CoincidenceData&, size_t);
     void write_to(std::string);
     void read_from(std::string);
 
     PyObject *to_py_data();
     Michelogram(PyObject*);
-    Michelogram(int dt):
-        m(std::vector<Sinogram> (nring*nring, Sinogram(dt))) {};
+
+    Michelogram(int dt, std::string base_dir, vec<double> scaling):
+        m(vec<Sinogram> (nring*nring, Sinogram(dt))),
+        lut(base_dir, scaling),
+        ppeak(base_dir) {};
 
     std::streampos sort_span(
-            std::string, uint64_t, uint64_t,
-            double const*, uint64_t const*, size_t);
+            std::string,
+            uint64_t, uint64_t,
+            vec<uint64_t>);
 
     class Iterator
     {

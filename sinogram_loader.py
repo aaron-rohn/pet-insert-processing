@@ -25,10 +25,6 @@ def read_times(fname, nperiods = 500):
     ev_rate = ev_per_period / np.diff(times)
     scaling = 1 + (ev_rate / scaling_nevents * scaling_factor)
     fpos = np.linspace(0, sz, len(scaling), dtype = np.ulonglong)
-
-    plt.plot(times, scaling)
-    plt.show()
-
     return scaling, fpos
 
 class SinogramLoaderPopup:

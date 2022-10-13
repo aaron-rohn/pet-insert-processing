@@ -16,6 +16,7 @@ flags = [
     '-std=c++20',
     '-xc++',
     '-I/usr/include/python3.10',
+    '-I/usr/include/opencv4',
     '-I' + os.path.dirname(__file__) + "/include",
     '-I' + np.get_include(),
     ]

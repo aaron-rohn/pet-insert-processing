@@ -65,9 +65,9 @@ class CrystalLookupTable
     static const int lut_dim = 512;
     bool loaded = false;
 
-    CrystalLookupTable(std::string, std::vector<double>);
+    CrystalLookupTable(std::string, const vec<double>&);
 
-    inline int& operator() (size_t blk, size_t scale_idx, size_t y, size_t x)
+    inline int operator() (size_t blk, size_t scale_idx, size_t y, size_t x) const
     {
         return scaled_luts[blk][scale_idx].at<int>(y,x);
     }
@@ -80,9 +80,10 @@ class PhotopeakLookupTable
 
     public:
     const double energy_window = Geometry::energy_window;
+    bool loaded = false;
+
     PhotopeakLookupTable(std::string);
     static std::string find_cfg_file(std::string);
-    bool loaded = false;
 
     inline bool in_window(size_t blk, size_t xtal, double e)
     {
@@ -106,9 +107,9 @@ class Sinogram: Geometry
 
     public:
 
-    std::vector<stype> s;
+    vec<stype> s;
     Sinogram(int dt):
-        s(std::vector<stype> (dt*dim_r, 0)) {};
+        s(vec<stype> (dt*dim_r, 0)) {};
     Sinogram(const Sinogram &other): m(), s(other.s) {};
 
     inline stype& operator() (int theta, int r){ return s[theta*dim_r + r]; };
@@ -171,6 +172,8 @@ class Michelogram: Geometry
             std::string,
             uint64_t, uint64_t,
             vec<uint64_t>);
+
+    bool loaded() { return lut.loaded && ppeak.loaded; }
 
     class Iterator
     {

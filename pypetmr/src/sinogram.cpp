@@ -4,10 +4,12 @@
 
 #include <sinogram.h>
 
-CrystalLookupTable::CrystalLookupTable(std::string dir, std::vector<double> scaling):
-        scaled_luts(vec<vec<cv::Mat>> (Single::nblocks, vec<cv::Mat>(scaling.size())))
+CrystalLookupTable::CrystalLookupTable(std::string dir, const vec<double> &scaling):
+        scaled_luts(vec<vec<cv::Mat>> (Single::nblocks, vec<cv::Mat>()))
 {
     if (dir == std::string()) return;
+
+    vec<int> buf (lut_dim*lut_dim);
 
     for (auto &p : std::filesystem::recursive_directory_iterator(dir))
     {
@@ -24,16 +26,15 @@ CrystalLookupTable::CrystalLookupTable(std::string dir, std::vector<double> scal
             }
 
             std::ifstream f(p.path(), std::ios::in | std::ios::binary);
-            std::vector<int> l (lut_dim*lut_dim, Geometry::ncrystals_total);
-            f.read((char*)l.data(), l.size()*sizeof(int));
-            cv::Mat m_in(lut_dim, lut_dim, CV_32S, l.data());
+            f.read((char*)buf.data(), buf.size()*sizeof(int));
+            cv::Mat m_in(lut_dim, lut_dim, CV_32S, buf.data()), m_out;
 
-            for (size_t i = 0; i < scaling.size(); i++)
+            for (const auto &sc : scaling)
             {
-                cv::Mat m_out;
-                cv::resize(m_in, m_out, cv::Size(), scaling[i], scaling[i], cv::INTER_NEAREST);
-                int sz = (m_out.cols / 2) - (lut_dim/2);
-                scaled_luts[blk][i] = cv::Mat(m_out, cv::Rect(sz, sz, lut_dim, lut_dim)).clone();
+                cv::resize(m_in, m_out, cv::Size(), sc, sc, cv::INTER_NEAREST);
+                int sz = (m_out.cols/2) - (lut_dim/2);
+                scaled_luts[blk].push_back(
+                        cv::Mat(m_out, cv::Rect(sz, sz, lut_dim, lut_dim)).clone());
             }
         }
     }
@@ -193,7 +194,7 @@ Michelogram::Michelogram(PyObject *arr):
     npy_intp *dims = PyArray_DIMS((PyArrayObject*)arr);
     
     int dim_theta = dims[2];
-    m = std::vector<Sinogram> (nring*nring, Sinogram(dim_theta));
+    m = vec<Sinogram> (nring*nring, Sinogram(dim_theta));
 
     if (dims[0] != nring ||
         dims[1] != nring ||

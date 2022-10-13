@@ -101,13 +101,12 @@ validate_scaling_array(PyArrayObject *scaling, PyArrayObject *fpos)
         PyErr_SetString(PyExc_RuntimeError, "Size of scaling and time arrays are different");
         return nullarr;
     }
+
     size_t n = scaling_shape[0];
-
     std::vector<double> scaling_vec (n);
-    std::memcpy(scaling_vec.data(), (double*)PyArray_DATA(scaling), n*sizeof(double));
-
+    std::memcpy(scaling_vec.data(), PyArray_DATA(scaling), n*sizeof(double));
     std::vector<uint64_t> fpos_vec (n);
-    std::memcpy(fpos_vec.data(), (double*)PyArray_DATA(fpos), n*sizeof(double));
+    std::memcpy(fpos_vec.data(), PyArray_DATA(fpos), n*sizeof(uint64_t));
 
     return std::make_tuple(scaling_vec, fpos_vec);
 }
@@ -402,7 +401,7 @@ petmr_sort_sinogram(PyObject *self, PyObject *args)
     PyThreadState *_save = PyEval_SaveThread();
     Michelogram m(Geometry::dim_theta_full, cfgdir, scaling);
 
-    if (!m.lut.loaded || !m.ppeak.loaded)
+    if (!m.loaded())
     {
         PyEval_RestoreThread(_save);
         std::string err_str = "Failed to load configuration data";
@@ -475,13 +474,15 @@ petmr_save_listmode(PyObject* self, PyObject* args)
 
     auto [scaling, fpos] =
         validate_scaling_array(scaling_array,fpos_array);
-    if (scaling.size() == 0) return NULL;
+
+    if (scaling.size() == 0)
+        return NULL;
 
     PyThreadState *_save = PyEval_SaveThread();
 
     Michelogram m(Geometry::dim_theta_full, cfgdir, scaling);
 
-    if (!m.lut.loaded || !m.ppeak.loaded)
+    if (!m.loaded())
     {
         PyEval_RestoreThread(_save);
         std::string err_str = "Error loading configuration data";
@@ -512,7 +513,7 @@ petmr_save_listmode(PyObject* self, PyObject* args)
         n = (n + 1) % iters;
         if (n == 0)
         {
-            double perc = (double)cf.tellg() / coincidence_file_size * 100;
+            double perc = (double)pos / coincidence_file_size * 100;
             PyEval_RestoreThread(_save);
             PyObject *term = PyObject_CallMethod(terminate, "is_set", "");
             PyObject_CallMethod(status_queue, "put", "d", perc);

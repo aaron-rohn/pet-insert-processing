@@ -198,7 +198,7 @@ class SinogramDisplay:
                 sinogram += s
 
         # average over angular dimension
-        proj = sinogram.mean(2)
+        proj = sinogram.mean((0,1,2))
 
         """
         for idx in np.ndindex(proj.shape[0:2]):
@@ -214,7 +214,7 @@ class SinogramDisplay:
             sino[:,msk] = 1
         """
 
-        sinogram = proj[:,:,None,:] / sinogram
+        sinogram = proj[None,None,None,:] / sinogram
         self.sino_data = np.nan_to_num(sinogram,
                 nan = 1, posinf = 1, neginf = 1)
         self.count_map_draw()

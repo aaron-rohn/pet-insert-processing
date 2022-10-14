@@ -289,8 +289,6 @@ sorted_values sort_span(
     // Load all the singles from each file
     for (size_t i = 0; !stop && i < n; i++)
     {
-        //std::cout << fnames[i] << " " << start_pos[i] << " " << end_pos[i] << std::endl;
-
         auto &f = files[i];
         f.seekg(start_pos[i]);
 
@@ -318,23 +316,42 @@ sorted_values sort_span(
     // sort heap with ascending absolute time
     std::sort_heap(singles.begin(), singles.end());
 
-    uint64_t width = 20;
-    std::vector<CoincidenceData> coincidences;
+    uint64_t width = 10, delay = 100;
+    auto prompts = do_sort(singles, stop, width, 0);
+    auto delays  = do_sort(singles, stop, width, delay);
+    return std::make_tuple(end_pos, std::move(prompts), std::move(delays));
+}
+
+std::vector<CoincidenceData> do_sort(
+        std::vector<Single> &singles, 
+        std::atomic_bool &stop,
+        uint64_t width, uint64_t delay)
+{
+    std::vector<CoincidenceData> events;
 
     for (auto a = singles.begin(), e = singles.end(); !stop && a != e; ++a)
     {
-        for (auto b = a + 1; b != e && (b->abs_time - a->abs_time < width); ++b)
+        auto at = a->abs_time + delay;
+        for (auto b = a + 1; b != e; ++b)
         {
+            auto bt = b->abs_time;
+
+            if (bt < at)
+                continue;
+
+            if (bt - at > width)
+                break;
+
             const auto &ma = a->mod, &mb = b->mod;
 
             if (ma != mb &&
                 ma != Record::module_above(mb) &&
                 ma != Record::module_below(mb))
             {
-                coincidences.emplace_back(*a, *b);
+                events.emplace_back(*a, *b);
             }
         }
     }
 
-    return std::make_tuple(end_pos, std::move(coincidences));
+    return events;
 }

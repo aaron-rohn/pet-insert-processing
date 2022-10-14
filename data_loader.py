@@ -132,7 +132,7 @@ class CoincidenceSorter:
             self.input_files += list(tk.filedialog.askopenfilenames(
                 title = "Select singles listmode data to sort",
                 initialdir = "/",
-                filetypes = singles_filetypes + coincidence_filetypes))
+                filetypes = singles_filetypes))
             if not tk.messagebox.askyesno(message = "Select additional files?"):
                 break
 
@@ -142,7 +142,7 @@ class CoincidenceSorter:
                 title = "Output file, or none",
                 initialdir = os.path.dirname(self.input_files[0]),
                 filetypes = coincidence_filetypes) or None
-        
+
         self.bg = threading.Thread(target = self.sort_coincidences)
         self.bg.start()
 
@@ -160,12 +160,14 @@ class CoincidenceSorter:
         args = [self.terminate, self.stat_queue, self.input_files]
 
         if self.output_file is not None:
-            args += [self.output_file]
+            fname, _ = os.path.splitext(self.output_file)
+            args += [self.output_file, fname + '.DLY']
+        
             petmr.coincidences(*args)
             self.data_queue.put(self.output_file)
         else:
             tf = tempfile.NamedTemporaryFile()
-            args += [tf.name, max_events]
+            args += [tf.name, os.devnull, max_events]
             petmr.coincidences(*args)
             self.data_queue.put(tf)
 

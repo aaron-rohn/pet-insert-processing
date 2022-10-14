@@ -89,13 +89,18 @@ void find_tt_offset(
 );
 
 using sorted_values = std::tuple<std::vector<std::streampos>,
+                                 std::vector<CoincidenceData>,
                                  std::vector<CoincidenceData>>;
 
 sorted_values sort_span(
         std::vector<std::string>,
         std::vector<std::streampos>,
         std::vector<std::streampos>,
-        std::atomic_bool&
-);
+        std::atomic_bool&);
+
+std::vector<CoincidenceData> do_sort(
+        std::vector<Single>&,
+        std::atomic_bool&,
+        uint64_t, uint64_t);
 
 #endif

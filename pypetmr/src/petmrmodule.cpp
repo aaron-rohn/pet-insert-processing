@@ -189,11 +189,12 @@ petmr_coincidences(PyObject *self, PyObject *args)
 {
     PyObject *status_queue, *terminate, *py_file_list;
     uint64_t max_events = 0;
-    char *output_file_str = NULL;
-    if (!PyArg_ParseTuple(args, "OOOs|Ks", &terminate,
+    char *prompts_file_str = NULL, *delays_file_str = NULL;
+    if (!PyArg_ParseTuple(args, "OOOss|K",&terminate,
                                           &status_queue,
                                           &py_file_list,
-                                          &output_file_str,
+                                          &prompts_file_str,
+                                          &delays_file_str,
                                           &max_events)) return NULL;
 
     // Parse the input files
@@ -201,10 +202,12 @@ petmr_coincidences(PyObject *self, PyObject *args)
     if (PyErr_Occurred()) return NULL;
 
     // Create handle to output file
-    std::ofstream output_file_handle (
-            output_file_str, std::ios::out | std::ios::binary);
+    std::ofstream prompts_file_handle (
+            prompts_file_str, std::ios::out | std::ios::binary);
+    std::ofstream delays_file_handle (
+            delays_file_str, std::ios::out | std::ios::binary);
 
-    if (!output_file_handle)
+    if (!prompts_file_handle || !delays_file_handle)
     {
         PyErr_SetString(PyExc_IOError, strerror(errno));
         return NULL;
@@ -300,12 +303,14 @@ petmr_coincidences(PyObject *self, PyObject *args)
 
         if (workers.size() >= sorter_threads)
         {
-            auto [pos, new_cd] = workers.front().get();
+            auto [pos, new_prompts, new_delays] = workers.front().get();
+            std::cout << "Number of delays: " << new_delays.size() << std::endl;
             workers.pop_front();
-            CoincidenceData::write(output_file_handle, new_cd);
+            CoincidenceData::write(prompts_file_handle, new_prompts);
+            CoincidenceData::write(delays_file_handle, new_delays);
 
             // calculate data to update the UI
-            ncoin += new_cd.size();
+            ncoin += new_prompts.size();
             auto proc_size = std::accumulate(pos.begin(), pos.end(), std::streampos(0));
             double perc = ((double)proc_size) / total_size * 100.0;
 

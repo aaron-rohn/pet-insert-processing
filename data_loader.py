@@ -11,14 +11,38 @@ from matplotlib.figure import Figure, SubplotParams
 import matplotlib.pyplot as plt
 
 singles_filetypes = [("Singles",".SGL")]
-coincidence_filetypes = [("Coincidences",".COIN")]
+coincidence_filetypes = [("Prompts",".COIN"), ("Delays", ".DLY")]
 
 n_doi_bins = 4096
 max_events = int(1e9)
 coincidence_cols = 11
 
-scaling_nevents = 150e3
-scaling_factor  = 0.06
+scaling_nevents = 100e3
+scaling_factor  = 0.055
+scale = lambda ev_rate: 1 + (ev_rate / scaling_nevents * scaling_factor)
+
+def read_times(fname, nperiods = 500):
+    sz = os.path.getsize(fname)
+    nrow = int((sz/2) // coincidence_cols)
+    data = np.memmap(fname, np.uint16, shape = (nrow, coincidence_cols))
+
+    t = data[:,10]
+    nevents = t.shape[0]
+
+    ev_per_period = int(nevents / nperiods)
+    times = data[::ev_per_period,10].astype(np.double)
+
+    rollover = np.diff(times)
+    rollover = np.where(rollover < 0)[0]
+    for i in rollover:
+        times[i+1:] += 2**16
+
+    ev_rate = ev_per_period / np.diff(times)
+
+    # The scaling reflects the expansion of the flood due to count rate
+    scaling = scale(ev_rate)
+    fpos = np.linspace(0, sz, len(scaling), dtype = np.ulonglong)
+    return scaling, times[:-1], fpos
 
 class ProgressPopup(tk.Toplevel):
     def __init__(self, stat_queue, data_queue, terminate, callback):
@@ -113,10 +137,18 @@ class CoincidenceLoader:
 
         if not self.input_file: raise ValueError("No file specified")
 
+        _, ext = os.path.splitext(self.input_file)
+        self.reference_file = None
+        if ext == ".DLY":
+            self.reference_file = tk.filedialog.askopenfilename(
+                    title = "Select reference coincidence file",
+                    initialdir = os.path.dirname(self.input_file),
+                    filetypes = coincidence_filetypes) or None
+
         sz = os.path.getsize(self.input_file)
         nrow = int((sz/2) // coincidence_cols)
         data = np.memmap(self.input_file, np.uint16, shape = (nrow, coincidence_cols))
-        self.prof = CoincidenceProfilePlot(data, callback)
+        self.prof = CoincidenceProfilePlot(data, callback, self.reference_file)
 
 class CoincidenceSorter:
     def __init__(self, outside_callback):
@@ -185,13 +217,14 @@ class CoincidenceSorter:
         self.prof = CoincidenceProfilePlot(data, self.outside_callback)
 
 class CoincidenceProfilePlot(tk.Toplevel):
-    def __init__(self, data, callback):
+    def __init__(self, data, callback, reference_file = None):
         super().__init__()
         self.attributes('-type', 'dialog')
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.callback = callback 
         self.data = data
+        self.reference_file = reference_file
 
         self.fig = Figure()
         self.plt = self.fig.add_subplot()
@@ -229,8 +262,9 @@ class CoincidenceProfilePlot(tk.Toplevel):
     def draw_hist(self):
         t = self.data[:,10]
         nevents = t.shape[0]
+        nperiods = 500
 
-        self.ev_per_period = int(nevents / 500)
+        self.ev_per_period = int(nevents / nperiods)
         self.times = self.data[::self.ev_per_period,10].astype(float)
 
         rollover = np.diff(self.times)
@@ -243,8 +277,13 @@ class CoincidenceProfilePlot(tk.Toplevel):
 
         self.ev_rate = self.ev_per_period / np.diff(self.times)
 
-        # The scaling reflects the expansion of the flood due to count rate
-        self.scaling = 1 + (self.ev_rate / scaling_nevents * scaling_factor)
+        if self.reference_file is not None:
+            scaling, times, fpos = read_times(self.reference_file, nperiods)
+            times_idx = np.searchsorted(times, self.times)
+            times_idx = np.clip(times_idx, 0, len(scaling)-1)
+            self.scaling = scaling[times_idx]
+        else:
+            self.scaling = scale(self.ev_rate)
 
         self.plt.plot(self.times[:-1], self.ev_rate)
         self.plt.grid()

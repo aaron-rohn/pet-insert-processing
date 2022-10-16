@@ -22,7 +22,8 @@ class SinogramDisplay:
         self.save_sino = tk.Button(self.button_frame, text = "Save Sinogram", command = self.save_sinogram)
         self.save_lm   = tk.Button(self.button_frame, text = "Save Listmode", command = self.save_listmode)
         self.create_norm_button = tk.Button(self.button_frame, text = "Create Norm", command = self.create_norm)
-        self.apply_norm_button = tk.Button(self.button_frame, text = "Apply Norm", command = self.apply_norm)
+        self.multiply_button = tk.Button(self.button_frame, text = "Multiply", command = self.multiply)
+        self.subtract_button = tk.Button(self.button_frame, text = "Subtract", command = self.subtract)
 
         self.plot_frame = tk.Frame(self.root)
         self.plot_frame.rowconfigure(0, weight = 1)
@@ -58,7 +59,8 @@ class SinogramDisplay:
         self.save_sino.pack(side = tk.LEFT, padx = 5)
         self.save_lm.pack(side = tk.LEFT, padx = 5)
         self.create_norm_button.pack(side = tk.LEFT, padx = 5)
-        self.apply_norm_button.pack(side = tk.LEFT, padx = 5)
+        self.multiply_button.pack(side = tk.LEFT, padx = 5)
+        self.subtract_button.pack(side = tk.LEFT, padx = 5)
         self.plot_frame.pack(fill = tk.BOTH, expand = True, padx = 5, pady = 5)
 
     def count_map_draw(self):
@@ -137,7 +139,8 @@ class SinogramDisplay:
     def load_sinogram(self):
         fname = tk.filedialog.askopenfilename(
                 title = "Select sinogram file",
-                initialdir = '/')
+                initialdir = '/',
+                filetypes = [("Sinogram file", ".raw")])
 
         if fname:
             self.sino_data = petmr.load_sinogram(fname)
@@ -180,67 +183,45 @@ class SinogramDisplay:
                 fname, cfgdir, lmfname)
 
     def create_norm(self):
-        fnames = tk.filedialog.askopenfilenames(
-                title = "Select sinogram file",
-                initialdir = '/',
-                filetypes = [("Sinogram file", ".raw")])
-
-        if not fnames: return
-
-        # sum the provided sinograms
-        sinogram = None
-        for fn in fnames:
-            s = petmr.load_sinogram(fn)
-
-            if sinogram is None:
-                sinogram = s
-            else:
-                sinogram += s
+        if self.sino_data is None: return
 
         # average over angular dimension
-        proj = sinogram.mean((0,1,2))
+        proj = self.sino_data.mean((0,1,2))
 
-        """
-        for idx in np.ndindex(proj.shape[0:2]):
-            sino = sinogram[idx]
-            prof = proj[idx]
-
-            thr = prof > (np.max(prof)/2)
-            fst = np.argmax(thr)
-            lst = len(thr) - np.argmax(thr[::-1]) - 1
-
-            msk = np.ones_like(thr)
-            msk[fst:lst] = 0
-            sino[:,msk] = 1
-        """
-
-        sinogram = proj[None,None,None,:] / sinogram
-        self.sino_data = np.nan_to_num(sinogram,
-                nan = 1, posinf = 1, neginf = 1)
+        np.divide(proj[None,None,None,:], self.sino_data,
+                  out = self.sino_data)
+        np.nan_to_num(self.sino_data, copy = False,
+                      nan = 1, posinf = 1, neginf = 1)
         self.count_map_draw()
 
-    def apply_norm(self):
-        fname = tk.filedialog.askopenfilename(
-                title = "Select sinogram file",
+    def multiply(self):
+        if self.sino_data is None: return
+
+        mult = tk.filedialog.askopenfilename(
+                title = "Select sinogram to multiply",
                 initialdir = '/',
                 filetypes = [("Sinogram file", ".raw")])
 
-        if not fname: return
+        if not mult: return
 
-        base = os.path.dirname(fname)
-        norm = tk.filedialog.askopenfilename(
-                title = "Select normalization sinogram",
-                initialdir = base,
+        np.multiply(self.sino_data, petmr.load_sinogram(mult),
+                    out = self.sino_data)
+        np.nan_to_num(self.sino_data, copy = False,
+                      nan = 1, posinf = 1, neginf = 1)
+        self.count_map_draw()
+
+    def subtract(self):
+        if self.sino_data is None: return
+
+        sub = tk.filedialog.askopenfilename(
+                title = "Select sinogram to subtract",
+                initialdir = '/',
                 filetypes = [("Sinogram file", ".raw")])
 
-        if not norm: return
+        if not sub: return
 
-        # load sinogram and norm
-        self.sino_data = petmr.load_sinogram(fname)
-        norm_sino      = petmr.load_sinogram(norm)
-
-        self.sino_data *= norm_sino
-        self.sino_data = np.nan_to_num(self.sino_data,
-                nan = 1, posinf = 1, neginf = 1)
-
+        np.subtract(self.sino_data, petmr.load_sinogram(sub),
+                    out = self.sino_data)
+        np.nan_to_num(self.sino_data, copy = False,
+                      nan = 1, posinf = 1, neginf = 1)
         self.count_map_draw()

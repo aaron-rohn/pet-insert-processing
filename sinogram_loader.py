@@ -4,32 +4,33 @@ from tkinter.ttk import Progressbar
 import numpy as np
 import matplotlib.pyplot as plt
 
-from data_loader import coincidence_cols, scaling_nevents, scaling_factor
-
-def read_times(fname, nperiods = 500):
-    sz = os.path.getsize(fname)
-    nrow = int((sz/2) // coincidence_cols)
-    data = np.memmap(fname, np.uint16, shape = (nrow, coincidence_cols))
-
-    t = data[:,10]
-    nevents = t.shape[0]
-
-    ev_per_period = int(nevents / nperiods)
-    times = data[::ev_per_period,10].astype(np.double)
-
-    rollover = np.diff(times)
-    rollover = np.where(rollover < 0)[0]
-    for i in rollover:
-        times[i+1:] += 2**16
-
-    ev_rate = ev_per_period / np.diff(times)
-    scaling = 1 + (ev_rate / scaling_nevents * scaling_factor)
-    fpos = np.linspace(0, sz, len(scaling), dtype = np.ulonglong)
-    return scaling, fpos
+from data_loader import (
+        coincidence_cols,
+        scaling_nevents,
+        scaling_factor,
+        read_times,
+        coincidence_filetypes
+        )
 
 class SinogramLoaderPopup:
     def __init__(self, root, callback, target,
                  fname, cfgdir, *args):
+
+        _, ext = os.path.splitext(fname)
+        reference_file = None
+        if ext == ".DLY":
+            reference_file = tk.filedialog.askopenfilename(
+                    title = "Select reference coincidence file",
+                    initialdir = os.path.dirname(fname),
+                    filetypes = coincidence_filetypes) or None
+
+        nperiods = 100
+        scaling, times, fpos = read_times(fname, nperiods)
+        if reference_file is not None:
+            ref_scale, ref_time, _ = read_times(reference_file, nperiods)
+            times_idx = np.searchsorted(ref_time, times)
+            times_idx = np.clip(times_idx, 0, len(ref_scale)-1)
+            scaling = ref_scale[times_idx]
 
         self.callback = callback 
         self.target = target
@@ -45,7 +46,6 @@ class SinogramLoaderPopup:
         self.data_queue = queue.Queue()
         self.stat_queue = queue.Queue()
 
-        scaling, fpos = read_times(fname, 100)
         self.bg = threading.Thread(target = self.handle_listmode, 
                 args = list(args) + [fname, cfgdir,
                                      scaling, fpos,

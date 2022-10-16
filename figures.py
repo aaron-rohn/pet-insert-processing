@@ -1,6 +1,7 @@
 import os, json, copy, matplotlib
 import numpy as np
 import tkinter as tk
+import cv2 as cv
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure, SubplotParams
 from scipy.spatial import Voronoi, voronoi_plot_2d
@@ -139,21 +140,13 @@ class FloodHist(MPLFigure):
                 range = [[0,self.img_size-1],[0,self.img_size-1]])
 
         if overlay is not None:
-            overlay = ndimage.zoom(overlay, scaling, order = 0)
+            overlay = cv.dilate(overlay, np.ones((3,3)))
+            overlay = cv.resize(overlay, None,
+                                fx = scaling, fy = scaling,
+                                interpolation = cv.INTER_NEAREST)
             nr, nc = [int(rc/2) for rc in overlay.shape]
             overlay = overlay[nr-256:nr+256, nc-256:nc+256]
             overlay = np.ma.array(overlay, mask = (overlay == 0))
-
-        """
-        shape_in = self.img.shape
-        self.img = ndimage.zoom(self.img, scaling)
-        shape_out = self.img.shape
-
-        diffs = [a - b for a,b in zip(shape_in, shape_out)]
-        lpads = [int(d/2) for d in diffs]
-        rpads = [d - l for d,l in zip(diffs, lpads)]
-        self.img = np.pad(self.img, list(zip(lpads, rpads)))
-        """
 
         self.f = Flood(self.img, warp)
 
@@ -320,24 +313,20 @@ class Plots(tk.Frame):
         self.flood_cb()
 
     def create_lut_borders(self):
-        lut = None
-        if self.overlay_lut.get() and self.output_dir:
-            try:
-                blk = self.return_block()
-                lut_fname = os.path.join(self.output_dir, f'block{blk}.lut')
-                lut = np.fromfile(lut_fname, np.intc).reshape((512,512))
-                yd = np.diff(lut, axis = 0, prepend = lut.max()) != 0
-                xd = np.diff(lut, axis = 1, prepend = lut.max()) != 0
-                lut = np.logical_or(xd, yd)
-                lut = ndimage.binary_dilation(lut)
-            except Exception as e:
-                lut = None
-        return lut
+        blk = self.return_block()
+        lut_fname = os.path.join(self.output_dir, f'block{blk}.lut')
+        lut = np.fromfile(lut_fname, np.intc).reshape((512,512))
+        yd = np.diff(lut, axis = 0, prepend = lut.max()) != 0
+        xd = np.diff(lut, axis = 1, prepend = lut.max()) != 0
+        return np.logical_or(xd, yd).astype(np.uint8)
 
     def flood_cb(self):
         """ Update the flood according to energy and DOI thresholds """
         if self.d is None: return
-        lut = self.create_lut_borders()
+
+        lut = None
+        if self.overlay_lut.get() and self.output_dir:
+            lut = self.create_lut_borders()
 
         eth = self.energy.thresholds()
         dth = self.doi.thresholds()

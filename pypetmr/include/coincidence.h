@@ -67,17 +67,6 @@ struct CoincidenceData
     
     inline std::tuple<uint16_t,uint16_t,uint16_t,uint16_t> pos() const
     { return std::make_tuple(x_a(),y_a(),x_b(),y_b()); }
-
-    /*
-    // rescale value must be <=1.0
-    static uint16_t rescale(uint16_t val, double scale, double offset = 255.0)
-    { return scale == 1.0 ? val : std::round(((double)val - offset)*scale + offset); }
-
-    std::tuple<uint16_t,uint16_t,uint16_t,uint16_t> pos_scaled(double scale) const
-    { return std::make_tuple(
-            rescale(x_a(), scale), rescale(y_a(), scale),
-            rescale(x_b(), scale), rescale(y_b(), scale)); }
-    */
 };
 
 void find_tt_offset(
@@ -88,19 +77,13 @@ void find_tt_offset(
         std::atomic_bool&
 );
 
-using sorted_values = std::tuple<std::vector<std::streampos>,
-                                 std::vector<CoincidenceData>,
-                                 std::vector<CoincidenceData>>;
+using Coincidences = std::vector<CoincidenceData>;
+using sorted_values = std::tuple<std::vector<std::streampos>, Coincidences, Coincidences>;
 
 sorted_values sort_span(
         std::vector<std::string>,
         std::vector<std::streampos>,
         std::vector<std::streampos>,
         std::atomic_bool&);
-
-std::vector<CoincidenceData> do_sort(
-        std::vector<Single>&,
-        std::atomic_bool&,
-        uint64_t, uint64_t);
 
 #endif

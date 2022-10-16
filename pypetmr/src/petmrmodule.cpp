@@ -304,7 +304,6 @@ petmr_coincidences(PyObject *self, PyObject *args)
         if (workers.size() >= sorter_threads)
         {
             auto [pos, new_prompts, new_delays] = workers.front().get();
-            std::cout << "Number of delays: " << new_delays.size() << std::endl;
             workers.pop_front();
             CoincidenceData::write(prompts_file_handle, new_prompts);
             CoincidenceData::write(delays_file_handle, new_delays);

@@ -251,6 +251,43 @@ void find_tt_offset(
  * given a start and end position for each file
  */
 
+std::tuple<Coincidences, Coincidences> sort(
+        std::vector<Single> &singles, 
+        std::atomic_bool &stop,
+        uint64_t width, uint64_t delay)
+{
+    Coincidences prompts, delays;
+
+    // iterate the first event in the coincidence - all events
+    for (auto a = singles.begin(), e = singles.end(); !stop && a != e; ++a)
+    {
+        // Sort for prompts and delays at the same time
+        auto endt = a->abs_time + delay + width;
+
+        // iterate the second event in the coincidence - events until the window ends
+        for (auto b = a + 1; b != e && b->abs_time < endt; ++b)
+        {
+            auto tdiff = b->abs_time - a->abs_time;
+            auto &ma = a->mod, &mb = b->mod;
+
+            if (ma != mb &&
+                ma != Record::module_above(mb) &&
+                ma != Record::module_below(mb))
+            {
+                // only accept prompts for the coincidence window width
+                if (tdiff < width)
+                    prompts.emplace_back(*a, *b);
+
+                // only accept delays after the delay period
+                if (tdiff > delay)
+                    delays.emplace_back(*a, *b);
+            }
+        }
+    }
+
+    return std::make_tuple(prompts, delays);
+}
+
 sorted_values sort_span(
         std::vector<std::string> fnames,
         std::vector<std::streampos> start_pos,
@@ -317,41 +354,6 @@ sorted_values sort_span(
     std::sort_heap(singles.begin(), singles.end());
 
     uint64_t width = 10, delay = 100;
-    auto prompts = do_sort(singles, stop, width, 0);
-    auto delays  = do_sort(singles, stop, width, delay);
-    return std::make_tuple(end_pos, std::move(prompts), std::move(delays));
-}
-
-std::vector<CoincidenceData> do_sort(
-        std::vector<Single> &singles, 
-        std::atomic_bool &stop,
-        uint64_t width, uint64_t delay)
-{
-    std::vector<CoincidenceData> events;
-
-    for (auto a = singles.begin(), e = singles.end(); !stop && a != e; ++a)
-    {
-        auto at = a->abs_time + delay;
-        for (auto b = a + 1; b != e; ++b)
-        {
-            auto bt = b->abs_time;
-
-            if (bt < at)
-                continue;
-
-            if (bt - at > width)
-                break;
-
-            const auto &ma = a->mod, &mb = b->mod;
-
-            if (ma != mb &&
-                ma != Record::module_above(mb) &&
-                ma != Record::module_below(mb))
-            {
-                events.emplace_back(*a, *b);
-            }
-        }
-    }
-
-    return events;
+    auto [prompts, delays] = sort(singles, stop, width, delay);
+    return std::make_tuple(end_pos, prompts, delays);
 }

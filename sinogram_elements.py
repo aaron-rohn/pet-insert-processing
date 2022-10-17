@@ -22,8 +22,8 @@ class SinogramDisplay:
         self.save_sino = tk.Button(self.button_frame, text = "Save Sinogram", command = self.save_sinogram)
         self.save_lm   = tk.Button(self.button_frame, text = "Save Listmode", command = self.save_listmode)
         self.create_norm_button = tk.Button(self.button_frame, text = "Create Norm", command = self.create_norm)
-        self.multiply_button = tk.Button(self.button_frame, text = "Multiply", command = self.multiply)
-        self.subtract_button = tk.Button(self.button_frame, text = "Subtract", command = self.subtract)
+        self.multiply_button = tk.Button(self.button_frame, text = "Multiply", command = lambda: self.operation(np.multiply))
+        self.subtract_button = tk.Button(self.button_frame, text = "Subtract", command = lambda: self.operation(np.subtract))
 
         self.plot_frame = tk.Frame(self.root)
         self.plot_frame.rowconfigure(0, weight = 1)
@@ -79,8 +79,9 @@ class SinogramDisplay:
         v = int(np.ceil(ev.ydata))
         if self.sino_data is not None:
             print(f'row: {v} col: {h}')
-            self.sinogram_plt.imshow(self.sino_data[v,h,:,:],
-                                     aspect = 'auto')
+            d = self.sino_data[v,h]
+            self.sinogram_plt.imshow(d, aspect = 'auto',
+                                     vmin = 0, vmax = np.quantile(d, 0.999))
             self.sinogram_plt.invert_yaxis()
             self.sinogram_canvas.draw()
 
@@ -183,7 +184,8 @@ class SinogramDisplay:
                 fname, cfgdir, lmfname)
 
     def create_norm(self):
-        if self.sino_data is None: return
+        if self.sino_data is None:
+            return
 
         # average over angular dimension
         proj = self.sino_data.mean((0,1,2))
@@ -194,34 +196,20 @@ class SinogramDisplay:
                       nan = 1, posinf = 1, neginf = 1)
         self.count_map_draw()
 
-    def multiply(self):
-        if self.sino_data is None: return
+    def operation(self, op):
+        if self.sino_data is None:
+            return
 
-        mult = tk.filedialog.askopenfilename(
-                title = "Select sinogram to multiply",
+        other_fname = tk.filedialog.askopenfilename(
+                title = "Select sinogram for operation",
                 initialdir = '/',
                 filetypes = [("Sinogram file", ".raw")])
 
-        if not mult: return
+        if not other_fname:
+            return
 
-        np.multiply(self.sino_data, petmr.load_sinogram(mult),
-                    out = self.sino_data)
-        np.nan_to_num(self.sino_data, copy = False,
-                      nan = 1, posinf = 1, neginf = 1)
-        self.count_map_draw()
-
-    def subtract(self):
-        if self.sino_data is None: return
-
-        sub = tk.filedialog.askopenfilename(
-                title = "Select sinogram to subtract",
-                initialdir = '/',
-                filetypes = [("Sinogram file", ".raw")])
-
-        if not sub: return
-
-        np.subtract(self.sino_data, petmr.load_sinogram(sub),
-                    out = self.sino_data)
+        other = petmr.load_sinogram(other_fname)
+        op(self.sino_data, other, out = self.sino_data)
         np.nan_to_num(self.sino_data, copy = False,
                       nan = 1, posinf = 1, neginf = 1)
         self.count_map_draw()

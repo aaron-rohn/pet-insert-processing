@@ -107,56 +107,63 @@ PhotopeakLookupTable::PhotopeakLookupTable(std::string base_dir):
     loaded = true;
 }
 
-std::tuple<bool, int, int, int, int, int, int>
+ListmodeData
 Michelogram::event_to_coords(const CoincidenceData& c, size_t scale_idx)
 {
-    static const auto invalid_ev =
-        std::make_tuple(false, -1, -1, -1, -1, -1, -1);
+    ListmodeData lm;
+    lm.invalid();
 
     // Lookup crystal index
     auto [ba, bb] = c.blk();
     auto [pos_xa, pos_ya, pos_xb, pos_yb] = c.pos();
 
-    int xa = lut(ba, scale_idx, pos_ya, pos_xa);
-    int xb = lut(bb, scale_idx, pos_yb, pos_xb);
+    unsigned int xa = lut(ba, scale_idx, pos_ya, pos_xa);
+    unsigned int xb = lut(bb, scale_idx, pos_yb, pos_xb);
     if (xa >= ncrystals_total || xb >= ncrystals_total)
-        return invalid_ev;
+        return lm;
 
     // Apply energy thresholds
     auto [ea, eb] = c.e_sum();
-    if (!ppeak.in_window(ba,xa,ea) || !ppeak.in_window(bb,xb,eb))
-        return invalid_ev;
+    int scaled_ea = ppeak.in_window(ba, xa, ea);
+    int scaled_eb = ppeak.in_window(bb, xb, eb);
+    if (scaled_ea < 0 || scaled_eb < 0)
+        return lm;
 
     auto [doia_val, doib_val] = c.doi();
-    int doia = ppeak.doi_window(ba, xa, doia_val);
-    int doib = ppeak.doi_window(bb, xb, doib_val);
+    unsigned int doia = ppeak.doi_window(ba, xa, doia_val);
+    unsigned int doib = ppeak.doi_window(bb, xb, doib_val);
 
-    int ra = ring(ba, xa), rb = ring(bb, xb);
-    int idxa = idx(ba, xa), idxb = idx(bb, xb);
-    return std::make_tuple(true, ra, rb, idxa, idxb, doia, doib);
+    unsigned int ra = ring(ba, xa), rb = ring(bb, xb);
+    unsigned int idxa = idx(ba, xa), idxb = idx(bb, xb);
+
+    lm = {
+        .ring_a = ra, .crystal_a = idxa,
+        .ring_b = rb, .crystal_b = idxb,
+        .energy_b = (uint16_t)scaled_eb,
+        .energy_a = (uint16_t)scaled_ea,
+        .doi_b = doib, .doi_a = doia,
+        .abstime = c.abstime(),
+        .tdiff = c.tdiff(),
+        .prompt = c.prompt()
+    };
+
+    return lm;
 }
 
 void Michelogram::add_event(const CoincidenceData &c, size_t scale_idx)
 {
-    auto [valid, ra, rb, idxa, idxb, doia, doib] = event_to_coords(c, scale_idx);
-
-    if (valid)
+    ListmodeData lm = event_to_coords(c, scale_idx);
+    if (lm.valid())
     {
-        (*this)(ra,rb).add_event(idxa, idxb);
+        (*this)(lm.ring_a, lm.ring_b).add_event(
+                lm.crystal_a, lm.crystal_b);
     }
 }
 
 void Michelogram::write_event(std::ofstream &f, const CoincidenceData &c, size_t scale_idx)
 {
-    auto [valid, ra, rb, idxa, idxb, doia, doib] = event_to_coords(c, scale_idx);
-
-    if (valid)
-    {
-        int16_t data[] = {(int16_t)idxa, (int16_t)ra,
-                          (int16_t)idxb, (int16_t)rb,
-                          (int16_t)(doia << 8 | doib)}; 
-        f.write((char*)data, sizeof(data));
-    }
+    ListmodeData lm = event_to_coords(c, scale_idx);
+    if (lm.valid()) f.write((char*)&lm, sizeof(lm));
 }
 
 void Michelogram::write_to(std::string fname)

@@ -189,25 +189,22 @@ petmr_coincidences(PyObject *self, PyObject *args)
 {
     PyObject *status_queue, *terminate, *py_file_list;
     uint64_t max_events = 0;
-    char *prompts_file_str = NULL, *delays_file_str = NULL;
-    if (!PyArg_ParseTuple(args, "OOOss|K",&terminate,
-                                          &status_queue,
-                                          &py_file_list,
-                                          &prompts_file_str,
-                                          &delays_file_str,
-                                          &max_events)) return NULL;
+    char *output_file_str = NULL;
+    if (!PyArg_ParseTuple(args, "OOOs|K",&terminate,
+                                         &status_queue,
+                                         &py_file_list,
+                                         &output_file_str,
+                                         &max_events)) return NULL;
 
     // Parse the input files
     auto file_list = pylist_to_strings(py_file_list);
     if (PyErr_Occurred()) return NULL;
 
     // Create handle to output file
-    std::ofstream prompts_file_handle (
-            prompts_file_str, std::ios::out | std::ios::binary);
-    std::ofstream delays_file_handle (
-            delays_file_str, std::ios::out | std::ios::binary);
+    std::ofstream output_file_handle (
+            output_file_str, std::ios::out | std::ios::binary);
 
-    if (!prompts_file_handle || !delays_file_handle)
+    if (!output_file_handle)
     {
         PyErr_SetString(PyExc_IOError, strerror(errno));
         return NULL;
@@ -303,13 +300,12 @@ petmr_coincidences(PyObject *self, PyObject *args)
 
         if (workers.size() >= sorter_threads)
         {
-            auto [pos, new_prompts, new_delays] = workers.front().get();
+            auto [pos, coin] = workers.front().get();
             workers.pop_front();
-            CoincidenceData::write(prompts_file_handle, new_prompts);
-            CoincidenceData::write(delays_file_handle, new_delays);
+            CoincidenceData::write(output_file_handle, coin);
 
             // calculate data to update the UI
-            ncoin += new_prompts.size();
+            ncoin += coin.size();
             auto proc_size = std::accumulate(pos.begin(), pos.end(), std::streampos(0));
             double perc = ((double)proc_size) / total_size * 100.0;
 
@@ -408,8 +404,8 @@ petmr_sort_sinogram(PyObject *self, PyObject *args)
     if (!m.loaded())
     {
         PyEval_RestoreThread(_save);
-        std::string err_str = "Failed to load configuration data";
-        PyErr_SetString(PyExc_RuntimeError, err_str.c_str());
+        PyErr_SetString(PyExc_RuntimeError,
+                "Failed to load configuration data");
         return NULL;
     }
 
@@ -489,10 +485,10 @@ petmr_save_listmode(PyObject* self, PyObject* args)
     if (!m.loaded())
     {
         PyEval_RestoreThread(_save);
-        std::string err_str = "Error loading configuration data";
-        PyErr_SetString(PyExc_RuntimeError, err_str.c_str());
+        PyErr_SetString(PyExc_RuntimeError,
+                "Error loading configuration data");
         return NULL;
-    };
+    }
 
     std::ifstream cf(fname, std::ios::binary);
     std::ofstream lf(lmfname, std::ios::binary);

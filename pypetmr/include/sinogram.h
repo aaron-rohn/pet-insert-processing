@@ -37,7 +37,9 @@ class Geometry
 
     static const int dim_theta_full = ncrystals_per_ring;
     static const int dim_theta_half = ncrystals_per_ring/2;
-    static const int dim_r          = ncrystals_per_ring;
+
+    // trim outermost blocks in transverse direction
+    static const int dim_r = ncrystals_per_ring - (2*ncrystals);
 
     static constexpr double energy_window = 0.2;
 
@@ -85,11 +87,17 @@ class PhotopeakLookupTable
     PhotopeakLookupTable(std::string);
     static std::string find_cfg_file(std::string);
 
-    inline bool in_window(size_t blk, size_t xtal, double e)
+    inline int in_window(size_t blk, size_t xtal, double e)
     {
         double th = photopeaks[blk][xtal];
-        return (th < 0) || ((e > (1.0-energy_window)*th) &&
-                            (e < (1.0+energy_window)*th));
+        if (th < 0) return 0;
+
+        double lld = (1.0 - energy_window)*th, uld = (1.0 + energy_window)*th;
+        if (e < lld || e > uld) return -1;
+
+        // scale the photopeak to 1/2 the 6 bit dynamic range
+        e = e / th * 32.0;
+        return std::min(e, 63.0);
     }
 
     inline int doi_window(size_t blk, size_t xtal, double val)
@@ -129,6 +137,11 @@ class Sinogram: Geometry
     void add_event(int idx1, int idx2)
     {
         auto [theta, r] = idx_to_coord(idx1, idx2);
+
+        // trim outermost blocks from transverse dimension of sinogram
+        r -= ncrystals;
+        if (r < 0 || r > dim_r) return;
+
         std::lock_guard<std::mutex> lck(m);
         (*this)(theta, r)++;
     }
@@ -152,8 +165,7 @@ class Michelogram: Geometry
     // first arg is horiz. index, second arg is vert. index
     inline Sinogram& operator() (int h, int v){ return m[v*nring + h]; };
 
-    std::tuple<bool, int, int, int, int, int, int> event_to_coords(
-            const CoincidenceData&, size_t);
+    ListmodeData event_to_coords(const CoincidenceData&, size_t);
 
     void add_event(const CoincidenceData&, size_t);
     void write_event(std::ofstream&, const CoincidenceData&, size_t);

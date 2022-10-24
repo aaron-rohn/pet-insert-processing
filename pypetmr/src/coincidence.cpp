@@ -56,7 +56,7 @@ CoincidenceData::CoincidenceData(const Single &a, const Single &b)
     abstime(t);
 
     int16_t td = ev1.abs_time - ev2.abs_time;
-    tdiff(td);
+    tdiff(td <= window_width, td % window_delay);
 
     blk(ev1.blk, ev2.blk);
     e_aF(sd1.eF);
@@ -69,7 +69,7 @@ CoincidenceData::CoincidenceData(const Single &a, const Single &b)
     y_b(sd2.y);
 }
 
-std::vector<CoincidenceData>
+Coincidences
 CoincidenceData::read(std::string fname, uint64_t max_events)
 {
     std::streampos fsize;
@@ -83,7 +83,7 @@ CoincidenceData::read(std::string fname, uint64_t max_events)
     uint64_t count = fsize / sizeof(CoincidenceData);
     count = max_events > 0 && count > max_events ? max_events : count;
 
-    std::vector<CoincidenceData> cd(count);
+    Coincidences cd(count);
     f.read((char*)cd.data(), count * sizeof(CoincidenceData));
 
     return cd;
@@ -91,7 +91,7 @@ CoincidenceData::read(std::string fname, uint64_t max_events)
 
 void CoincidenceData::write(
         std::ofstream &f,
-        const std::vector<CoincidenceData> &cd
+        const Coincidences &cd
 ) {
     f.write((char*)cd.data(), cd.size()*sizeof(CoincidenceData));
 }
@@ -135,10 +135,10 @@ PyObject *CoincidenceData::to_py_data(
     return out;
 }
 
-std::vector<CoincidenceData>
+Coincidences
 CoincidenceData::from_py_data(PyObject *obj)
 {
-    std::vector<CoincidenceData> cd;
+    Coincidences cd;
     PyObject *a, *b;
     size_t ncola = 0, ncolb = 0;
     PyArrayObject *acols[ncol] = {NULL}, *bcols[ncol] = {NULL};
@@ -198,7 +198,7 @@ CoincidenceData::from_py_data(PyObject *obj)
         cd[i].x_b(*(uint16_t*)PyArray_GETPTR1(bcols[3],i));
         cd[i].y_b(*(uint16_t*)PyArray_GETPTR1(bcols[4],i));
 
-        cd[i].tdiff(0);
+        cd[i].tdiff(1, 0);
     }
 
     return cd;
@@ -251,18 +251,19 @@ void find_tt_offset(
  * given a start and end position for each file
  */
 
-std::tuple<Coincidences, Coincidences> sort(
+Coincidences sort(
         std::vector<Single> &singles, 
-        std::atomic_bool &stop,
-        uint64_t width, uint64_t delay)
-{
-    Coincidences prompts, delays;
+        std::atomic_bool &stop
+) {
+    Coincidences coin;
 
     // iterate the first event in the coincidence - all events
     for (auto a = singles.begin(), e = singles.end(); !stop && a != e; ++a)
     {
         // Sort for prompts and delays at the same time
-        auto endt = a->abs_time + delay + width;
+        auto endt = a->abs_time +
+            CoincidenceData::window_delay +
+            CoincidenceData::window_width;
 
         // iterate the second event in the coincidence - events until the window ends
         for (auto b = a + 1; b != e && b->abs_time < endt; ++b)
@@ -275,17 +276,13 @@ std::tuple<Coincidences, Coincidences> sort(
                 ma != Record::module_below(mb))
             {
                 // only accept prompts for the coincidence window width
-                if (tdiff < width)
-                    prompts.emplace_back(*a, *b);
-
-                // only accept delays after the delay period
-                if (tdiff > delay)
-                    delays.emplace_back(*a, *b);
+                if (tdiff < CoincidenceData::window_width || tdiff > CoincidenceData::window_delay)
+                    coin.emplace_back(*a, *b);
             }
         }
     }
 
-    return std::make_tuple(prompts, delays);
+    return coin;
 }
 
 sorted_values sort_span(
@@ -353,7 +350,6 @@ sorted_values sort_span(
     // sort heap with ascending absolute time
     std::sort_heap(singles.begin(), singles.end());
 
-    uint64_t width = 10, delay = 100;
-    auto [prompts, delays] = sort(singles, stop, width, delay);
-    return std::make_tuple(end_pos, prompts, delays);
+    auto coin = sort(singles, stop);
+    return std::make_tuple(end_pos, coin);
 }

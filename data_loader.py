@@ -11,7 +11,7 @@ from matplotlib.figure import Figure, SubplotParams
 import matplotlib.pyplot as plt
 
 singles_filetypes = [("Singles",".SGL")]
-coincidence_filetypes = [("Prompts",".COIN"), ("Delays", ".DLY")]
+coincidence_filetypes = [("Prompts",".COIN")] #, ("Delays", ".DLY")]
 
 n_doi_bins = 4096
 max_events = int(1e9)
@@ -137,18 +137,10 @@ class CoincidenceLoader:
 
         if not self.input_file: raise ValueError("No file specified")
 
-        _, ext = os.path.splitext(self.input_file)
-        self.reference_file = None
-        if ext == ".DLY":
-            self.reference_file = tk.filedialog.askopenfilename(
-                    title = "Select reference coincidence file",
-                    initialdir = os.path.dirname(self.input_file),
-                    filetypes = coincidence_filetypes) or None
-
         sz = os.path.getsize(self.input_file)
         nrow = int((sz/2) // coincidence_cols)
         data = np.memmap(self.input_file, np.uint16, shape = (nrow, coincidence_cols))
-        self.prof = CoincidenceProfilePlot(data, callback, self.reference_file)
+        self.prof = CoincidenceProfilePlot(data, callback)
 
 class CoincidenceSorter:
     def __init__(self, outside_callback):
@@ -192,14 +184,12 @@ class CoincidenceSorter:
         args = [self.terminate, self.stat_queue, self.input_files]
 
         if self.output_file is not None:
-            fname, _ = os.path.splitext(self.output_file)
-            args += [self.output_file, fname + '.DLY']
-        
+            args += [self.output_file]
             petmr.coincidences(*args)
             self.data_queue.put(self.output_file)
         else:
             tf = tempfile.NamedTemporaryFile()
-            args += [tf.name, os.devnull, max_events]
+            args += [tf.name, max_events]
             petmr.coincidences(*args)
             self.data_queue.put(tf)
 
@@ -217,14 +207,13 @@ class CoincidenceSorter:
         self.prof = CoincidenceProfilePlot(data, self.outside_callback)
 
 class CoincidenceProfilePlot(tk.Toplevel):
-    def __init__(self, data, callback, reference_file = None):
+    def __init__(self, data, callback):
         super().__init__()
         self.attributes('-type', 'dialog')
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.callback = callback 
         self.data = data
-        self.reference_file = reference_file
 
         self.fig = Figure()
         self.plt = self.fig.add_subplot()
@@ -276,14 +265,7 @@ class CoincidenceProfilePlot(tk.Toplevel):
         self.init_lines(self.lims)
 
         self.ev_rate = self.ev_per_period / np.diff(self.times)
-
-        if self.reference_file is not None:
-            scaling, times, fpos = read_times(self.reference_file, nperiods)
-            times_idx = np.searchsorted(times, self.times)
-            times_idx = np.clip(times_idx, 0, len(scaling)-1)
-            self.scaling = scaling[times_idx]
-        else:
-            self.scaling = scale(self.ev_rate)
+        self.scaling = scale(self.ev_rate)
 
         self.plt.plot(self.times[:-1], self.ev_rate)
         self.plt.grid()

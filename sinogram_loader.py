@@ -16,22 +16,8 @@ class SinogramLoaderPopup:
     def __init__(self, root, callback, target,
                  fname, cfgdir, *args):
 
-        _, ext = os.path.splitext(fname)
-        reference_file = None
-        if ext == ".DLY":
-            reference_file = tk.filedialog.askopenfilename(
-                    title = "Select reference coincidence file",
-                    initialdir = os.path.dirname(fname),
-                    filetypes = coincidence_filetypes) or None
-
         nperiods = 100
         scaling, times, fpos = read_times(fname, nperiods)
-        if reference_file is not None:
-            ref_scale, ref_time, _ = read_times(reference_file, nperiods)
-            times_idx = np.searchsorted(ref_time, times)
-            times_idx = np.clip(times_idx, 0, len(ref_scale)-1)
-            scaling = ref_scale[times_idx]
-
         self.callback = callback 
         self.target = target
 

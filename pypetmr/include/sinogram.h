@@ -20,6 +20,8 @@ static const auto npy_type = NPY_FLOAT32;
 
 template<typename T> using vec = std::vector<T>;
 
+struct ListmodeData;
+
 class Geometry
 {
     public:
@@ -52,7 +54,6 @@ class Geometry
 
     static inline int idx(int blk, int xtal)
     {
-        // crystals are indexed in the opposite direction from increasing module number
         int col = xtal % ncrystals;
         int mod = blk >> 2;
         return col + (ncrystals + ncrystals_transverse_gap)*mod;
@@ -70,9 +71,7 @@ class CrystalLookupTable
     CrystalLookupTable(std::string, const vec<double>&);
 
     inline int operator() (size_t blk, size_t scale_idx, size_t y, size_t x) const
-    {
-        return scaled_luts[blk][scale_idx].at<int>(y,x);
-    }
+    { return scaled_luts[blk][scale_idx].at<int>(y,x); }
 };
 
 class PhotopeakLookupTable
@@ -87,7 +86,7 @@ class PhotopeakLookupTable
     PhotopeakLookupTable(std::string);
     static std::string find_cfg_file(std::string);
 
-    inline int in_window(size_t blk, size_t xtal, double e)
+    int in_window(size_t blk, size_t xtal, double e)
     {
         double th = photopeaks[blk][xtal];
         if (th < 0) return 0;
@@ -95,9 +94,7 @@ class PhotopeakLookupTable
         double lld = (1.0 - energy_window)*th, uld = (1.0 + energy_window)*th;
         if (e < lld || e > uld) return -1;
 
-        // scale the photopeak to 1/2 the 6 bit dynamic range
-        e = e / th * 32.0;
-        return std::min(e, 63.0);
+        return (e - lld) / (uld - lld) * 63.0;
     }
 
     inline int doi_window(size_t blk, size_t xtal, double val)
@@ -166,8 +163,6 @@ class Michelogram: Geometry
     inline Sinogram& operator() (int h, int v){ return m[v*nring + h]; };
 
     ListmodeData event_to_coords(const CoincidenceData&, size_t);
-
-    void add_event(const CoincidenceData&, size_t);
     void write_event(std::ofstream&, const CoincidenceData&, size_t);
     void write_to(std::string);
     void read_from(std::string);
@@ -181,9 +176,8 @@ class Michelogram: Geometry
         ppeak(base_dir) {};
 
     std::streampos sort_span(
-            std::string,
-            uint64_t, uint64_t,
-            vec<uint64_t>);
+            std::string, std::streampos, std::streampos,
+            bool, bool);
 
     bool loaded() { return lut.loaded && ppeak.loaded; }
 

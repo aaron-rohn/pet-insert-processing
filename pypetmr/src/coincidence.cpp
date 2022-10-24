@@ -285,7 +285,7 @@ Coincidences sort(
     return coin;
 }
 
-sorted_values sort_span(
+sorted_values coincidence_sort_span(
         std::vector<std::string> fnames,
         std::vector<std::streampos> start_pos,
         std::vector<std::streampos> end_pos,

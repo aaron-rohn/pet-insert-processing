@@ -294,7 +294,8 @@ petmr_coincidences(PyObject *self, PyObject *args)
 
         // spawn a new worker each iteration
         workers.push_back(std::async(std::launch::async,
-            &sort_span, file_list, start_pos, end_pos, std::ref(stop)));
+            &coincidence_sort_span, 
+            file_list, start_pos, end_pos, std::ref(stop)));
 
         start_pos = end_pos;
 
@@ -382,37 +383,21 @@ petmr_store(PyObject *self, PyObject *args)
 static PyObject*
 petmr_sort_sinogram(PyObject *self, PyObject *args)
 {
-    const char *fname, *cfgdir;
+    const char *fname;
     PyObject *terminate, *status_queue, *data_queue;
-    PyArrayObject *scaling_array, *fpos_array;
-    if (!PyArg_ParseTuple(args, "ssOOOOO",
-                &fname, &cfgdir,
-                &scaling_array, &fpos_array,
-                &terminate,
-                &status_queue,
-                &data_queue)) return NULL;
-
-    auto [scaling, fpos] =
-        validate_scaling_array(scaling_array, fpos_array);
-
-    if (scaling.size() == 0)
-        return NULL;
+    int prompts = 1, delays = 0;
+    if (!PyArg_ParseTuple(args, "sppOOO",
+                &fname, &prompts, &delays,
+                &terminate, &status_queue, &data_queue)) return NULL;
 
     PyThreadState *_save = PyEval_SaveThread();
-    Michelogram m(Geometry::dim_theta_full, cfgdir, scaling);
 
-    if (!m.loaded())
-    {
-        PyEval_RestoreThread(_save);
-        PyErr_SetString(PyExc_RuntimeError,
-                "Failed to load configuration data");
-        return NULL;
-    }
+    Michelogram m(Geometry::dim_theta_full,
+            std::string(), vec<double>());
 
     std::streampos coincidence_file_size = fsize(fname);
-
     uint64_t events_per_thread = 1'000'000;
-    std::streampos incr = sizeof(CoincidenceData) * events_per_thread;
+    std::streampos incr = sizeof(ListmodeData) * events_per_thread;
     bool stop = false;
 
     size_t nworkers = 8;
@@ -431,7 +416,9 @@ petmr_sort_sinogram(PyObject *self, PyObject *args)
             }
 
             workers.push_back(std::async(std::launch::async,
-                &Michelogram::sort_span, &m, fname, start, end, fpos));
+                &Michelogram::sort_span, &m,
+                fname, start, end,
+                prompts, delays));
 
             start = end;
         }
@@ -465,12 +452,9 @@ petmr_save_listmode(PyObject* self, PyObject* args)
     PyArrayObject *scaling_array, *fpos_array;
     PyObject *terminate, *status_queue, *data_queue;
     if (!PyArg_ParseTuple(args, "sssOOOOO",
-                &lmfname,
-                &fname, &cfgdir,
+                &lmfname, &fname, &cfgdir,
                 &scaling_array, &fpos_array,
-                &terminate,
-                &status_queue,
-                &data_queue)) return NULL;
+                &terminate, &status_queue, &data_queue)) return NULL;
 
     auto [scaling, fpos] =
         validate_scaling_array(scaling_array,fpos_array);

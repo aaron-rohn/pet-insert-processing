@@ -1,6 +1,5 @@
 import os, threading, queue, traceback, tempfile, petmr
 import concurrent.futures
-import pandas as pd
 import tkinter as tk
 import numpy as np
 from tkinter.ttk import Progressbar
@@ -11,14 +10,15 @@ from matplotlib.figure import Figure, SubplotParams
 import matplotlib.pyplot as plt
 
 singles_filetypes = [("Singles",".SGL")]
-coincidence_filetypes = [("Prompts",".COIN")] #, ("Delays", ".DLY")]
+coincidence_filetypes = [("Prompts",".COIN")]
+listmode_filetypes = [("Listmode data",".lm")]
 
 n_doi_bins = 4096
 max_events = int(1e9)
 coincidence_cols = 11
 
 scaling_nevents = 100e3
-scaling_factor  = 0.055
+scaling_factor  = 0.047
 scale = lambda ev_rate: 1 + (ev_rate / scaling_nevents * scaling_factor)
 
 def read_times(fname, nperiods = 500):
@@ -151,14 +151,9 @@ class CoincidenceSorter:
         # this is the callback given to the CoincidenceProfilePlot
         self.outside_callback = outside_callback
 
-        self.input_files = []
-        while True:
-            self.input_files += list(tk.filedialog.askopenfilenames(
-                title = "Select singles listmode data to sort",
-                initialdir = "/",
-                filetypes = singles_filetypes))
-            if not tk.messagebox.askyesno(message = "Select additional files?"):
-                break
+        self.input_files = list(tk.filedialog.askopenfilenames(
+            title = "Select singles listmode data to sort",
+            initialdir = "/", filetypes = singles_filetypes))
 
         if not self.input_files: raise ValueError("No files specified")
 

@@ -4,7 +4,8 @@
 
 #include <sinogram.h>
 
-CrystalLookupTable::CrystalLookupTable(std::string dir, const vec<double> &scaling):
+CrystalLookupTable::CrystalLookupTable(
+        std::string dir, const vec<double> &scaling):
         scaled_luts(vec<vec<cv::Mat>> (Single::nblocks, vec<cv::Mat>()))
 {
     if (dir == std::string()) return;
@@ -110,9 +111,6 @@ PhotopeakLookupTable::PhotopeakLookupTable(std::string base_dir):
 ListmodeData
 Michelogram::event_to_coords(const CoincidenceData& c, size_t scale_idx)
 {
-    ListmodeData lm;
-    lm.invalid();
-
     // Lookup crystal index
     auto [ba, bb] = c.blk();
     auto [pos_xa, pos_ya, pos_xb, pos_yb] = c.pos();
@@ -120,14 +118,14 @@ Michelogram::event_to_coords(const CoincidenceData& c, size_t scale_idx)
     unsigned int xa = lut(ba, scale_idx, pos_ya, pos_xa);
     unsigned int xb = lut(bb, scale_idx, pos_yb, pos_xb);
     if (xa >= ncrystals_total || xb >= ncrystals_total)
-        return lm;
+        return ListmodeData();
 
     // Apply energy thresholds
     auto [ea, eb] = c.e_sum();
     int scaled_ea = ppeak.in_window(ba, xa, ea);
     int scaled_eb = ppeak.in_window(bb, xb, eb);
     if (scaled_ea < 0 || scaled_eb < 0)
-        return lm;
+        return ListmodeData();
 
     auto [doia_val, doib_val] = c.doi();
     unsigned int doia = ppeak.doi_window(ba, xa, doia_val);
@@ -136,7 +134,7 @@ Michelogram::event_to_coords(const CoincidenceData& c, size_t scale_idx)
     unsigned int ra = ring(ba, xa), rb = ring(bb, xb);
     unsigned int idxa = idx(ba, xa), idxb = idx(bb, xb);
 
-    lm = {
+    return ListmodeData {
         .ring_a = ra, .crystal_a = idxa,
         .ring_b = rb, .crystal_b = idxb,
         .energy_b = (uint16_t)scaled_eb,
@@ -146,18 +144,6 @@ Michelogram::event_to_coords(const CoincidenceData& c, size_t scale_idx)
         .tdiff = c.tdiff(),
         .prompt = c.prompt()
     };
-
-    return lm;
-}
-
-void Michelogram::add_event(const CoincidenceData &c, size_t scale_idx)
-{
-    ListmodeData lm = event_to_coords(c, scale_idx);
-    if (lm.valid())
-    {
-        (*this)(lm.ring_a, lm.ring_b).add_event(
-                lm.crystal_a, lm.crystal_b);
-    }
 }
 
 void Michelogram::write_event(std::ofstream &f, const CoincidenceData &c, size_t scale_idx)
@@ -238,24 +224,23 @@ PyObject *Michelogram::to_py_data()
 
 std::streampos Michelogram::sort_span(
         std::string fname,
-        uint64_t start, uint64_t end,
-        vec<uint64_t> fpos
+        std::streampos start,
+        std::streampos end,
+        bool prompt, bool delay
 ) {
-    CoincidenceData c;
+    ListmodeData lm;
     std::ifstream f(fname, std::ios::binary);
     f.seekg(start);
 
-    size_t idx = 0;
-    uint64_t pos = start;
-    size_t sz = fpos.size();
-
-    while (f.good() && pos < end)
+    while (f.good() && f.tellg() < end)
     {
-        pos = f.tellg();
-        f.read((char*)&c, sizeof(c));
-        for (; idx < sz-1 && fpos[idx+1] < pos; idx++) ;
-        add_event(c, idx);
+        f.read((char*)&lm, sizeof(lm));
+        if ((prompt && lm.prompt) || (delay && !lm.prompt))
+        {
+            (*this)(lm.ring_a, lm.ring_b).add_event(
+                    lm.crystal_a, lm.crystal_b);
+        }
     }
 
-    return pos;
+    return f.tellg();
 }

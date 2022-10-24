@@ -90,18 +90,20 @@ void find_tt_offset(
 
 using Coincidences = std::vector<CoincidenceData>;
 using sorted_values = std::tuple<std::vector<std::streampos>, Coincidences>;
-sorted_values sort_span(
+sorted_values coincidence_sort_span(
         std::vector<std::string>,
         std::vector<std::streampos>,
         std::vector<std::streampos>,
         std::atomic_bool&);
 
 struct ListmodeData {
+    static const unsigned int invalid = 0x7F;
+
     // Fields within each short go from LSB to MSB moving down
     // so e.g. ring_a -> short[0][0:6]
 
     // short 0
-    unsigned int ring_a     : 7;
+    unsigned int ring_a     : 7 = invalid;
     unsigned int crystal_a  : 9;
 
     // short 1
@@ -119,8 +121,7 @@ struct ListmodeData {
     signed int tdiff        : 5;
     unsigned int prompt     : 1;
 
-    void invalid() { ring_a = 0x7F; }
-    bool valid() { return ring_a != 0x7F; }
+    bool valid() { return ring_a != invalid; }
 };
 
 #endif

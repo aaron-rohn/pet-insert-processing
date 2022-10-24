@@ -7,8 +7,8 @@ import matplotlib.pyplot as plt
 
 from scipy import ndimage
 import petmr
-from data_loader import coincidence_filetypes
-from sinogram_loader import SinogramLoaderPopup, read_times
+from data_loader import coincidence_filetypes, listmode_filetypes, read_times
+from sinogram_loader import SinogramLoaderPopup
 
 class SinogramDisplay:
     def __init__(self, root):
@@ -17,13 +17,19 @@ class SinogramDisplay:
         self.root = root
         self.button_frame = tk.Frame(self.root)
 
-        self.load_coin = tk.Button(self.button_frame, text = "Load Coincidences", command = self.sort_sinogram)
+        self.load_coin = tk.Button(self.button_frame, text = "Load Listmode", command = self.sort_sinogram)
         self.load_sino = tk.Button(self.button_frame, text = "Load Sinogram", command = self.load_sinogram)
         self.save_sino = tk.Button(self.button_frame, text = "Save Sinogram", command = self.save_sinogram)
         self.save_lm   = tk.Button(self.button_frame, text = "Save Listmode", command = self.save_listmode)
         self.create_norm_button = tk.Button(self.button_frame, text = "Create Norm", command = self.create_norm)
         self.multiply_button = tk.Button(self.button_frame, text = "Multiply", command = lambda: self.operation(np.multiply))
         self.subtract_button = tk.Button(self.button_frame, text = "Subtract", command = lambda: self.operation(np.subtract))
+
+        self.sort_prompts_var = tk.IntVar()
+        self.sort_delays_var = tk.IntVar()
+        self.cb_frame = tk.Frame(self.root)
+        self.sort_prompts_cb = tk.Checkbutton(self.cb_frame, text = "Prompts", variable = self.sort_prompts_var)
+        self.sort_delays_cb = tk.Checkbutton(self.cb_frame, text = "Delays", variable = self.sort_delays_var)
 
         self.plot_frame = tk.Frame(self.root)
         self.plot_frame.rowconfigure(0, weight = 1)
@@ -61,6 +67,11 @@ class SinogramDisplay:
         self.create_norm_button.pack(side = tk.LEFT, padx = 5)
         self.multiply_button.pack(side = tk.LEFT, padx = 5)
         self.subtract_button.pack(side = tk.LEFT, padx = 5)
+
+        self.cb_frame.pack(pady = 5)
+        self.sort_prompts_cb.pack(side = tk.LEFT, padx = 5)
+        self.sort_delays_cb.pack(side = tk.LEFT, padx = 5)
+
         self.plot_frame.pack(fill = tk.BOTH, expand = True, padx = 5, pady = 5)
 
     def count_map_draw(self):
@@ -108,18 +119,11 @@ class SinogramDisplay:
 
     def sort_sinogram(self):
         fname = tk.filedialog.askopenfilename(
-                title = "Select coincidence file",
+                title = "Select listmode file",
                 initialdir = '/',
-                filetypes = coincidence_filetypes)
+                filetypes = listmode_filetypes)
 
         if not fname: return
-
-        base = os.path.dirname(fname)
-        cfgdir = tk.filedialog.askdirectory(
-                title = "Select configuration directory",
-                initialdir = base)
-
-        if not cfgdir: return
 
         def sorting_callback(result):
             if isinstance(result, RuntimeError):
@@ -133,9 +137,9 @@ class SinogramDisplay:
             self.count_map_draw()
             self.ldr = None
 
-        self.ldr = SinogramLoaderPopup(self.root,
-                sorting_callback, petmr.sort_sinogram,
-                fname, cfgdir)
+        self.ldr = SinogramLoaderPopup(
+                self.root, sorting_callback, petmr.sort_sinogram,
+                fname, self.sort_prompts_var.get(), self.sort_delays_var.get())
 
     def load_sinogram(self):
         fname = tk.filedialog.askopenfilename(
@@ -160,12 +164,12 @@ class SinogramDisplay:
         petmr.save_sinogram(fname, self.sino_data)
 
     def save_listmode(self):
-        fname = tk.filedialog.askopenfilename(
+        coin_fname = tk.filedialog.askopenfilename(
                 title = "Select coincidence file",
                 initialdir = '/',
                 filetypes = coincidence_filetypes)
-        if not fname: return
-        base = os.path.dirname(fname)
+        if not coin_fname: return
+        base = os.path.dirname(coin_fname)
         parent = os.path.dirname(base)
 
         cfgdir = tk.filedialog.askdirectory(
@@ -176,12 +180,13 @@ class SinogramDisplay:
         lmfname = tk.filedialog.asksaveasfilename(
                 title = "Save listmode file",
                 initialdir = parent,
-                filetypes = [("Listmode file", ".lm")])
+                filetypes = listmode_filetypes)
         if not lmfname: return
 
-        self.ldr = SinogramLoaderPopup(self.root,
-                None, petmr.save_listmode,
-                fname, cfgdir, lmfname)
+        scaling, times, fpos = read_times(coin_fname, 100)
+        self.ldr = SinogramLoaderPopup(
+                self.root, None, petmr.save_listmode,
+                lmfname, coin_fname, cfgdir, scaling, fpos)
 
     def create_norm(self):
         if self.sino_data is None:

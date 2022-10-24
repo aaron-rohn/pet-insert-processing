@@ -1,23 +1,9 @@
-import os, threading, queue, petmr
+import threading, queue
 import tkinter as tk
 from tkinter.ttk import Progressbar
-import numpy as np
-import matplotlib.pyplot as plt
-
-from data_loader import (
-        coincidence_cols,
-        scaling_nevents,
-        scaling_factor,
-        read_times,
-        coincidence_filetypes
-        )
 
 class SinogramLoaderPopup:
-    def __init__(self, root, callback, target,
-                 fname, cfgdir, *args):
-
-        nperiods = 100
-        scaling, times, fpos = read_times(fname, nperiods)
+    def __init__(self, root, callback, target, *args):
         self.callback = callback 
         self.target = target
 
@@ -33,11 +19,7 @@ class SinogramLoaderPopup:
         self.stat_queue = queue.Queue()
 
         self.bg = threading.Thread(target = self.handle_listmode, 
-                args = list(args) + [fname, cfgdir,
-                                     scaling, fpos,
-                                     self.terminate,
-                                     self.stat_queue,
-                                     self.data_queue])
+                args = list(args) + [self.terminate, self.stat_queue, self.data_queue])
 
         self.bg.start()
         self.check()
@@ -59,7 +41,7 @@ class SinogramLoaderPopup:
                 if not self.data_queue.empty():
                     self.callback(self.data_queue.get())
                 else:
-                    self.callback(RuntimeError("Sinogram sorting failed"))
+                    self.callback(RuntimeError("No data was returned by listmode operation"))
             self.popup.destroy()
 
     def handle_listmode(self, *args):

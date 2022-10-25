@@ -77,7 +77,7 @@ PyObject* Single::to_py_data(std::vector<Single> &events)
     return a;
 }
 
-void Record::align(std::ifstream &f, uint8_t data[])
+void Record::align(std::istream &f, uint8_t data[])
 {
     while (f.good() && !is_header(data[0]))
     {

@@ -234,7 +234,7 @@ class CoincidenceProfilePlot(tk.Toplevel):
         self.set_title()
 
     def on_close(self):
-        #self.callback({})
+        self.callback({})
         self.destroy()
 
     def set_title(self, status = None):

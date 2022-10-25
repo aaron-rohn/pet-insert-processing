@@ -28,9 +28,6 @@ struct CoincidenceData
     static std::vector<CoincidenceData> read(std::string, uint64_t=0);
     static void write(std::ofstream&, const std::vector<CoincidenceData>&);
 
-    static PyObject *to_py_data(const std::vector<CoincidenceData>&);
-    static std::vector<CoincidenceData> from_py_data(PyObject*);
-
     inline uint8_t blka()  const { return data[0] >> 8; }
     inline uint8_t blkb()  const { return data[0] & 0xFF; }
     inline bool prompt()   const { return data[1] >> 7; }
@@ -65,6 +62,12 @@ struct CoincidenceData
     inline void  y_b(uint16_t val) { data[9] = val; }
     inline void abstime(uint16_t val) { data[10] = val; }
 
+    static inline uint64_t time_difference(const Single &second, const Single &first)
+    { return second.abs_time - first.abs_time; }
+
+    static inline bool valid_module(int ma, int mb)
+    { return ma != mb && ma != Record::module_above(mb) && ma != Record::module_below(mb); }
+
     inline std::tuple<uint8_t,uint8_t> blk() const
     { return std::make_tuple(blka(), blkb()); };
 
@@ -78,6 +81,8 @@ struct CoincidenceData
     
     inline std::tuple<uint16_t,uint16_t,uint16_t,uint16_t> pos() const
     { return std::make_tuple(x_a(),y_a(),x_b(),y_b()); }
+
+    static std::vector<CoincidenceData> sort(std::vector<Single>&);
 };
 
 void find_tt_offset(
@@ -93,8 +98,7 @@ using sorted_values = std::tuple<std::vector<std::streampos>, Coincidences>;
 sorted_values coincidence_sort_span(
         std::vector<std::string>,
         std::vector<std::streampos>,
-        std::vector<std::streampos>,
-        std::atomic_bool&);
+        std::vector<std::streampos>);
 
 struct ListmodeData {
     static const unsigned int invalid = 0x7F;

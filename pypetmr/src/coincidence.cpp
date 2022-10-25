@@ -69,7 +69,7 @@ CoincidenceData::CoincidenceData(const Single &a, const Single &b)
     y_b(sd2.y);
 }
 
-Coincidences
+std::vector<CoincidenceData>
 CoincidenceData::read(std::string fname, uint64_t max_events)
 {
     std::streampos fsize;
@@ -83,7 +83,7 @@ CoincidenceData::read(std::string fname, uint64_t max_events)
     uint64_t count = fsize / sizeof(CoincidenceData);
     count = max_events > 0 && count > max_events ? max_events : count;
 
-    Coincidences cd(count);
+    std::vector<CoincidenceData> cd(count);
     f.read((char*)cd.data(), count * sizeof(CoincidenceData));
 
     return cd;
@@ -91,122 +91,9 @@ CoincidenceData::read(std::string fname, uint64_t max_events)
 
 void CoincidenceData::write(
         std::ofstream &f,
-        const Coincidences &cd
-) {
-    f.write((char*)cd.data(), cd.size()*sizeof(CoincidenceData));
-}
-
-PyObject *CoincidenceData::to_py_data(
         const std::vector<CoincidenceData> &cd
 ) {
-    PyArrayObject *acols[ncol], *bcols[ncol];
-    npy_intp nrow = cd.size();
-
-    for (size_t i = 0; i < ncol; i++)
-    {
-        acols[i] = (PyArrayObject*)PyArray_SimpleNew(1, &nrow, NPY_UINT16);
-        bcols[i] = (PyArrayObject*)PyArray_SimpleNew(1, &nrow, NPY_UINT16);
-    }
-
-    for (npy_int i = 0; i < nrow; i++)
-    {
-        *((uint16_t*)PyArray_GETPTR1(acols[0], i)) = cd[i].blka();
-        *((uint16_t*)PyArray_GETPTR1(acols[1], i)) = cd[i].e_aF();
-        *((uint16_t*)PyArray_GETPTR1(acols[2], i)) = cd[i].e_aR();
-        *((uint16_t*)PyArray_GETPTR1(acols[3], i)) = cd[i].x_a();
-        *((uint16_t*)PyArray_GETPTR1(acols[4], i)) = cd[i].y_a();
-
-        *((uint16_t*)PyArray_GETPTR1(bcols[0], i)) = cd[i].blkb();
-        *((uint16_t*)PyArray_GETPTR1(bcols[1], i)) = cd[i].e_bF();
-        *((uint16_t*)PyArray_GETPTR1(bcols[2], i)) = cd[i].e_bR();
-        *((uint16_t*)PyArray_GETPTR1(bcols[3], i)) = cd[i].x_b();
-        *((uint16_t*)PyArray_GETPTR1(bcols[4], i)) = cd[i].y_b();
-    }
-
-    PyObject *a = PyList_New(ncol), *b = PyList_New(ncol);
-    for (size_t i = 0; i < ncol; i++)
-    {
-        PyList_SetItem(a, i, (PyObject*)acols[i]);
-        PyList_SetItem(b, i, (PyObject*)bcols[i]);
-    }
-    PyObject *out = PyTuple_New(2);
-    PyTuple_SetItem(out, 0, a);
-    PyTuple_SetItem(out, 1, b);
-    return out;
-}
-
-Coincidences
-CoincidenceData::from_py_data(PyObject *obj)
-{
-    Coincidences cd;
-    PyObject *a, *b;
-    size_t ncola = 0, ncolb = 0;
-    PyArrayObject *acols[ncol] = {NULL}, *bcols[ncol] = {NULL};
-    npy_intp *ashape, *bshape;
-    npy_intp nrow = 0;
-
-    // Input must be a tuple with 2 items
-    if (!PyTuple_Check(obj) || PyTuple_Size(obj) != 2) goto error;
-
-    a = PyTuple_GetItem(obj, 0);
-    b = PyTuple_GetItem(obj, 1);
-
-    // Each tuple member must be a list
-    if (!PyList_Check(a) || !PyList_Check(b)) goto error;
-
-    ncola = PyList_Size(a);
-    ncolb = PyList_Size(b);
-
-    // Each list must have 6 members
-    if (ncola != ncol || ncolb != ncol) goto error;
-
-    for (size_t i = 0; i < ncol; i++)
-    {
-        acols[i] = (PyArrayObject*)PyList_GetItem(a, i);
-        bcols[i] = (PyArrayObject*)PyList_GetItem(b, i);
-
-        // Each list item must be a numpy array with one dimension
-        if (PyArray_NDIM(acols[i]) != 1 || PyArray_NDIM(bcols[i]) != 1) goto error;
-
-        ashape = PyArray_DIMS(acols[i]);
-        bshape = PyArray_DIMS(bcols[i]);
-        if (i == 0) nrow = ashape[0];
-
-        // Each array must have the same number of items
-        if (ashape[0] != nrow || bshape[0] != nrow) goto error;
-
-        if (PyArray_TYPE(acols[i]) != NPY_UINT16 ||
-            PyArray_TYPE(bcols[i]) != NPY_UINT16) goto error;
-    }
-
-    cd.resize(nrow);
-    
-    for (npy_intp i = 0; i < nrow; i++)
-    {
-        cd[i].blk(*(uint16_t*)PyArray_GETPTR1(acols[0],i),
-                  *(uint16_t*)PyArray_GETPTR1(bcols[0],i));
-
-        cd[i].e_aF(*(uint16_t*)PyArray_GETPTR1(acols[1],i));
-        cd[i].e_aR(*(uint16_t*)PyArray_GETPTR1(acols[2],i));
-
-        cd[i].e_bF(*(uint16_t*)PyArray_GETPTR1(bcols[1],i));
-        cd[i].e_bR(*(uint16_t*)PyArray_GETPTR1(bcols[2],i));
-
-        cd[i].x_a(*(uint16_t*)PyArray_GETPTR1(acols[3],i));
-        cd[i].y_a(*(uint16_t*)PyArray_GETPTR1(acols[4],i));
-
-        cd[i].x_b(*(uint16_t*)PyArray_GETPTR1(bcols[3],i));
-        cd[i].y_b(*(uint16_t*)PyArray_GETPTR1(bcols[4],i));
-
-        cd[i].tdiff(1, 0);
-    }
-
-    return cd;
-
-error:
-
-    PyErr_SetString(PyExc_ValueError, "Invalid format for coincidence data");
-    return cd;
+    f.write((char*)cd.data(), cd.size()*sizeof(CoincidenceData));
 }
 
 /*
@@ -251,34 +138,29 @@ void find_tt_offset(
  * given a start and end position for each file
  */
 
-Coincidences sort(
-        std::vector<Single> &singles, 
-        std::atomic_bool &stop
+std::vector<CoincidenceData> CoincidenceData::sort(
+        std::vector<Single> &singles
 ) {
-    Coincidences coin;
+    static const size_t ww = window_width, wd = window_delay;
+    std::vector<CoincidenceData> coin;
 
     // iterate the first event in the coincidence - all events
-    for (auto a = singles.begin(), e = singles.end(); !stop && a != e; ++a)
+    for (auto a = singles.begin(), d = singles.begin(), e = singles.end(); a != e; ++a)
     {
-        // Sort for prompts and delays at the same time
-        auto endt = a->abs_time +
-            CoincidenceData::window_delay +
-            CoincidenceData::window_width;
-
-        // iterate the second event in the coincidence - events until the window ends
-        for (auto b = a + 1; b != e && b->abs_time < endt; ++b)
+        // iterate the second event in the window for prompts
+        for (auto b = a + 1;
+             (b != e) && (time_difference(*b, *a) < ww);
+             ++b)
         {
-            auto tdiff = b->abs_time - a->abs_time;
-            auto &ma = a->mod, &mb = b->mod;
+            if (valid_module(a->mod, b->mod))
+                coin.emplace_back(*a, *b);
+        }
 
-            if (ma != mb &&
-                ma != Record::module_above(mb) &&
-                ma != Record::module_below(mb))
-            {
-                // only accept prompts for the coincidence window width
-                if (tdiff < CoincidenceData::window_width || tdiff > CoincidenceData::window_delay)
-                    coin.emplace_back(*a, *b);
-            }
+        // look backwards for delays
+        for(uint64_t tdiff; (tdiff = time_difference(*a, *d)) >= wd; ++d)
+        {
+            if (tdiff < (wd + ww) && valid_module(d->mod, a->mod))
+                coin.emplace_back(*d, *a);
         }
     }
 
@@ -288,68 +170,43 @@ Coincidences sort(
 sorted_values coincidence_sort_span(
         std::vector<std::string> fnames,
         std::vector<std::streampos> start_pos,
-        std::vector<std::streampos> end_pos,
-        std::atomic_bool &stop
+        std::vector<std::streampos> end_pos
 ) {
-    auto n = fnames.size();
+    const auto n = fnames.size();
 
-    // Initialize input files
-    std::vector<std::ifstream> files;
-    for (auto &fn : fnames)
-        files.emplace_back(fn, std::ios::in | std::ios::binary);
-
-    // Calculate the approximate number of singles in the data stream
-    std::streampos max_fsize_to_process = 1024*1024*1024;
-    max_fsize_to_process = max_fsize_to_process * 4;
-
+    // calculate the file size in bytes to read
     std::streampos fsize_to_process = 0;
-
     for (size_t i = 0; i < n; i++)
         fsize_to_process += (end_pos[i] - start_pos[i]);
 
-    size_t approx_singles = fsize_to_process / Record::event_size;
-
-    // Allocate storage to load all the singles
+    // estimate the number of singles to load
+    const size_t approx_singles = fsize_to_process / Record::event_size;
     std::vector<Single> singles;
+    singles.reserve(approx_singles);
 
-    if (fsize_to_process > 0 && fsize_to_process < max_fsize_to_process)
-        singles.reserve(approx_singles);
-    else
-        std::cerr << "Invalid file size to process: " << fsize_to_process << std::endl;
-
-    uint8_t data[Record::event_size];
     std::vector<TimeTag> last_tt (Record::nmodules);
 
     // Load all the singles from each file
-    for (size_t i = 0; !stop && i < n; i++)
+    for (size_t i = 0; i < n; i++)
     {
-        auto &f = files[i];
-        f.seekg(start_pos[i]);
+        Reader rdr (fnames[i], start_pos[i], end_pos[i]);
 
-        while (!stop && f.good() && f.tellg() < end_pos[i])
+        while (rdr)
         {
-            Record::read(f, data);
-            Record::align(f, data);
+            Record::read(rdr, rdr.data);
+            Record::align(rdr, rdr.data);
 
-            auto mod = Record::get_module(data);
+            auto mod = Record::get_module(rdr.data);
 
-            if (Record::is_single(data))
-            {
-                // Create single and heap sort by absolute time
-                singles.emplace_back(data, last_tt[mod]);
-                std::push_heap(singles.begin(), singles.end());
-            }
+            if (Record::is_single(rdr.data))
+                singles.emplace_back(rdr.data, last_tt[mod]);
             else
-            {
-                // Update latest time tag for appropriate module
-                last_tt[mod] = TimeTag(data);
-            }
+                last_tt[mod] = TimeTag(rdr.data);
         }
     }
 
-    // sort heap with ascending absolute time
-    std::sort_heap(singles.begin(), singles.end());
-
-    auto coin = sort(singles, stop);
+    // time-sort the singles and find prompts and delays
+    std::sort(singles.begin(), singles.end());
+    auto coin = CoincidenceData::sort(singles);
     return std::make_tuple(end_pos, coin);
 }

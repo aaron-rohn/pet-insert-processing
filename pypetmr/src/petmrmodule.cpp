@@ -7,11 +7,10 @@
 
 #include <Python.h>
 #include <numpy/arrayobject.h>
+#include <cstdio>
 
 static PyObject *petmr_singles(PyObject*, PyObject*);
 static PyObject *petmr_coincidences(PyObject*, PyObject*);
-static PyObject *petmr_load(PyObject*, PyObject*);
-static PyObject *petmr_store(PyObject*, PyObject*);
 static PyObject *petmr_sort_sinogram(PyObject*, PyObject*);
 static PyObject *petmr_save_listmode(PyObject*, PyObject*);
 static PyObject *petmr_load_sinogram(PyObject*, PyObject*);
@@ -21,8 +20,6 @@ static PyObject *petmr_validate_singles_file(PyObject*, PyObject*);
 static PyMethodDef petmrMethods[] = {
     {"singles", petmr_singles, METH_VARARGS, "read PET/MRI insert singles data"},
     {"coincidences", petmr_coincidences, METH_VARARGS, "read PET/MRI insert singles data, and sort coincidences"},
-    {"load", petmr_load, METH_VARARGS, "Load coincidence listmode data"},
-    {"store", petmr_store, METH_VARARGS, "Store coincidence listmode data"},
     {"sort_sinogram", petmr_sort_sinogram, METH_VARARGS, "Sort coincidence data into a sinogram"},
     {"save_listmode", petmr_save_listmode, METH_VARARGS, "Convert coincidence format into a simple listmode format"},
     {"load_sinogram", petmr_load_sinogram, METH_VARARGS, "Load a sinogram from disk"},
@@ -278,10 +275,10 @@ petmr_coincidences(PyObject *self, PyObject *args)
     }
 
     // spawn workers as the file is processed
-    while (true)
+    while (!stop || workers.size() > 0)
     {
         // Get next time-tag increment to read until, for each file
-        for (size_t i = 0; i < n; i++)
+        for (size_t i = 0; !stop && i < n; i++)
         {
             std::unique_lock<std::mutex> lck(all_lock[i]);
             all_cv[i].wait(lck, [&]{ return !all_pos[i].empty(); });
@@ -289,17 +286,18 @@ petmr_coincidences(PyObject *self, PyObject *args)
             std::tie(current_tt[i], end_pos[i]) = all_pos[i].front();
             all_pos[i].pop();
 
-            if (end_pos[i] == -1) goto exit;
+            if (end_pos[i] == -1) stop = true;
         }
 
-        // spawn a new worker each iteration
-        workers.push_back(std::async(std::launch::async,
-            &coincidence_sort_span, 
-            file_list, start_pos, end_pos, std::ref(stop)));
+        if (!stop)
+        {
+            workers.push_back(std::async(std::launch::async,
+                &coincidence_sort_span, file_list, start_pos, end_pos));
 
-        start_pos = end_pos;
+            start_pos = end_pos;
+        }
 
-        if (workers.size() >= sorter_threads)
+        if (stop || workers.size() >= sorter_threads)
         {
             auto [pos, coin] = workers.front().get();
             workers.pop_front();
@@ -314,69 +312,15 @@ petmr_coincidences(PyObject *self, PyObject *args)
             PyEval_RestoreThread(_save);
             PyObject *term = PyObject_CallMethod(terminate, "is_set", "");
             PyObject_CallMethod(status_queue, "put", "((dK))", perc, ncoin);
-            stop = (term == Py_True);
+            stop = stop || (term == Py_True) || (max_events > 0 && ncoin > max_events);
             _save = PyEval_SaveThread();
-
-            if (stop || (max_events > 0 && ncoin > max_events))
-            {
-                std::cout << "Stop coincidence sorting with " << ncoin << " events" << std::endl;
-                goto exit;
-            }
         }
     }
 
-exit:
-
     stop = true;
-
-    for (auto &scanner : tt_scan)
-    {
-        scanner.join();
-    }
-
-    while (workers.size() > 0)
-    {
-        workers.front().get();
-        workers.pop_front();
-    }
+    for (auto &scanner : tt_scan) scanner.join();
 
     PyEval_RestoreThread(_save);
-    Py_RETURN_NONE;
-}
-
-/*
- * Load listmode coincidence data and return a dataframe-like object
- */
-
-static PyObject*
-petmr_load(PyObject *self, PyObject *args)
-{
-    const char *fname;
-    uint64_t max_events = 100'000'000;
-    if (!PyArg_ParseTuple(args, "s|K", &fname, &max_events))
-        return NULL;
-
-    auto cd = CoincidenceData::read(fname, max_events);
-    return CoincidenceData::to_py_data(cd);
-}
-
-/*
- * Store a dataframe-like object as listmode coincidence data
- */
-
-static PyObject*
-petmr_store(PyObject *self, PyObject *args)
-{
-    const char *fname;
-    PyObject *df;
-    if (!PyArg_ParseTuple(args, "sO", &fname, &df))
-        return NULL;
-
-    auto cd = CoincidenceData::from_py_data(df);
-    if (PyErr_Occurred()) return NULL;
-
-    std::ofstream f(fname, std::ios::binary);
-    CoincidenceData::write(f, cd);
     Py_RETURN_NONE;
 }
 
@@ -384,8 +328,9 @@ static PyObject*
 petmr_sort_sinogram(PyObject *self, PyObject *args)
 {
     const char *fname;
-    PyObject *terminate, *status_queue, *data_queue;
     int prompts = 1, delays = 0;
+    PyObject *terminate, *status_queue, *data_queue;
+
     if (!PyArg_ParseTuple(args, "sppOOO",
                 &fname, &prompts, &delays,
                 &terminate, &status_queue, &data_queue)) return NULL;
@@ -404,21 +349,18 @@ petmr_sort_sinogram(PyObject *self, PyObject *args)
     std::streampos start = 0;
     std::deque<std::future<std::streampos>> workers;
 
+    // spawn workers that add events to the michelogram
     while (!stop || workers.size() > 0)
     {
         if (!stop)
         {
-            auto end = start + incr;
-            if (end >= coincidence_file_size)
-            {
-                end = coincidence_file_size;
-                stop = true;
-            }
+            // create a worker for a specific span of the file
+            auto end = std::min(start + incr, coincidence_file_size);
+            stop = (end == coincidence_file_size);
 
             workers.push_back(std::async(std::launch::async,
                 &Michelogram::sort_span, &m,
-                fname, start, end,
-                prompts, delays));
+                fname, start, end, prompts, delays));
 
             start = end;
         }
@@ -430,6 +372,7 @@ petmr_sort_sinogram(PyObject *self, PyObject *args)
 
             double perc = (double)pos / coincidence_file_size * 100;
 
+            // update the python ui
             PyEval_RestoreThread(_save);
             PyObject *term = PyObject_CallMethod(terminate, "is_set", "");
             PyObject_CallMethod(status_queue, "put", "d", perc);
@@ -448,7 +391,7 @@ petmr_sort_sinogram(PyObject *self, PyObject *args)
 static PyObject*
 petmr_save_listmode(PyObject* self, PyObject* args)
 {
-    const char *fname, *lmfname, *cfgdir;
+    const char *lmfname, *fname, *cfgdir;
     PyArrayObject *scaling_array, *fpos_array;
     PyObject *terminate, *status_queue, *data_queue;
     if (!PyArg_ParseTuple(args, "sssOOOOO",
@@ -474,30 +417,54 @@ petmr_save_listmode(PyObject* self, PyObject* args)
         return NULL;
     }
 
-    std::ifstream cf(fname, std::ios::binary);
-    std::ofstream lf(lmfname, std::ios::binary);
+    std::ofstream lf (lmfname, std::ios::binary);
 
-    int n = 0, iters = 1e6;
+    size_t nworkers = 8;
     bool stop = false;
     std::streampos coincidence_file_size = fsize(fname);
+    std::streamoff incr = sizeof(CoincidenceData)*1e6;
     size_t sz = scaling.size(), idx = 0;
-    uint64_t pos = 0;
 
-    CoincidenceData c;
-    while (!stop && cf)
+    std::vector<char> buf(1024*4);
+    std::deque<std::future<FILE*>> workers;
+    std::streampos start = 0, processed = 0;
+
+    // spawn workers to convert coincidence data to listmode data
+    while (!stop || workers.size() > 0)
     {
-        pos = cf.tellg();
-        cf.read((char*)&c, sizeof(c));
-
-        for (; idx < sz-1 && fpos[idx+1] < pos; idx++) ;
-
-        m.write_event(lf, c, idx);
-
-        // update progress on UI
-        n = (n + 1) % iters;
-        if (n == 0)
+        if (!stop)
         {
-            double perc = (double)pos / coincidence_file_size * 100;
+            // find the correct scaling factor for this starting file position
+            for (; idx < sz-1 && fpos[idx+1] < (uint64_t)start; idx++) ;
+
+            std::streampos end = std::min(start + incr, coincidence_file_size);
+            stop = (end == coincidence_file_size);
+
+            workers.push_back(std::async(std::launch::async,
+                            &Michelogram::encode_span, &m,
+                            fname, start, end, idx));
+            start = end;
+        }
+
+        if (stop || workers.size() >= nworkers)
+        {
+            processed += incr;
+            FILE *f = workers.front().get();
+            workers.pop_front();
+            std::fseek(f, 0, std::ios::beg);
+
+            // append the temporary file to the main listmode file
+            size_t n;
+            while ((n = std::fread(buf.data(), sizeof(char), buf.size(), f)) > 0)
+            {
+                lf.write(buf.data(), sizeof(char)*n);
+            }
+
+            // delete the temp file
+            std::fclose(f);
+
+            // update the python ui
+            double perc = (double)processed / coincidence_file_size * 100;
             PyEval_RestoreThread(_save);
             PyObject *term = PyObject_CallMethod(terminate, "is_set", "");
             PyObject_CallMethod(status_queue, "put", "d", perc);

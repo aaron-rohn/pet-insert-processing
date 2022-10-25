@@ -3,6 +3,7 @@
 #define PY_ARRAY_UNIQUE_SYMBOL petmr_ARRAY_API
 
 #include <sinogram.h>
+#include <cstdio>
 
 CrystalLookupTable::CrystalLookupTable(
         std::string dir, const vec<double> &scaling):
@@ -109,7 +110,7 @@ PhotopeakLookupTable::PhotopeakLookupTable(std::string base_dir):
 }
 
 ListmodeData
-Michelogram::event_to_coords(const CoincidenceData& c, size_t scale_idx)
+Michelogram::event_to_coords(const CoincidenceData& c, size_t scale_idx) const
 {
     // Lookup crystal index
     auto [ba, bb] = c.blk();
@@ -144,12 +145,6 @@ Michelogram::event_to_coords(const CoincidenceData& c, size_t scale_idx)
         .tdiff = c.tdiff(),
         .prompt = c.prompt()
     };
-}
-
-void Michelogram::write_event(std::ofstream &f, const CoincidenceData &c, size_t scale_idx)
-{
-    ListmodeData lm = event_to_coords(c, scale_idx);
-    if (lm.valid()) f.write((char*)&lm, sizeof(lm));
 }
 
 void Michelogram::write_to(std::string fname)
@@ -229,12 +224,11 @@ std::streampos Michelogram::sort_span(
         bool prompt, bool delay
 ) {
     ListmodeData lm;
-    std::ifstream f(fname, std::ios::binary);
-    f.seekg(start);
+    Reader rdr(fname, start, end);
 
-    while (f.good() && f.tellg() < end)
+    while (rdr)
     {
-        f.read((char*)&lm, sizeof(lm));
+        rdr.read((char*)&lm, sizeof(lm));
         if ((prompt && lm.prompt) || (delay && !lm.prompt))
         {
             (*this)(lm.ring_a, lm.ring_b).add_event(
@@ -242,5 +236,28 @@ std::streampos Michelogram::sort_span(
         }
     }
 
-    return f.tellg();
+    return end;
+}
+
+
+FILE *Michelogram::encode_span (
+        std::string fname, 
+        std::streampos start,
+        std::streampos end,
+        int scale_idx
+) const {
+    FILE *fout = std::tmpfile();
+    Reader rdr(fname, start, end);
+    CoincidenceData c;
+
+    while (rdr)
+    {
+        rdr.read((char*)&c, sizeof(c));
+        ListmodeData lm = event_to_coords(c, scale_idx);
+
+        if (lm.valid())
+            std::fwrite(&lm, sizeof(lm), 1, fout);
+    }
+
+    return fout;
 }

@@ -41,10 +41,10 @@ namespace Record
     inline uint8_t get_module(uint8_t d[])
     { return ((d[0] << 2) | (d[1] >> 6)) & 0xF; };
 
-    inline void read(std::ifstream &f, uint8_t d[], size_t n = event_size)
+    inline void read(std::istream &f, uint8_t d[], size_t n = event_size)
     { f.read((char*)d, n); };
 
-    void align(std::ifstream&, uint8_t[]);
+    void align(std::istream&, uint8_t[]);
     bool go_to_tt(std::ifstream&, uint64_t, std::atomic_bool&);
 };
 
@@ -82,6 +82,26 @@ struct SingleData
     uint16_t eF = 0, eR = 0, x = 0, y = 0;
     SingleData() {};
     SingleData(const Single&);
+};
+
+// A class to load the singles data into memory and expose it as an istream
+class Reader: std::streambuf, public std::istream
+{
+    std::ifstream base;
+    std::vector<char> buf;
+
+    public:
+    uint8_t data[Record::event_size];
+
+    Reader(std::string fname, std::streampos start, std::streampos end):
+        std::istream(this),
+        base(fname),
+        buf(end - start)
+    {
+        base.seekg(start);
+        base.read(buf.data(), buf.size());
+        this->setg(buf.data(), buf.data(), buf.data() + buf.size());
+    }
 };
 
 #endif

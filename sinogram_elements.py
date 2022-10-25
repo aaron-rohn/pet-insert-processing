@@ -1,4 +1,5 @@
-import os
+import os, glob, re
+import cv2 as cv
 import tkinter as tk
 import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -184,9 +185,25 @@ class SinogramDisplay:
         if not lmfname: return
 
         scaling, times, fpos = read_times(coin_fname, 100)
+
+        # Load and rescale the LUTs
+        luts = sorted(glob.glob(f'{cfgdir}/*.lut'))
+        lut_arr = np.ones((64, len(scaling), 512, 512), dtype = np.intc) * (19*19)
+        for fname in luts:
+            lut_idx = re.findall(r'\d+', os.path.basename(fname))
+            lut_idx = int(lut_idx[0])
+            lut = np.fromfile(fname, np.intc).reshape((512,512))
+            for i, scale in enumerate(scaling):
+                lut_scale = cv.resize(lut, None, fx = scale, fy = scale,
+                                      interpolation = cv.INTER_NEAREST)
+                nr, nc = [int(rc/2) for rc in lut_scale.shape]
+                lut_arr[lut_idx,i] = lut_scale[nr-256:nr+256, nc-256:nc+256]
+
+        print(lut_arr.shape)
+
         self.ldr = SinogramLoaderPopup(
                 self.root, None, petmr.save_listmode,
-                lmfname, coin_fname, cfgdir, scaling, fpos)
+                lmfname, coin_fname, cfgdir, np.ascontiguousarray(lut_arr), fpos)
 
     def create_norm(self):
         if self.sino_data is None:

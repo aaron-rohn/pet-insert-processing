@@ -11,9 +11,6 @@
 #include <numpy/arrayobject.h>
 #include <numpy/ndarraytypes.h>
 
-#include <opencv2/opencv.hpp>
-#include <map>
-
 using json = nlohmann::json;
 using stype = float;
 static const auto npy_type = NPY_FLOAT32;
@@ -58,20 +55,6 @@ class Geometry
         int mod = blk >> 2;
         return col + (ncrystals + ncrystals_transverse_gap)*mod;
     }
-};
-
-class CrystalLookupTable
-{
-    vec<vec<cv::Mat>> scaled_luts;
-
-    public:
-    static const int lut_dim = 512;
-    bool loaded = false;
-
-    CrystalLookupTable(std::string, const vec<double>&);
-
-    inline int operator() (size_t blk, size_t scale_idx, size_t y, size_t x) const
-    { return scaled_luts[blk][scale_idx].at<int>(y,x); }
 };
 
 class PhotopeakLookupTable
@@ -156,32 +139,31 @@ class Michelogram: Geometry
 
     public:
 
-    CrystalLookupTable lut;
-    PhotopeakLookupTable ppeak;
+    PyArrayObject *lut = NULL;
+    PhotopeakLookupTable ppeak = std::string();
+    
+    inline int lut_lookup(int blk, int scale_idx, int y, int x) const
+    { return *(int*)PyArray_GETPTR4(lut, blk, scale_idx, y, x); }
+
+    bool loaded() { return ppeak.loaded; }
 
     // first arg is horiz. index, second arg is vert. index
     inline Sinogram& operator() (int h, int v){ return m[v*nring + h]; };
 
     ListmodeData event_to_coords(const CoincidenceData&, size_t) const;
-    //void write_event(std::ofstream&, const CoincidenceData&, size_t);
     void write_to(std::string);
     void read_from(std::string);
 
     PyObject *to_py_data();
     Michelogram(PyObject*);
 
-    Michelogram(int dt, std::string base_dir, vec<double> scaling):
+    Michelogram(int dt, std::string base_dir = std::string(), PyArrayObject* lut = NULL):
         m(vec<Sinogram> (nring*nring, Sinogram(dt))),
-        lut(base_dir, scaling),
-        ppeak(base_dir) {};
+        lut(lut), ppeak(base_dir) {};
 
-    std::streampos sort_span(
-            std::string, std::streampos, std::streampos,
-            bool, bool);
+    std::streampos sort_span(std::string, std::streampos, std::streampos, bool, bool);
 
     FILE *encode_span (std::string, std::streampos, std::streampos, int) const;
-
-    bool loaded() { return lut.loaded && ppeak.loaded; }
 
     class Iterator
     {

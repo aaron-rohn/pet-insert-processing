@@ -337,8 +337,7 @@ petmr_sort_sinogram(PyObject *self, PyObject *args)
 
     PyThreadState *_save = PyEval_SaveThread();
 
-    Michelogram m(Geometry::dim_theta_full,
-            std::string(), vec<double>());
+    Michelogram m(Geometry::dim_theta_full);
 
     std::streampos coincidence_file_size = fsize(fname);
     uint64_t events_per_thread = 1'000'000;
@@ -399,15 +398,13 @@ petmr_save_listmode(PyObject* self, PyObject* args)
                 &scaling_array, &fpos_array,
                 &terminate, &status_queue, &data_queue)) return NULL;
 
-    auto [scaling, fpos] =
-        validate_scaling_array(scaling_array,fpos_array);
-
-    if (scaling.size() == 0)
-        return NULL;
+    npy_intp *shp = PyArray_DIMS(fpos_array);
+    std::vector<uint64_t> fpos(shp[0]);
+    std::memcpy(fpos.data(), PyArray_DATA(fpos_array), fpos.size()*sizeof(uint64_t));
 
     PyThreadState *_save = PyEval_SaveThread();
 
-    Michelogram m(Geometry::dim_theta_full, cfgdir, scaling);
+    Michelogram m(Geometry::dim_theta_full, cfgdir, scaling_array);
 
     if (!m.loaded())
     {
@@ -423,7 +420,7 @@ petmr_save_listmode(PyObject* self, PyObject* args)
     bool stop = false;
     std::streampos coincidence_file_size = fsize(fname);
     std::streamoff incr = sizeof(CoincidenceData)*1e6;
-    size_t sz = scaling.size(), idx = 0;
+    size_t sz = fpos.size(), idx = 0;
 
     std::vector<char> buf(1024*4);
     std::deque<std::future<FILE*>> workers;
@@ -485,8 +482,7 @@ petmr_load_sinogram(PyObject* self, PyObject* args)
     if (!PyArg_ParseTuple(args, "s", &sinogram_file))
         return NULL;
 
-    Michelogram m(Geometry::dim_theta_half, 
-            std::string(), std::vector<double>());
+    Michelogram m(Geometry::dim_theta_half);
 
     m.read_from(sinogram_file);
     return m.to_py_data();

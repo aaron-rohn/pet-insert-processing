@@ -5,45 +5,6 @@
 #include <sinogram.h>
 #include <cstdio>
 
-CrystalLookupTable::CrystalLookupTable(
-        std::string dir, const vec<double> &scaling):
-        scaled_luts(vec<vec<cv::Mat>> (Single::nblocks, vec<cv::Mat>()))
-{
-    if (dir == std::string()) return;
-
-    vec<int> buf (lut_dim*lut_dim);
-
-    for (auto &p : std::filesystem::recursive_directory_iterator(dir))
-    {
-        if (p.path().extension() == ".lut")
-        {
-            std::string curr_path = p.path().filename();
-            size_t blk = 0;
-            int n = std::sscanf(curr_path.c_str(), "block%zul.lut", &blk);
-
-            if (n != 1 || blk >= Single::nblocks)
-            {
-                std::cout << "Error: Invalid LUT filename " << curr_path << std::endl;
-                return;
-            }
-
-            std::ifstream f(p.path(), std::ios::in | std::ios::binary);
-            f.read((char*)buf.data(), buf.size()*sizeof(int));
-            cv::Mat m_in(lut_dim, lut_dim, CV_32S, buf.data()), m_out;
-
-            for (const auto &sc : scaling)
-            {
-                cv::resize(m_in, m_out, cv::Size(), sc, sc, cv::INTER_NEAREST);
-                int sz = (m_out.cols/2) - (lut_dim/2);
-                scaled_luts[blk].push_back(
-                        cv::Mat(m_out, cv::Rect(sz, sz, lut_dim, lut_dim)).clone());
-            }
-        }
-    }
-
-    loaded = true;
-}
-
 std::string PhotopeakLookupTable::find_cfg_file(std::string base_dir)
 {
     if (base_dir == std::string()) return base_dir;
@@ -116,8 +77,8 @@ Michelogram::event_to_coords(const CoincidenceData& c, size_t scale_idx) const
     auto [ba, bb] = c.blk();
     auto [pos_xa, pos_ya, pos_xb, pos_yb] = c.pos();
 
-    unsigned int xa = lut(ba, scale_idx, pos_ya, pos_xa);
-    unsigned int xb = lut(bb, scale_idx, pos_yb, pos_xb);
+    unsigned int xa = lut_lookup(ba, scale_idx, pos_ya, pos_xa);
+    unsigned int xb = lut_lookup(bb, scale_idx, pos_yb, pos_xb);
     if (xa >= ncrystals_total || xb >= ncrystals_total)
         return ListmodeData();
 
@@ -161,9 +122,7 @@ void Michelogram::read_from(std::string fname)
         s.read_from(f);
 }
 
-Michelogram::Michelogram(PyObject *arr):
-    lut(std::string(), vec<double>()),
-    ppeak(std::string())
+Michelogram::Michelogram(PyObject *arr)
 {
     if (PyArray_TYPE((PyArrayObject*)arr) != npy_type)
     {

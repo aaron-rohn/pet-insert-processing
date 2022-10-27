@@ -2,14 +2,17 @@
 #define COINCIDENCE_H
 
 #include <iostream>
-#include <queue>
-#include <future>
 #include <algorithm>
+
 #include <Python.h>
 #include <numpy/ndarraytypes.h>
 #include <numpy/arrayobject.h>
 
 #include "singles.h"
+
+struct CoincidenceData;
+using Coincidences = std::vector<CoincidenceData>;
+using SortedValues = std::tuple<std::vector<std::streampos>, Coincidences>;
 
 struct CoincidenceData
 {
@@ -23,19 +26,15 @@ struct CoincidenceData
     uint16_t data[vals_per_ev] = {0};
 
     CoincidenceData() {};
-    CoincidenceData(const Single&, const Single&);
+    CoincidenceData(const Single&, const Single&, bool=true);
 
-    static std::vector<CoincidenceData> read(std::string, uint64_t=0);
-    static void write(std::ofstream&, const std::vector<CoincidenceData>&);
+    static Coincidences read(std::string, uint64_t=0);
+    static void write(std::ofstream&, const Coincidences&);
 
     inline uint8_t blka()  const { return data[0] >> 8; }
     inline uint8_t blkb()  const { return data[0] & 0xFF; }
-    inline bool prompt()   const { return data[1] >> 7; }
-
-    // sign extend the tdiff bits
-    inline int16_t tdiff() const { 
-        struct {signed int x:7;} s;
-        return s.x = data[1] & 0x7F; }
+    inline bool prompt()   const { return data[1] >> 8; }
+    inline int8_t tdiff()  const { return data[1] & 0xFF; }
 
     inline uint16_t e_aF() const { return data[2]; }
     inline uint16_t e_aR() const { return data[3]; }
@@ -47,10 +46,11 @@ struct CoincidenceData
     inline uint16_t y_b()  const { return data[9]; }
     inline uint16_t abstime() const { return data[10]; }
 
-    inline void blk(uint16_t a, uint16_t b) { data[0] = (a << 8) | b; }
+    inline void blk(uint16_t a, uint16_t b)
+    { data[0] = (a << 8) | b; }
 
-    inline void tdiff(bool prompt, int16_t val)
-    { data[1] = (prompt << 7) | (val & 0x7F); }
+    inline void tdiff(uint16_t prompt, int8_t td)
+    { data[1] = (prompt << 8) | td; }
 
     inline void e_aF(uint16_t val) { data[2] = val; }
     inline void e_aR(uint16_t val) { data[3] = val; }
@@ -62,17 +62,11 @@ struct CoincidenceData
     inline void  y_b(uint16_t val) { data[9] = val; }
     inline void abstime(uint16_t val) { data[10] = val; }
 
-    static inline uint64_t time_difference(const Single &second, const Single &first)
-    { return second.abs_time - first.abs_time; }
-
-    static inline bool valid_module(int ma, int mb)
-    { return ma != mb && ma != Record::module_above(mb) && ma != Record::module_below(mb); }
-
     inline std::tuple<uint8_t,uint8_t> blk() const
-    { return std::make_tuple(blka(), blkb()); };
+    { return std::make_tuple(blka(), blkb()); }
 
     inline std::tuple<uint16_t,uint16_t> e_sum() const
-    { return std::make_tuple(e_aF()+e_aR(), e_bF()+e_bR()); };
+    { return std::make_tuple(e_aF()+e_aR(), e_bF()+e_bR()); }
 
     inline std::tuple<double,double> doi(double scale = 4096.0) const
     { return std::make_tuple(
@@ -82,23 +76,12 @@ struct CoincidenceData
     inline std::tuple<uint16_t,uint16_t,uint16_t,uint16_t> pos() const
     { return std::make_tuple(x_a(),y_a(),x_b(),y_b()); }
 
-    static std::vector<CoincidenceData> sort(std::vector<Single>&);
+    static Coincidences sort(std::vector<Single>&);
+    static SortedValues coincidence_sort_span(
+            std::vector<std::string>,
+            std::vector<std::streampos>,
+            std::vector<std::streampos>);
 };
-
-void find_tt_offset(
-        std::string,
-        std::mutex&,
-        std::condition_variable_any&,
-        std::queue<std::tuple<uint64_t,std::streampos>>&,
-        std::atomic_bool&
-);
-
-using Coincidences = std::vector<CoincidenceData>;
-using sorted_values = std::tuple<std::vector<std::streampos>, Coincidences>;
-sorted_values coincidence_sort_span(
-        std::vector<std::string>,
-        std::vector<std::streampos>,
-        std::vector<std::streampos>);
 
 struct ListmodeData {
     static const unsigned int invalid = 0x7F;

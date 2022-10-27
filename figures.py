@@ -1,7 +1,6 @@
 import os, json, copy, matplotlib
 import numpy as np
 import tkinter as tk
-import cv2 as cv
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure, SubplotParams
 from scipy.spatial import Voronoi, voronoi_plot_2d
@@ -140,12 +139,13 @@ class FloodHist(MPLFigure):
                 range = [[0,self.img_size-1],[0,self.img_size-1]])
 
         if overlay is not None:
-            overlay = cv.dilate(overlay, np.ones((3,3)))
-            overlay = cv.resize(overlay, None,
-                                fx = scaling, fy = scaling,
-                                interpolation = cv.INTER_NEAREST)
-            nr, nc = [int(rc/2) for rc in overlay.shape]
-            overlay = overlay[nr-256:nr+256, nc-256:nc+256]
+            overlay = ndimage.binary_dilation(overlay, np.ones((2,2)))
+            overlay = ndimage.zoom(overlay, scaling, order = 0)
+
+            nr, nc = (np.array(overlay.shape) / 2).astype(int)
+            dr, dc = (np.array(self.img.shape) / 2).astype(int)
+
+            overlay = overlay[nr-dr:nr+dr, nc-dc:nc+dc]
             overlay = np.ma.array(overlay, mask = (overlay == 0))
 
         self.f = Flood(self.img, warp)
@@ -318,7 +318,7 @@ class Plots(tk.Frame):
         lut = np.fromfile(lut_fname, np.intc).reshape((512,512))
         yd = np.diff(lut, axis = 0, prepend = lut.max()) != 0
         xd = np.diff(lut, axis = 1, prepend = lut.max()) != 0
-        return np.logical_or(xd, yd).astype(np.uint8)
+        return np.logical_or(xd, yd)
 
     def flood_cb(self):
         """ Update the flood according to energy and DOI thresholds """

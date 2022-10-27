@@ -1,5 +1,4 @@
 import os, glob, re
-import cv2 as cv
 import tkinter as tk
 import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -18,10 +17,10 @@ class SinogramDisplay:
         self.root = root
         self.button_frame = tk.Frame(self.root)
 
-        self.load_coin = tk.Button(self.button_frame, text = "Load Listmode", command = self.sort_sinogram)
-        self.load_sino = tk.Button(self.button_frame, text = "Load Sinogram", command = self.load_sinogram)
-        self.save_sino = tk.Button(self.button_frame, text = "Save Sinogram", command = self.save_sinogram)
         self.save_lm   = tk.Button(self.button_frame, text = "Save Listmode", command = self.save_listmode)
+        self.load_lm = tk.Button(self.button_frame, text = "Load Listmode", command = self.load_listmode)
+        self.save_sino = tk.Button(self.button_frame, text = "Save Sinogram", command = self.save_sinogram)
+        self.load_sino = tk.Button(self.button_frame, text = "Load Sinogram", command = self.load_sinogram)
         self.create_norm_button = tk.Button(self.button_frame, text = "Create Norm", command = self.create_norm)
         self.multiply_button = tk.Button(self.button_frame, text = "Multiply", command = lambda: self.operation(np.multiply))
         self.subtract_button = tk.Button(self.button_frame, text = "Subtract", command = lambda: self.operation(np.subtract))
@@ -61,10 +60,11 @@ class SinogramDisplay:
 
     def pack(self):
         self.button_frame.pack(pady = 30)
-        self.load_coin.pack(side = tk.LEFT, padx = 5)
-        self.load_sino.pack(side = tk.LEFT, padx = 5)
-        self.save_sino.pack(side = tk.LEFT, padx = 5)
+
         self.save_lm.pack(side = tk.LEFT, padx = 5)
+        self.load_lm.pack(side = tk.LEFT, padx = 5)
+        self.save_sino.pack(side = tk.LEFT, padx = 5)
+        self.load_sino.pack(side = tk.LEFT, padx = 5)
         self.create_norm_button.pack(side = tk.LEFT, padx = 5)
         self.multiply_button.pack(side = tk.LEFT, padx = 5)
         self.subtract_button.pack(side = tk.LEFT, padx = 5)
@@ -118,7 +118,61 @@ class SinogramDisplay:
 
         return sout
 
-    def sort_sinogram(self):
+    def scale_luts(self, cfgdir, coincidence_file):
+        nblocks = 64
+        nscales = 100
+        lut_dim = [512,512]
+        lut_invalid = 19*19
+
+        scaling, times, fpos = read_times(coincidence_file, nscales)
+
+        # Load and rescale the LUTs
+        luts = sorted(glob.glob(f'{cfgdir}/*.lut'))
+        lut_arr = np.ones([nblocks, nscales] + lut_dim, dtype = np.intc) * lut_invalid
+
+        for fname in luts:
+            # Lut fils are named .../blockXX.lut
+            lut_idx = re.findall(r'\d+', os.path.basename(fname))
+            lut_idx = int(lut_idx[0])
+            # TODO if not 0 <= lut_idx < nblocks: raise Error
+
+            lut = np.fromfile(fname, np.intc).reshape(lut_dim)
+
+            for i, scale in enumerate(scaling):
+                lut_scale = ndimage.zoom(lut, scale, order = 0)
+                nr, nc = (np.array(lut_scale.shape) / 2).astype(int)
+                dr, dc = (np.array(lut_dim) / 2).astype(int)
+                lut_arr[lut_idx,i] = lut_scale[nr-dr:nr+dr, nc-dc:nc+dc]
+
+        return fpos, np.ascontiguousarray(lut_arr)
+
+    def save_listmode(self):
+        coin_fname = tk.filedialog.askopenfilename(
+                title = "Select coincidence file",
+                initialdir = '/',
+                filetypes = coincidence_filetypes)
+        if not coin_fname: return
+        base = os.path.dirname(coin_fname)
+        parent = os.path.dirname(base)
+
+        cfgdir = tk.filedialog.askdirectory(
+                title = "Select configuration directory",
+                initialdir = parent)
+        if not cfgdir: return
+
+        lmfname = tk.filedialog.asksaveasfilename(
+                title = "Save listmode file",
+                initialdir = parent,
+                filetypes = listmode_filetypes)
+        if not lmfname: return
+
+        fpos, lut = self.scale_luts(cfgdir, coin_fname)
+
+        self.ldr = SinogramLoaderPopup(
+                self.root, None, petmr.save_listmode,
+                lmfname, coin_fname, cfgdir, lut, fpos)
+
+    def load_listmode(self):
         fname = tk.filedialog.askopenfilename(
                 title = "Select listmode file",
                 initialdir = '/',
@@ -163,47 +217,6 @@ class SinogramDisplay:
         if not fname: return
 
         petmr.save_sinogram(fname, self.sino_data)
-
-    def save_listmode(self):
-        coin_fname = tk.filedialog.askopenfilename(
-                title = "Select coincidence file",
-                initialdir = '/',
-                filetypes = coincidence_filetypes)
-        if not coin_fname: return
-        base = os.path.dirname(coin_fname)
-        parent = os.path.dirname(base)
-
-        cfgdir = tk.filedialog.askdirectory(
-                title = "Select configuration directory",
-                initialdir = parent)
-        if not cfgdir: return
-
-        lmfname = tk.filedialog.asksaveasfilename(
-                title = "Save listmode file",
-                initialdir = parent,
-                filetypes = listmode_filetypes)
-        if not lmfname: return
-
-        scaling, times, fpos = read_times(coin_fname, 100)
-
-        # Load and rescale the LUTs
-        luts = sorted(glob.glob(f'{cfgdir}/*.lut'))
-        lut_arr = np.ones((64, len(scaling), 512, 512), dtype = np.intc) * (19*19)
-        for fname in luts:
-            lut_idx = re.findall(r'\d+', os.path.basename(fname))
-            lut_idx = int(lut_idx[0])
-            lut = np.fromfile(fname, np.intc).reshape((512,512))
-            for i, scale in enumerate(scaling):
-                lut_scale = cv.resize(lut, None, fx = scale, fy = scale,
-                                      interpolation = cv.INTER_NEAREST)
-                nr, nc = [int(rc/2) for rc in lut_scale.shape]
-                lut_arr[lut_idx,i] = lut_scale[nr-256:nr+256, nc-256:nc+256]
-
-        print(lut_arr.shape)
-
-        self.ldr = SinogramLoaderPopup(
-                self.root, None, petmr.save_listmode,
-                lmfname, coin_fname, cfgdir, np.ascontiguousarray(lut_arr), fpos)
 
     def create_norm(self):
         if self.sino_data is None:

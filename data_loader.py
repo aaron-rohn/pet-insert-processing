@@ -17,18 +17,14 @@ n_doi_bins = 4096
 max_events = int(1e9)
 coincidence_cols = 11
 
-scaling_nevents = 100e3
-scaling_factor  = 0.047
+scaling_nevents = 1000e3
+scaling_factor  = 0.050
 scale = lambda ev_rate: 1 + (ev_rate / scaling_nevents * scaling_factor)
 
 def read_times(fname, nperiods = 500):
     sz = os.path.getsize(fname)
-    nrow = int((sz/2) // coincidence_cols)
-    data = np.memmap(fname, np.uint16, shape = (nrow, coincidence_cols))
-
-    t = data[:,10]
-    nevents = t.shape[0]
-
+    nevents = int((sz/2) // coincidence_cols)
+    data = np.memmap(fname, np.uint16, shape = (nevents, coincidence_cols))
     ev_per_period = int(nevents / nperiods)
     times = data[::ev_per_period,10].astype(np.double)
 
@@ -244,8 +240,7 @@ class CoincidenceProfilePlot(tk.Toplevel):
         self.title(title)
 
     def draw_hist(self):
-        t = self.data[:,10]
-        nevents = t.shape[0]
+        nevents = self.data.shape[0]
         nperiods = 500
 
         self.ev_per_period = int(nevents / nperiods)

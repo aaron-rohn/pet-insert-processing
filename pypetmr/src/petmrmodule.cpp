@@ -7,7 +7,9 @@
 
 #include <Python.h>
 #include <numpy/arrayobject.h>
+
 #include <cstdio>
+#include <future>
 
 static PyObject *petmr_singles(PyObject*, PyObject*);
 static PyObject *petmr_coincidences(PyObject*, PyObject*);
@@ -222,7 +224,7 @@ petmr_coincidences(PyObject *self, PyObject *args)
 
     // Items used for sorting coincidences within a file range
     uint64_t ncoin = 0;
-    std::deque<std::future<sorted_values>> workers;
+    std::deque<std::future<SortedValues>> workers;
     std::vector<std::streampos> start_pos(n), end_pos(n);
     std::vector<uint64_t> current_tt(n);
 
@@ -239,7 +241,7 @@ petmr_coincidences(PyObject *self, PyObject *args)
     // Create time-tag search threads - one per file
     for (size_t i = 0; i < n; i++)
     {
-        tt_scan.emplace_back(find_tt_offset,
+        tt_scan.emplace_back(Record::find_tt_offset,
                              file_list[i],
                              std::ref(all_lock[i]),
                              std::ref(all_cv[i]),
@@ -292,7 +294,7 @@ petmr_coincidences(PyObject *self, PyObject *args)
         if (!stop)
         {
             workers.push_back(std::async(std::launch::async,
-                &coincidence_sort_span, file_list, start_pos, end_pos));
+                &CoincidenceData::coincidence_sort_span, file_list, start_pos, end_pos));
 
             start_pos = end_pos;
         }

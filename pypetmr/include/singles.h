@@ -5,6 +5,9 @@
 #include <vector>
 #include <fstream>
 #include <atomic>
+#include <queue>
+#include <condition_variable>
+
 #include <Python.h>
 #include <numpy/ndarraytypes.h>
 #include <numpy/arrayobject.h>
@@ -45,12 +48,20 @@ namespace Record
     { f.read((char*)d, n); };
 
     void align(std::istream&, uint8_t[]);
+
     bool go_to_tt(std::ifstream&, uint64_t, std::atomic_bool&);
+
+    void find_tt_offset(
+            std::string, std::mutex&,
+            std::condition_variable_any&,
+            std::queue<std::tuple<uint64_t,std::streampos>>&,
+            std::atomic_bool&
+    );
 };
 
 struct TimeTag
 {
-    const static uint64_t clks_per_tt = 800'000;
+    const static uint64_t clks_per_tt = 800'000UL;
 
     uint8_t mod;
     uint64_t value;
@@ -70,6 +81,18 @@ struct Single
 
     inline bool operator<(const Single &rhs) const
     { return abs_time < rhs.abs_time; }
+
+    inline bool before(const uint64_t &time) const
+    { return abs_time < time; }
+
+    inline bool after(const uint64_t &time) const
+    { return abs_time >= time; }
+
+    inline bool valid_module(int m) const
+    { return mod != m &&
+             mod != Record::module_above(m) &&
+             mod != Record::module_below(m); }
+
 
     static PyObject* to_py_data(std::vector<Single>&);
 };
@@ -91,7 +114,6 @@ class Reader: std::streambuf, public std::istream
     std::vector<char> buf;
 
     public:
-    uint8_t data[Record::event_size];
 
     Reader(std::string fname, std::streampos start, std::streampos end):
         std::istream(this),

@@ -77,6 +77,43 @@ PyObject* Single::to_py_data(std::vector<Single> &events)
     return a;
 }
 
+SingleData::SingleData(const Single &s)
+{
+    eR = 0;
+    eF = 0;
+
+    for (int i = 0; i < 4; i++)
+    {
+        eR += s.energies[i];
+        eF += s.energies[i + 4];
+    }
+
+    /*            System Front
+     *
+     * (x = 0, y = 1)     (x = 1, y = 1)
+     *               #####
+     *               #D A#
+     *               #   #
+     *               #C B#
+     *               #####
+     * (x = 0, y = 0)     (x = 1, y = 0)
+     *
+     *            System Rear
+     *
+     * View of one block from outside the system looking inwards
+     */
+
+    // Fractional values 0-1
+    xF = (double)(s.energies[A_FRONT] + s.energies[B_FRONT]) / eF;
+    yF = (double)(s.energies[A_FRONT] + s.energies[D_FRONT]) / eF;
+    xR = (double)(s.energies[A_REAR] + s.energies[B_REAR]) / eR;
+    yR = (double)(s.energies[A_REAR] + s.energies[D_REAR]) / eR;
+
+    // Pixel values 0-511
+    x = std::round(xR * scale);
+    y = std::round((yF+yR)/2.0 * scale);
+}
+
 void Record::align(std::istream &f, uint8_t data[])
 {
     while (f.good() && !is_header(data[0]))
@@ -125,5 +162,46 @@ bool Record::go_to_tt(
         }
     }
 
-    return f.good() && !stop;
+    return !stop;
+}
+
+/*
+ * Search a singles file for time tags, and provide the
+ * file offset to a calling thread
+ */
+
+void Record::find_tt_offset(
+        std::string fname,
+        std::mutex &l,
+        std::condition_variable_any &cv,
+        std::queue<std::tuple<uint64_t,std::streampos>> &q,
+        std::atomic_bool &stop
+) {
+    uint64_t tt = 0, incr = 1000;
+    const std::streamoff offset (Record::event_size);
+
+    std::vector<char> buf(1024*1024*1024);
+    std::ifstream f;
+    f.rdbuf()->pubsetbuf(buf.data(), buf.size());
+    f.open(fname, std::ios::in | std::ios::binary);
+
+    while (go_to_tt(f, tt, stop))
+    {
+        auto pos = f.tellg() - offset;
+
+        {
+            std::lock_guard<std::mutex> lg(l);
+            q.push(std::make_tuple(tt,pos));
+        }
+
+        cv.notify_all();
+        tt += incr;
+    }
+
+    {
+        std::lock_guard<std::mutex> lg(l);
+        q.push(std::make_tuple(0,-1));
+    }
+
+    cv.notify_all();
 }

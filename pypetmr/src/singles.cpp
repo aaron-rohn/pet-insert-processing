@@ -6,45 +6,6 @@
 
 #include <iostream>
 
-TimeTag::TimeTag(uint8_t data[])
-{
-    // Time tag
-    // CRC | f |    b   |                     0's                    |             TT
-    // { 5 , 1 , 2 }{ 4 , 4 }{ 8 }{ 8 }{ 8 }{ 8 }{ 8 }{ 8 }{ 8 }{ 8 }{ 8 }{ 8 }{ 8 }{ 8 }{ 8 }{ 8 }
-    //       0          1      2    3    4    5    6    7    8    9   10   11   12   13   14   15
-
-    mod = Record::get_module(data);
-
-    uint64_t upper = (data[10] << 16) | (data[11] << 8) | data[12];
-    uint64_t lower = (data[13] << 16) | (data[14] << 8) | data[15];
-    value = (upper << 24) | lower;
-}
-
-Single::Single(uint8_t data[], const TimeTag &tt)
-{
-    // Single event
-    // CRC | f |    b   | D_REAR | C_REAR  | B_REAR | A_REAR  | D_FRONT |C_FRONT | B_FRONT |A_FRONT |       TT
-    // { 5 , 1 , 2 }{ 4 , 4 }{ 8 }{ 8 }{ 4 , 4 }{ 8 }{ 8 }{ 4 , 4 }{ 8 }{ 8 }{ 4 , 4 }{ 8 }{ 8 }{ 4 , 4 }{ 8 }{ 8 }
-    //       0          1      2    3      4      5    6      7      8    9     10     11   12     13     14   15
-
-    blk = Record::get_block(data);
-    mod = Record::get_module(data);
-
-    energies[D_REAR] = ((data[1] << 8) | data[2]) & 0xFFF;
-    energies[C_REAR] = (data[3] << 4) | (data[4] >> 4);
-    energies[B_REAR] = ((data[4] << 8) | data[5]) & 0xFFF;
-    energies[A_REAR] = (data[6] << 4) | (data[7] >> 4);
-
-    energies[D_FRONT] = ((data[7] << 8) | data[8]) & 0xFFF;
-    energies[C_FRONT] = (data[9] << 4) | (data[10] >> 4);
-    energies[B_FRONT] = ((data[10] << 8) | data[11]) & 0xFFF;
-    energies[A_FRONT] = (data[12] << 4) | (data[13] >> 4);
-
-    time = ((data[13] << 16) | (data[14] << 8) | data[15]) & 0xFFFFF;
-    abs_time = tt.value * TimeTag::clks_per_tt + time;
-}
-
-
 PyObject* Single::to_py_data(std::vector<Single> &events)
 {
     // 'block', 'eF', 'eR', 'x', 'y'
@@ -77,43 +38,6 @@ PyObject* Single::to_py_data(std::vector<Single> &events)
     return a;
 }
 
-SingleData::SingleData(const Single &s)
-{
-    eR = 0;
-    eF = 0;
-
-    for (int i = 0; i < 4; i++)
-    {
-        eR += s.energies[i];
-        eF += s.energies[i + 4];
-    }
-
-    /*            System Front
-     *
-     * (x = 0, y = 1)     (x = 1, y = 1)
-     *               #####
-     *               #D A#
-     *               #   #
-     *               #C B#
-     *               #####
-     * (x = 0, y = 0)     (x = 1, y = 0)
-     *
-     *            System Rear
-     *
-     * View of one block from outside the system looking inwards
-     */
-
-    // Fractional values 0-1
-    xF = (double)(s.energies[A_FRONT] + s.energies[B_FRONT]) / eF;
-    yF = (double)(s.energies[A_FRONT] + s.energies[D_FRONT]) / eF;
-    xR = (double)(s.energies[A_REAR] + s.energies[B_REAR]) / eR;
-    yR = (double)(s.energies[A_REAR] + s.energies[D_REAR]) / eR;
-
-    // Pixel values 0-511
-    x = std::round(xR * scale);
-    y = std::round((yF+yR)/2.0 * scale);
-}
-
 void Record::align(std::istream &f, uint8_t data[])
 {
     while (f.good() && !is_header(data[0]))
@@ -138,7 +62,6 @@ bool Record::go_to_tt(
         std::atomic_bool &stop
 ) {
     uint8_t data[event_size];
-
     uint64_t last_tt_value = 0;
     bool synced = false;
 
@@ -177,13 +100,9 @@ void Record::find_tt_offset(
         std::queue<std::tuple<uint64_t,std::streampos>> &q,
         std::atomic_bool &stop
 ) {
+    static const std::streamoff offset (Record::event_size);
     uint64_t tt = 0, incr = 1000;
-    const std::streamoff offset (Record::event_size);
-
-    std::vector<char> buf(1024*1024*1024);
-    std::ifstream f;
-    f.rdbuf()->pubsetbuf(buf.data(), buf.size());
-    f.open(fname, std::ios::in | std::ios::binary);
+    std::ifstream f(fname, std::ios::binary);
 
     while (go_to_tt(f, tt, stop))
     {

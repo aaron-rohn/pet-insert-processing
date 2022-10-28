@@ -5,10 +5,13 @@
 #include "coincidence.h"
 #include <iostream>
 #include <filesystem>
+#include <algorithm>
+#include <numeric>
 
 CoincidenceData::CoincidenceData(const Single &a, const Single &b, bool prompt)
 {
     // Event a is earlier (lower abstime), b is later (greater abstime)
+    // Event 1 has the lower block number, 2 has the higher
 
     const auto &[ev1, ev2] = a.blk < b.blk ?
         std::tie(a, b) : std::tie(b, a);
@@ -21,7 +24,7 @@ CoincidenceData::CoincidenceData(const Single &a, const Single &b, bool prompt)
     abstime(t);
 
     int64_t td = ev1.abs_time - ev2.abs_time;
-    td %= window_width;
+    td %= width;
 
     tdiff(prompt, td);
     blk(ev1.blk, ev2.blk);
@@ -72,14 +75,13 @@ SortedValues CoincidenceData::coincidence_sort_span(
         std::vector<std::streampos> end_pos
 ) {
     const auto n = fnames.size();
-
-    // calculate the file size in bytes to read
-    std::streampos fsize_to_process = 0;
+    std::vector<std::streampos> fsizes;
     for (size_t i = 0; i < n; i++)
-        fsize_to_process += (end_pos[i] - start_pos[i]);
+        fsizes.push_back(end_pos[i] - start_pos[i]);
 
-    // estimate the number of singles to load
-    const size_t approx_singles = fsize_to_process / Record::event_size;
+    auto to_proc = std::accumulate(fsizes.begin(), fsizes.end(), 0);
+    uint64_t approx_singles = to_proc / Record::event_size;
+
     std::vector<Single> singles;
     singles.reserve(approx_singles);
 
@@ -90,7 +92,7 @@ SortedValues CoincidenceData::coincidence_sort_span(
     for (size_t i = 0; i < n; i++)
     {
         Reader rdr (fnames[i], start_pos[i], end_pos[i]);
-        while (rdr)
+        while(rdr)
         {
             Record::read(rdr, data);
             Record::align(rdr, data);
@@ -104,21 +106,23 @@ SortedValues CoincidenceData::coincidence_sort_span(
         }
     }
 
-    // time-sort the singles and find prompts and delays
+    // time-sort the singles to ascending order
     std::sort(singles.begin(), singles.end());
+
+    // generate prompts and delays
     auto coin = CoincidenceData::sort(singles);
     return std::make_tuple(end_pos, coin);
 }
 
 Coincidences CoincidenceData::sort(
-        std::vector<Single> &singles
+        const std::vector<Single> &singles
 ) {
     Coincidences coin;
 
     for (auto a = singles.begin(), d = singles.begin(), e = singles.end(); a != e; ++a)
     {
         // Identify prompt coincidences
-        auto prompt_end = a->abs_time + window_width;
+        auto prompt_end = a->abs_time + width;
         for (auto b = a + 1; b != e && b->before(prompt_end); ++b)
         {
             if (a->valid_module(b->mod))
@@ -126,11 +130,10 @@ Coincidences CoincidenceData::sort(
         }
 
         // Identify delay coincidences
-        uint64_t delay_end = a->abs_time - window_delay;
-        uint64_t delay_start = delay_end - window_width;
-        for (; d != a && d->before(delay_end); ++d)
+        for (auto end = a->abs_time - delay, start = end - width;
+                d != a && d->before(end); ++d)
         {
-            if (d->after(delay_start) && d->valid_module(a->mod))
+            if (d->after(start) && d->valid_module(a->mod))
                 coin.emplace_back(*d, *a, false);
         }
     }

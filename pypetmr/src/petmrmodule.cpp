@@ -74,42 +74,6 @@ pylist_to_strings(PyObject *file_list)
     return cfile_list;
 }
 
-std::tuple<std::vector<double>,std::vector<uint64_t>>
-validate_scaling_array(PyArrayObject *scaling, PyArrayObject *fpos)
-{
-    auto nullarr = std::make_tuple(std::vector<double>(),std::vector<uint64_t>());
-
-    if (PyArray_NDIM(scaling) != 1 || PyArray_NDIM(fpos) != 1)
-    {
-        PyErr_SetString(PyExc_RuntimeError, "Wrong number of dimensions for scaling array");
-        return nullarr;
-    }
-
-    if (PyArray_TYPE(scaling) != NPY_DOUBLE || PyArray_TYPE(fpos) != NPY_ULONGLONG)
-    {
-        PyErr_SetString(PyExc_RuntimeError, "Wrong data type for scaling array");
-        return nullarr;
-    }
-
-    npy_intp *scaling_shape, *fpos_shape;
-    scaling_shape = PyArray_DIMS(scaling);
-    fpos_shape = PyArray_DIMS(fpos);
-
-    if (scaling_shape[0] != fpos_shape[0])
-    {
-        PyErr_SetString(PyExc_RuntimeError, "Size of scaling and time arrays are different");
-        return nullarr;
-    }
-
-    size_t n = scaling_shape[0];
-    std::vector<double> scaling_vec (n);
-    std::memcpy(scaling_vec.data(), PyArray_DATA(scaling), n*sizeof(double));
-    std::vector<uint64_t> fpos_vec (n);
-    std::memcpy(fpos_vec.data(), PyArray_DATA(fpos), n*sizeof(uint64_t));
-
-    return std::make_tuple(scaling_vec, fpos_vec);
-}
-
 /*
  * Load singles data from a single file
  */
@@ -153,7 +117,7 @@ petmr_singles(PyObject *self, PyObject *args)
         if (max_events > 0 && nevents > max_events)
             break;
 
-        f.read((char*)data, Record::event_size);
+        Record::read(f, data);
         Record::align(f, data);
 
         auto mod = Record::get_module(data);
@@ -212,7 +176,7 @@ petmr_coincidences(PyObject *self, PyObject *args)
     // Declare all the variables at the beginning
     // Allows for saving the thread state early on
 
-    size_t sorter_threads = 8;
+    size_t nworkers = 7;
     size_t n = file_list.size();
     std::atomic_bool stop = false;
 
@@ -299,7 +263,7 @@ petmr_coincidences(PyObject *self, PyObject *args)
             start_pos = end_pos;
         }
 
-        if (stop || workers.size() >= sorter_threads)
+        if (stop || workers.size() >= nworkers)
         {
             auto [pos, coin] = workers.front().get();
             workers.pop_front();

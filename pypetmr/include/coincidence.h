@@ -19,8 +19,8 @@ struct CoincidenceData
     // Columns in python data - block, eF, eR, x, y
     static const long ncol = 5;
     static const size_t vals_per_ev = 11;
-    static const int16_t window_width = 10;
-    static const int16_t window_delay = 100;
+    static const int16_t width = 10;
+    static const int16_t delay = 100;
 
     // only data member of the struct is an array of uint16's
     uint16_t data[vals_per_ev] = {0};
@@ -76,7 +76,7 @@ struct CoincidenceData
     inline std::tuple<uint16_t,uint16_t,uint16_t,uint16_t> pos() const
     { return std::make_tuple(x_a(),y_a(),x_b(),y_b()); }
 
-    static Coincidences sort(std::vector<Single>&);
+    static Coincidences sort(const std::vector<Single>&);
     static SortedValues coincidence_sort_span(
             std::vector<std::string>,
             std::vector<std::streampos>,

@@ -85,7 +85,7 @@ bool Record::go_to_tt(
         }
     }
 
-    return !stop;
+    return f.good() && !stop;
 }
 
 /*

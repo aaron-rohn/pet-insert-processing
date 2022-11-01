@@ -10,6 +10,7 @@
 
 #include <cstdio>
 #include <future>
+#include <numeric>
 
 static PyObject *petmr_singles(PyObject*, PyObject*);
 static PyObject *petmr_coincidences(PyObject*, PyObject*);
@@ -38,7 +39,19 @@ PyMODINIT_FUNC
 PyInit_petmr(void)
 {
     import_array();
-    return PyModule_Create(&petmrmodule);
+    PyObject *mod = PyModule_Create(&petmrmodule);
+    PyModule_AddIntConstant(mod, "nmodules", Geometry::nmodules);
+    PyModule_AddIntConstant(mod, "nblocks", Geometry::nblocks);
+    PyModule_AddIntConstant(mod, "nblocks_axial", Geometry::nblocks_axial);
+    PyModule_AddIntConstant(mod, "ncrystals", Geometry::ncrystals);
+    PyModule_AddIntConstant(mod, "ncrystals_total", Geometry::ncrystals_total);
+    PyModule_AddIntConstant(mod, "nring", Geometry::nring);
+    PyModule_AddIntConstant(mod, "ncrystals_per_ring", Geometry::ncrystals_per_ring);
+    PyModule_AddIntConstant(mod, "dim_theta_full", Geometry::dim_theta_full);
+    PyModule_AddIntConstant(mod, "dim_theta_half", Geometry::dim_theta_half);
+    PyModule_AddIntConstant(mod, "dim_r", Geometry::dim_r);
+    PyModule_AddIntConstant(mod, "ndoi", Geometry::ndoi);
+    return mod;
 }
 
 /*
@@ -103,7 +116,7 @@ petmr_singles(PyObject *self, PyObject *args)
     bool stop = false;
     uint64_t nevents = 0;
     uint8_t data[Record::event_size];
-    std::vector<TimeTag> last_tt (Record::nmodules);
+    std::vector<TimeTag> last_tt (Geometry::nmodules);
     std::vector<Single> events;
 
     PyThreadState *_save = PyEval_SaveThread();
@@ -357,11 +370,12 @@ static PyObject*
 petmr_save_listmode(PyObject* self, PyObject* args)
 {
     const char *lmfname, *fname, *cfgdir;
-    PyArrayObject *scaling_array, *fpos_array;
+    PyArrayObject *scaling_array, *fpos_array, *ppeak_array, *doi_array;
     PyObject *terminate, *status_queue, *data_queue;
-    if (!PyArg_ParseTuple(args, "sssOOOOO",
+    if (!PyArg_ParseTuple(args, "sssOOOOOOO",
                 &lmfname, &fname, &cfgdir,
                 &scaling_array, &fpos_array,
+                &ppeak_array, &doi_array,
                 &terminate, &status_queue, &data_queue)) return NULL;
 
     npy_intp *shp = PyArray_DIMS(fpos_array);
@@ -370,7 +384,8 @@ petmr_save_listmode(PyObject* self, PyObject* args)
 
     PyThreadState *_save = PyEval_SaveThread();
 
-    Michelogram m(Geometry::dim_theta_full, cfgdir, scaling_array);
+    Michelogram m(Geometry::dim_theta_full,
+            scaling_array, ppeak_array, doi_array);
 
     if (!m.loaded())
     {
@@ -467,7 +482,8 @@ petmr_save_sinogram(PyObject* self, PyObject* args)
     Py_RETURN_NONE;
 }
 
-static PyObject *petmr_validate_singles_file(PyObject* self, PyObject* args)
+static PyObject*
+petmr_validate_singles_file(PyObject* self, PyObject* args)
 {
     const char *singles_file;
     if (!PyArg_ParseTuple(args, "s", &singles_file))

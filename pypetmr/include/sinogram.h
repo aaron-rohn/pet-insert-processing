@@ -3,104 +3,29 @@
 
 #include <iostream>
 #include <mutex>
+
+#include <constants.h>
 #include <singles.h>
 #include <coincidence.h>
 #include <Python.h>
-#include <json.hpp>
 
 #include <numpy/arrayobject.h>
 #include <numpy/ndarraytypes.h>
 
-using json = nlohmann::json;
 using stype = float;
 static const auto npy_type = NPY_FLOAT32;
 
-template<typename T> using vec = std::vector<T>;
-
-struct ListmodeData;
-
-class Geometry
-{
-    public:
-    static const int ncrystals = 19;
-    static const int nblocks_axial = 4;
-    static const int ncrystals_total = ncrystals * ncrystals;
-
-    static const int ncrystals_axial_gap = 1;
-    static const int nring = nblocks_axial *
-        (ncrystals + ncrystals_axial_gap);
-
-    static const int ncrystals_transverse_gap = 0;
-    static const int ncrystals_per_ring = Record::nmodules *
-        (ncrystals + ncrystals_transverse_gap);
-
-    static const int dim_theta_full = ncrystals_per_ring;
-    static const int dim_theta_half = ncrystals_per_ring/2;
-
-    // trim outermost blocks in transverse direction
-    static const int dim_r = ncrystals_per_ring - (2*ncrystals);
-
-    static constexpr double energy_window = 0.2;
-
-    static inline int ring(int blk, int xtal)
-    {
-        int row = ncrystals - (xtal / ncrystals) - 1;
-        int blk_ax = blk % nblocks_axial;
-        return row + (ncrystals + ncrystals_axial_gap)*blk_ax;
-    }
-
-    static inline int idx(int blk, int xtal)
-    {
-        int col = xtal % ncrystals;
-        int mod = blk >> 2;
-        return col + (ncrystals + ncrystals_transverse_gap)*mod;
-    }
-};
-
-class PhotopeakLookupTable
-{
-    vec<vec<double>> photopeaks;
-    vec<vec<vec<double>>> doi;
-
-    public:
-    const double energy_window = Geometry::energy_window;
-    bool loaded = false;
-
-    PhotopeakLookupTable(std::string);
-    static std::string find_cfg_file(std::string);
-
-    int in_window(size_t blk, size_t xtal, double e) const
-    {
-        double th = photopeaks[blk][xtal];
-        if (th < 0) return 0;
-
-        double lld = (1.0 - energy_window)*th, uld = (1.0 + energy_window)*th;
-        if (e < lld || e > uld) return -1;
-
-        return (e - lld) / (uld - lld) * 63.0;
-    }
-
-    int doi_window(size_t blk, size_t xtal, double val) const
-    {
-        const auto &doi_vals = doi[blk][xtal];
-        for (size_t i = 0; i < doi_vals.size(); i++)
-            if (val > doi_vals[i]) return i;
-        return doi_vals.size();
-    }
-};
-
-class Sinogram: Geometry
+class Sinogram
 {
     std::mutex m;
 
     public:
 
-    vec<stype> s;
-    Sinogram(int dt):
-        s(vec<stype> (dt*dim_r, 0)) {};
+    std::vector<stype> s;
+    Sinogram(int dt): s(std::vector<stype> (dt*Geometry::dim_r, 0)) {};
     Sinogram(const Sinogram &other): m(), s(other.s) {};
 
-    inline stype& operator() (int theta, int r){ return s[theta*dim_r + r]; };
+    inline stype& operator() (int theta, int r){ return s[theta*Geometry::dim_r + r]; };
 
     static std::tuple<int,int> idx_to_coord(int idx1, int idx2)
     {
@@ -119,8 +44,8 @@ class Sinogram: Geometry
         auto [theta, r] = idx_to_coord(idx1, idx2);
 
         // trim outermost blocks from transverse dimension of sinogram
-        r -= ncrystals;
-        if (r < 0 || r > dim_r) return;
+        r -= Geometry::ncrystals;
+        if (r < 0 || r > Geometry::dim_r) return;
 
         std::lock_guard<std::mutex> lck(m);
         (*this)(theta, r)++;
@@ -131,39 +56,54 @@ class Sinogram: Geometry
 
     void read_from(std::ifstream  &f)
     { f.read((char*)s.data(), s.size()*sizeof(stype)); };
+
+    static inline int ring(int blk, int xtal)
+    {
+        int row = Geometry::ncrystals - (xtal / Geometry::ncrystals) - 1;
+        int blk_ax = blk % Geometry::nblocks_axial;
+        return row + (Geometry::ncrystals + Geometry::ncrystals_axial_gap)*blk_ax;
+    }
+
+    static inline int idx(int blk, int xtal)
+    {
+        int col = xtal % Geometry::ncrystals;
+        int mod = blk >> 2;
+        return col + (Geometry::ncrystals + Geometry::ncrystals_transverse_gap)*mod;
+    }
 };
 
-class Michelogram: Geometry
+class Michelogram
 {
-    vec<Sinogram> m;
+    std::vector<Sinogram> m;
+    PyArrayObject *photopeaks, *doi, *lut;
 
     public:
 
-    PyArrayObject *lut = NULL;
-    PhotopeakLookupTable ppeak = std::string();
-    
+    bool loaded() { return photopeaks && doi && lut; }
+
     inline int lut_lookup(int blk, int scale_idx, int y, int x) const
     { return *(int*)PyArray_GETPTR4(lut, blk, scale_idx, y, x); }
 
-    bool loaded() { return ppeak.loaded; }
-
     // first arg is horiz. index, second arg is vert. index
-    inline Sinogram& operator() (int h, int v){ return m[v*nring + h]; };
+    inline Sinogram& operator() (int h, int v){ return m[v*Geometry::nring + h]; };
 
-    ListmodeData event_to_coords(const CoincidenceData&, size_t) const;
+    int energy_window(size_t, size_t, double) const;
+    int doi_window(size_t, size_t, double) const;
     void write_to(std::string);
     void read_from(std::string);
+    ListmodeData event_to_coords(const CoincidenceData&, size_t) const;
+    std::streampos sort_span(std::string, std::streampos, std::streampos, bool, bool);
+    FILE *encode_span (std::string, std::streampos, std::streampos, int) const;
 
     PyObject *to_py_data();
     Michelogram(PyObject*);
 
-    Michelogram(int dt, std::string base_dir = std::string(), PyArrayObject* lut = NULL):
-        m(vec<Sinogram> (nring*nring, Sinogram(dt))),
-        lut(lut), ppeak(base_dir) {};
-
-    std::streampos sort_span(std::string, std::streampos, std::streampos, bool, bool);
-
-    FILE *encode_span (std::string, std::streampos, std::streampos, int) const;
+    Michelogram(int dt,
+            PyArrayObject *lut = NULL,
+            PyArrayObject *photopeaks = NULL,
+            PyArrayObject *doi = NULL):
+        m(std::vector<Sinogram> (Geometry::nring*Geometry::nring, Sinogram(dt))),
+        photopeaks(photopeaks), doi(doi), lut(lut) {};
 
     class Iterator
     {
@@ -190,7 +130,7 @@ class Michelogram: Geometry
         Iterator& operator++()
         {
             // Increment horiz. coord and check if segment finished
-            if (++r0 == nring)
+            if (++r0 == Geometry::nring)
             {
                 // If 'upper' segment is finished, increment ring diff.
                 if (upper) ++rd;
@@ -225,7 +165,7 @@ class Michelogram: Geometry
     Iterator begin() { return Iterator(0, *this); };
 
     // maximum valid segment is nring-1
-    Iterator end() { return Iterator(nring, *this); };
+    Iterator end() { return Iterator(Geometry::nring, *this); };
 };
 
 #endif

@@ -38,32 +38,6 @@ CoincidenceData::CoincidenceData(const Single &a, const Single &b, bool prompt)
     y_b(sd2.y);
 }
 
-Coincidences
-CoincidenceData::read(std::string fname, uint64_t max_events)
-{
-    std::streampos fsize;
-
-    {
-        std::ifstream f(fname, std::ios::ate | std::ios::binary);
-        fsize = f.tellg();
-    }
-
-    std::ifstream f(fname, std::ios::binary);
-    uint64_t count = fsize / sizeof(CoincidenceData);
-    count = max_events > 0 && count > max_events ? max_events : count;
-
-    Coincidences cd(count);
-    f.read((char*)cd.data(), count * sizeof(CoincidenceData));
-    return cd;
-}
-
-void CoincidenceData::write(
-        std::ofstream &f,
-        const Coincidences &cd
-) {
-    f.write((char*)cd.data(), cd.size()*sizeof(CoincidenceData));
-}
-
 /*
  * Sort coincidences between multiple singles data files
  * given a start and end position for each file
@@ -85,7 +59,7 @@ SortedValues CoincidenceData::coincidence_sort_span(
     std::vector<Single> singles;
     singles.reserve(approx_singles);
 
-    std::vector<TimeTag> last_tt (Record::nmodules);
+    std::vector<TimeTag> last_tt (Geometry::nmodules);
     uint8_t data[Record::event_size];
 
     // Load all the singles from each file

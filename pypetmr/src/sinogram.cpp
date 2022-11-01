@@ -5,69 +5,27 @@
 #include <sinogram.h>
 #include <cstdio>
 
-std::string PhotopeakLookupTable::find_cfg_file(std::string base_dir)
+int Michelogram::energy_window(size_t blk, size_t xtal, double e) const
 {
-    if (base_dir == std::string()) return base_dir;
+    double th = *(double*)PyArray_GETPTR2(photopeaks, blk, xtal);
 
-    for (auto &p : std::filesystem::recursive_directory_iterator(base_dir))
-        if (p.path().extension() == ".json") return p.path();
+    if (th < 0) return 0;
 
-    return std::string();
+    double lld = (1.0 - Geometry::energy_window)*th;
+    double uld = (1.0 + Geometry::energy_window)*th;
+    if (e < lld || e > uld) return -1;
+
+    return (e - lld) / (uld - lld) * 63.0;
 }
 
-PhotopeakLookupTable::PhotopeakLookupTable(std::string base_dir):
-        photopeaks(vec<vec<double>> (
-                    Single::nblocks,
-                    vec<double>(Geometry::ncrystals_total, -1))),
-
-        doi(vec<vec<vec<double>>> (
-                    Single::nblocks,
-                    vec<vec<double>>(Geometry::ncrystals_total)))
+int Michelogram::doi_window(size_t blk, size_t xtal, double val) const
 {
-    std::string cfg_file = find_cfg_file(base_dir);
-    if (cfg_file == std::string()) return;
-
-    json cfg;
-    std::ifstream(cfg_file) >> cfg;
-
-    // iterate over each block in the json file
-    for (auto &[blk, blk_values]: cfg.items())
+    for (size_t i = 0; i < Geometry::ndoi; i++)
     {
-        size_t blk_num = std::stoi(blk);
-        if (blk_num >= Single::nblocks)
-        {
-            std::cerr << "Error: Invalid block number in config " << blk_num << std::endl;
-            return;
-        }
-
-        double blk_ppeak = blk_values["photopeak"];
-
-        for (auto &[crystal, xtal_values]: blk_values["crystal"].items())
-        {
-            size_t xtal_num = std::stoi(crystal);
-
-            if (xtal_num > Geometry::ncrystals_total)
-            {
-                std::cerr << "Error: Invalid crystal number in config " << xtal_num << std::endl;
-                return;
-            }
-
-            if (xtal_num == Geometry::ncrystals_total)
-                continue;
-
-            photopeaks[blk_num][xtal_num] = xtal_values["energy"]["photopeak"];
-            doi[blk_num][xtal_num] = xtal_values["DOI"].get<vec<double>>();
-        }
-
-        // If found, assign the block photopeak to any missed crystals
-        if (blk_ppeak > 0)
-        {
-            for (auto &xtal_ppeak : photopeaks[blk_num])
-                if (xtal_ppeak < 0) xtal_ppeak = blk_ppeak;
-        }
+        double th = *(double*)PyArray_GETPTR3(doi, blk, xtal, i);
+        if (val >  th) return i;
     }
-
-    loaded = true;
+    return Geometry::ndoi;
 }
 
 ListmodeData
@@ -79,22 +37,22 @@ Michelogram::event_to_coords(const CoincidenceData& c, size_t scale_idx) const
 
     unsigned int xa = lut_lookup(ba, scale_idx, pos_ya, pos_xa);
     unsigned int xb = lut_lookup(bb, scale_idx, pos_yb, pos_xb);
-    if (xa >= ncrystals_total || xb >= ncrystals_total)
+    if (xa >= Geometry::ncrystals_total || xb >= Geometry::ncrystals_total)
         return ListmodeData();
 
     // Apply energy thresholds
     auto [ea, eb] = c.e_sum();
-    int scaled_ea = ppeak.in_window(ba, xa, ea);
-    int scaled_eb = ppeak.in_window(bb, xb, eb);
+    int scaled_ea = energy_window(ba, xa, ea);
+    int scaled_eb = energy_window(bb, xb, eb);
     if (scaled_ea < 0 || scaled_eb < 0)
         return ListmodeData();
 
     auto [doia_val, doib_val] = c.doi();
-    unsigned int doia = ppeak.doi_window(ba, xa, doia_val);
-    unsigned int doib = ppeak.doi_window(bb, xb, doib_val);
+    unsigned int doia = doi_window(ba, xa, doia_val);
+    unsigned int doib = doi_window(bb, xb, doib_val);
 
-    unsigned int ra = ring(ba, xa), rb = ring(bb, xb);
-    unsigned int idxa = idx(ba, xa), idxb = idx(bb, xb);
+    unsigned int ra = Sinogram::ring(ba, xa), rb = Sinogram::ring(bb, xb);
+    unsigned int idxa = Sinogram::idx(ba, xa), idxb = Sinogram::idx(bb, xb);
 
     return ListmodeData {
         .ring_a = ra, .crystal_a = idxa,
@@ -122,7 +80,8 @@ void Michelogram::read_from(std::string fname)
         s.read_from(f);
 }
 
-Michelogram::Michelogram(PyObject *arr)
+Michelogram::Michelogram(PyObject *arr):
+    photopeaks(NULL), doi(NULL), lut(NULL)
 {
     if (PyArray_TYPE((PyArrayObject*)arr) != npy_type)
     {
@@ -141,11 +100,13 @@ Michelogram::Michelogram(PyObject *arr)
     npy_intp *dims = PyArray_DIMS((PyArrayObject*)arr);
     
     int dim_theta = dims[2];
-    m = vec<Sinogram> (nring*nring, Sinogram(dim_theta));
+    m = std::vector<Sinogram> (
+            Geometry::nring*Geometry::nring,
+            Sinogram(dim_theta));
 
-    if (dims[0] != nring ||
-        dims[1] != nring ||
-        dims[3] != dim_r)
+    if (dims[0] != Geometry::nring ||
+        dims[1] != Geometry::nring ||
+        dims[3] != Geometry::dim_r)
     {
         std::cout << "Invalid sinogram dimensions: ";
         for (int i = 0; i < 4; i++) std::cout << dims[i] << " ";
@@ -162,9 +123,9 @@ Michelogram::Michelogram(PyObject *arr)
 
 PyObject *Michelogram::to_py_data()
 {
-    int dim_theta = begin()->s.size() / dim_r;
+    int dim_theta = begin()->s.size() / Geometry::dim_r;
 
-    npy_intp dims[] = {nring, nring, dim_theta, dim_r};
+    npy_intp dims[] = {Geometry::nring, Geometry::nring, dim_theta, Geometry::dim_r};
     PyObject *arr = PyArray_SimpleNew(4, dims, npy_type);
 
     for (auto b = begin(), e = end(); b != e; ++b)

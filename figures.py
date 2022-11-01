@@ -251,12 +251,8 @@ class Plots(tk.Frame):
                 text = "Select Directory",
                 command = lambda: self.check_output_dir(True))
 
-        self.store_flood_button = tk.Button(self.button_frame,
-                text = "Store Flood",
-                command = self.store_flood_cb)
-
         self.store_lut_button = tk.Button(self.button_frame,
-                text = "Store LUT",
+                text = "Store Configuration",
                 command = self.store_lut_cb)
 
         self.register_button = tk.Button(self.button_frame, text = "Register Peaks")
@@ -274,7 +270,6 @@ class Plots(tk.Frame):
 
         self.button_frame.pack(pady = 10);
         self.select_dir_button.pack(side = tk.LEFT, padx = 5)
-        self.store_flood_button.pack(side = tk.LEFT, padx = 5)
         self.store_lut_button.pack(side = tk.LEFT, padx = 5)
         self.register_button.pack(side = tk.LEFT, padx = 5)
         self.transform_button.pack(side = tk.LEFT, padx = 5)
@@ -314,7 +309,7 @@ class Plots(tk.Frame):
 
     def create_lut_borders(self):
         blk = self.return_block()
-        lut_fname = os.path.join(self.output_dir, f'block{blk}.lut')
+        lut_fname = os.path.join(self.output_dir, 'default', 'lut', f'block{blk}.lut')
         lut = np.fromfile(lut_fname, np.intc).reshape((512,512))
         yd = np.diff(lut, axis = 0, prepend = lut.max()) != 0
         xd = np.diff(lut, axis = 1, prepend = lut.max()) != 0
@@ -362,16 +357,16 @@ class Plots(tk.Frame):
                 title = "Configuration data directory",
                 initialdir = '/')
 
+        default_dir = os.path.join(self.output_dir, 'default')
+        lut_dir = os.path.join(default_dir, 'lut')
+        fld_dir = os.path.join(default_dir, 'flood')
+
+        for d in [default_dir, lut_dir, fld_dir]:
+            try:
+                os.mkdir(d)
+            except FileExistsError: pass
+
         return self.output_dir
-
-    def store_flood_cb(self):
-        output_dir = self.check_output_dir()
-        if not output_dir or self.flood.f is None:
-            return
-
-        blk = self.return_block()
-        flood_fname = os.path.join(output_dir, f'block{blk}.raw')
-        self.flood.img.astype(np.intc).tofile(flood_fname)
 
     def store_lut_cb(self):
         output_dir = self.check_output_dir()
@@ -382,15 +377,18 @@ class Plots(tk.Frame):
         print(f'Store LUT for block {blk}')
 
         # store the LUT for this block to the specified directory
-        lut_fname = os.path.join(output_dir, f'block{blk}.lut')
+        lut_fname = os.path.join(output_dir, 'default', 'lut', f'block{blk}.lut')
         lut = nearest_peak((self.flood.img_size,)*2,
                 self.flood.pts.reshape(-1,2))
         lut = self.flood.f.warp_lut(lut)
         lut.astype(np.intc).tofile(lut_fname)
         self.transformation_matrix = None
 
+        flood_fname = os.path.join(output_dir, 'default', 'flood', f'block{blk}.raw')
+        self.flood.img.astype(np.intc).tofile(flood_fname)
+
         # update json file with photopeak position for this block
-        config_file = os.path.join(output_dir, 'config.json')
+        config_file = os.path.join(output_dir, 'default', 'config.json')
 
         try:
             with open(config_file, 'r') as f:

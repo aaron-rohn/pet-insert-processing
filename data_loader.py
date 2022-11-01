@@ -349,7 +349,8 @@ class CoincidenceProfilePlot(tk.Toplevel):
 
             # DOI
             tmp = np.concatenate([rowa[:,2], rowb[:,4]]).astype(float)
-            tmp *= (n_doi_bins / arr[:,0])
+            with np.errstate(divide = 'ignore', invalid = 'ignore'):
+                tmp *= (n_doi_bins / arr[:,0])
             arr[:,1] = tmp
 
             # X, Y

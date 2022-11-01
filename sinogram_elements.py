@@ -1,4 +1,4 @@
-import os, glob, re
+import os, glob, re, json
 import tkinter as tk
 import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -119,22 +119,20 @@ class SinogramDisplay:
         return sout
 
     def scale_luts(self, cfgdir, coincidence_file):
-        nblocks = 64
         nscales = 100
         lut_dim = [512,512]
-        lut_invalid = 19*19
 
         scaling, times, fpos = read_times(coincidence_file, nscales)
 
         # Load and rescale the LUTs
         luts = sorted(glob.glob(f'{cfgdir}/*.lut'))
-        lut_arr = np.ones([nblocks, nscales] + lut_dim, dtype = np.intc) * lut_invalid
+        lut_arr = np.ones([petmr.nblocks, nscales] + lut_dim, dtype = np.intc) * petmr.ncrystals_total
 
         for fname in luts:
             # Lut fils are named .../blockXX.lut
             lut_idx = re.findall(r'\d+', os.path.basename(fname))
             lut_idx = int(lut_idx[0])
-            # TODO if not 0 <= lut_idx < nblocks: raise Error
+            # TODO if not 0 <= lut_idx < petmr.nblocks: raise Error
 
             lut = np.fromfile(fname, np.intc).reshape(lut_dim)
 
@@ -145,6 +143,26 @@ class SinogramDisplay:
                 lut_arr[lut_idx,i] = lut_scale[nr-dr:nr+dr, nc-dc:nc+dc]
 
         return fpos, np.ascontiguousarray(lut_arr)
+
+    def load_json_cfg(self, cfgdir):
+        cfg_file = glob.glob(f'{cfgdir}/*.json')[0]
+        with open(cfg_file, 'r') as f:
+            cfg = json.load(f)
+
+        ppeak = np.ones((petmr.nblocks, petmr.ncrystals_total), np.double) * -1;
+        doi = np.ones((petmr.nblocks, petmr.ncrystals_total, petmr.ndoi), np.double) * -1;
+
+        for blk, bval in cfg.items():
+            ppeak[int(blk),:] = bval['photopeak']
+
+            for xtal, xval in bval['crystal'].items():
+                if int(xtal) >= petmr.ncrystals_total:
+                    continue
+
+                ppeak[int(blk),int(xtal)] = xval['energy']['photopeak']
+                doi[int(blk),int(xtal),:] = xval['DOI']
+
+        return ppeak, doi
 
     def save_listmode(self):
         coin_fname = tk.filedialog.askopenfilename(
@@ -166,11 +184,13 @@ class SinogramDisplay:
                 filetypes = listmode_filetypes)
         if not lmfname: return
 
+        ppeak, doi = self.load_json_cfg(cfgdir)
         fpos, lut = self.scale_luts(cfgdir, coin_fname)
 
         self.ldr = SinogramLoaderPopup(
                 self.root, None, petmr.save_listmode,
-                lmfname, coin_fname, cfgdir, lut, fpos)
+                lmfname, coin_fname, cfgdir,
+                lut, fpos, ppeak, doi)
 
     def load_listmode(self):
         fname = tk.filedialog.askopenfilename(

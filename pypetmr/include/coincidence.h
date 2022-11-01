@@ -28,8 +28,8 @@ struct CoincidenceData
     CoincidenceData() {};
     CoincidenceData(const Single&, const Single&, bool=true);
 
-    static Coincidences read(std::string, uint64_t=0);
-    static void write(std::ofstream&, const Coincidences&);
+    static void write(std::ofstream &f, const Coincidences &cd)
+    { f.write((char*)cd.data(), cd.size()*sizeof(CoincidenceData)); }
 
     inline uint8_t blka()  const { return data[0] >> 8; }
     inline uint8_t blkb()  const { return data[0] & 0xFF; }

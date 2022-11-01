@@ -8,6 +8,8 @@
 #include <queue>
 #include <condition_variable>
 
+#include <constants.h>
+
 #include <Python.h>
 #include <numpy/ndarraytypes.h>
 #include <numpy/arrayobject.h>
@@ -24,13 +26,12 @@
 namespace Record
 {
     const int event_size = 16;
-    const int nmodules = 16;
 
     inline int module_above(int mod)
-    { return (mod + 1) % nmodules; };
+    { return (mod + 1) % Geometry::nmodules; };
 
     inline int module_below(int mod)
-    { return (mod + nmodules - 1) % nmodules; };
+    { return (mod + Geometry::nmodules - 1) % Geometry::nmodules; };
 
     // Single event
     // CRC | f |    b   | D_REAR | C_REAR  | B_REAR | A_REAR  | D_FRONT |C_FRONT | B_FRONT |A_FRONT |       TT
@@ -121,7 +122,6 @@ struct TimeTag
 struct Single
 {
     static const int nch = 8;
-    static const int nblocks = 64;
 
     uint8_t blk, mod;
     uint16_t energies[nch] = {0};

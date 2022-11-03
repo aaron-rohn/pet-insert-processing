@@ -307,16 +307,16 @@ static PyObject*
 petmr_sort_sinogram(PyObject *self, PyObject *args)
 {
     const char *fname;
-    int prompts = 1, delays = 0;
+    int prompts = 1, delays = 0, max_doi = Geometry::ndoi;
     PyObject *terminate, *status_queue, *data_queue;
 
-    if (!PyArg_ParseTuple(args, "sppOOO",
-                &fname, &prompts, &delays,
+    if (!PyArg_ParseTuple(args, "sppiOOO",
+                &fname, &prompts, &delays, &max_doi,
                 &terminate, &status_queue, &data_queue)) return NULL;
 
     PyThreadState *_save = PyEval_SaveThread();
 
-    Michelogram m(Geometry::dim_theta_full);
+    Michelogram m(Geometry::dim_theta_full, max_doi);
 
     std::streampos coincidence_file_size = fsize(fname);
     uint64_t events_per_thread = 1'000'000;
@@ -384,7 +384,7 @@ petmr_save_listmode(PyObject* self, PyObject* args)
 
     PyThreadState *_save = PyEval_SaveThread();
 
-    Michelogram m(Geometry::dim_theta_full,
+    Michelogram m(Geometry::dim_theta_full, Geometry::ndoi,
             scaling_array, ppeak_array, doi_array);
 
     if (!m.loaded())

@@ -3,7 +3,6 @@ import numpy as np
 import tkinter as tk
 from scipy.spatial import Voronoi, voronoi_plot_2d
 from scipy import ndimage
-
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure, SubplotParams
 
@@ -36,7 +35,8 @@ class FloodHist(MPLFigure):
         self.pts = None
         self.pts_active = None
         self.overlay = None
-        self.voronoi = True
+        self.draw_voronoi = False
+        self.draw_points = True
 
         self.canvas.mpl_connect('button_press_event', self.click)
 
@@ -107,7 +107,7 @@ class FloodHist(MPLFigure):
             active = self.pts[self.pts_active].T
             inactive = self.pts[~self.pts_active].T
 
-            if self.voronoi:
+            if self.draw_voronoi:
                 vor = Voronoi(self.pts.reshape(-1,2))
                 voronoi_plot_2d(vor, ax = self.plot, 
                         show_vertices = False, 
@@ -115,7 +115,8 @@ class FloodHist(MPLFigure):
                         line_colors = 'grey',
                         line_alpha = 0.5)
 
-            self.plot.plot(*active, '.b', *inactive, '.r', ms = 4)
+            if self.draw_points:
+                self.plot.plot(*active, '.b', *inactive, '.r', ms = 4)
 
         # Invert Y axis to display A channel in Top right
         self.plot.invert_yaxis()
@@ -135,7 +136,9 @@ class FloodHist(MPLFigure):
         self.pts = self.pts.reshape(self.npts, self.npts, 2)
         self.redraw()
 
-    def update(self, x, y, warp = None, overlay = None, voronoi = True):
+    def update(self, x, y, warp = None, overlay = None,
+               draw_voronoi = False, draw_points = True):
+
         # First coord -> rows -> y
         # Second coord -> cols -> x
         self.img, *_ = np.histogram2d(y, x, bins = self.img_size,
@@ -152,7 +155,8 @@ class FloodHist(MPLFigure):
             self.pts = None
 
         self.pts_active = np.zeros((self.npts, self.npts), dtype = bool)
-        self.voronoi = voronoi
+        self.draw_voronoi = draw_voronoi
+        self.draw_points = draw_points
         self.overlay = overlay
         self.redraw()
 
@@ -254,13 +258,17 @@ class Plots(tk.Frame):
         self.transform_button = tk.Button(self.button_frame,
                 text = "Perspective Transform", command = self.perspective_transform)
 
-        self.overlay_lut = tk.IntVar()
-        self.overlay_lut_cb = tk.Checkbutton(self.button_frame,
-                text = "Overlay LUT", variable = self.overlay_lut)
+        self.show_points = tk.IntVar(value = 1)
+        self.show_points_cb = tk.Checkbutton(self.button_frame,
+                text = "Overlay Points", variable = self.show_points)
 
         self.show_voronoi = tk.IntVar()
         self.show_voronoi_cb = tk.Checkbutton(self.button_frame,
                 text = "Overlay Voronoi", variable = self.show_voronoi)
+
+        self.show_lut = tk.IntVar()
+        self.show_lut_cb = tk.Checkbutton(self.button_frame,
+                text = "Overlay LUT", variable = self.show_lut)
 
         self.button_frame.pack(pady = 10);
         self.select_dir_button.pack(side = tk.LEFT, padx = 5)
@@ -268,8 +276,9 @@ class Plots(tk.Frame):
         self.create_scaled_config.pack(side = tk.LEFT, padx = 5)
         self.register_button.pack(side = tk.LEFT, padx = 5)
         self.transform_button.pack(side = tk.LEFT, padx = 5)
-        self.overlay_lut_cb.pack(side = tk.LEFT, padx = 5)
+        self.show_points_cb.pack(side = tk.LEFT, padx = 5)
         self.show_voronoi_cb.pack(side = tk.LEFT, padx = 5)
+        self.show_lut_cb.pack(side = tk.LEFT, padx = 5)
 
         # Flood, energy and DOI plots
 
@@ -329,7 +338,7 @@ class Plots(tk.Frame):
         if self.d is None: return
 
         lut = None
-        if self.overlay_lut.get() and self.output_dir:
+        if self.show_lut.get() and self.output_dir:
             lut = self.create_lut_borders()
 
         eth = self.energy.thresholds()
@@ -343,7 +352,8 @@ class Plots(tk.Frame):
         x, y = self.d[idx,2], self.d[idx,3]
         self.flood.update(x, y,
                           warp = self.warp, overlay = lut,
-                          voronoi = self.show_voronoi.get())
+                          draw_voronoi = self.show_voronoi.get(),
+                          draw_points = self.show_points.get())
 
     def doi_cb(self, retain = True):
         """ Update the DOI according to the energy thresholds """
@@ -381,11 +391,11 @@ class Plots(tk.Frame):
         if not output_dir or self.flood.f is None:
             return
 
+        print(f'Store calibration data for block {blk}...', end = ' ')
+
         blk = self.return_block()
-        print(f'Store LUT for block {blk}')
 
         # store the LUT for this block to the specified directory
-        lut_fname = os.path.join(output_dir, 'default', 'lut', f'block{blk}.lut')
         lut = Flood.nearest_peak((self.flood.img_size,)*2,
                 self.flood.pts.reshape(-1,2))
 
@@ -393,8 +403,8 @@ class Plots(tk.Frame):
             lut = Flood.warp_lut(lut, self.warp)
             self.warp = None
 
+        lut_fname = os.path.join(output_dir, 'default', 'lut', f'block{blk}.lut')
         lut.astype(np.intc).tofile(lut_fname)
-
         flood_fname = os.path.join(output_dir, 'default', 'flood', f'block{blk}.raw')
         self.flood.img.astype(np.intc).tofile(flood_fname)
 
@@ -406,39 +416,14 @@ class Plots(tk.Frame):
                 cfg = json.load(f)
         except FileNotFoundError: cfg = {}
 
-        """
-        - block
-            - photopeak
-            - FWHM
-            - crystal
-                - energy
-                    - photopeak
-                    - FWHM 
-                - DOI
-                    - thresholds
-        """
-
-        cfg[blk] = {}
-        blk_vals = cfg[blk]
-        blk_vals['crystal'] = {}
-        xtal_vals = blk_vals['crystal']
-
-        peak, fwhm, *_ = crystal.fit_photopeak(
-                n = self.energy.counts, bins = self.energy.bins[:-1])
-
-        blk_vals['photopeak'] = peak
-        blk_vals['FWHM'] = fwhm 
-
-        pks = crystal.calculate_lut_statistics(lut, self.d)
-        for (lut,_), row in pks.iterrows():
-            this_xtal = {}
-            xtal_vals[lut] = this_xtal
-            this_xtal['energy'] = {'photopeak': row['peak'], 'FWHM': row['FWHM']}
-            this_xtal['DOI'] = row[['5mm','10mm','15mm']].tolist()
+        calibration.create_cfg_vals(self.d, lut, blk, cfg,
+                                    (self.energy.counts, self.energy.bins[:-1]))
 
         # save the config file
         with open(config_file, 'w') as f:
             json.dump(cfg, f)
+
+        print('Done')
 
         # increment the active block and update the UI
         all_blks = self.return_block(all_blocks = True)

@@ -1,17 +1,17 @@
-import os, threading, queue, traceback, tempfile, petmr, calibration
+import os, threading, queue, traceback, tempfile
 import concurrent.futures
 import tkinter as tk
 import numpy as np
+import matplotlib.pyplot as plt
 from tkinter.ttk import Progressbar
 from collections.abc import Iterable
-
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure, SubplotParams
 
-import matplotlib.pyplot as plt
+import petmr, calibration
 
 singles_filetypes = [("Singles",".SGL")]
-coincidence_filetypes = [("Prompts",".COIN")]
+coincidence_filetypes = [("Coincidences",".COIN")]
 listmode_filetypes = [("Listmode data",".lm")]
 
 n_doi_bins = 4096
@@ -206,7 +206,10 @@ class CoincidenceProfilePlot(tk.Toplevel):
         self.title(title)
 
     def draw_hist(self):
-        _, self.ev_per_period, self.ev_rate, self.times, _ = calibration.open_coincidence_file(self.data, 500, 1)
+        cf = calibration.CoincidenceFileHandle(self.data, 500, 1)
+        self.ev_rate = cf.event_rate
+        self.times = cf.times
+        self.idx = cf.idx
 
         self.lims = (self.times[0], self.times[-1])
         self.init_lines(self.lims)
@@ -261,17 +264,17 @@ class CoincidenceProfilePlot(tk.Toplevel):
             self.callback(self.block_files, self.current_ev_rate)
 
     def load(self):
-        start, end = sorted([l.get_xdata()[0] for l in self.lines])
-        print(f'Load from {round(start/10)}s to {round(end/10)}s')
+        start_end = np.sort([l.get_xdata()[0] for l in self.lines])
+        print('Load from {}s to {}s'.format(*np.round(start_end / 10)))
 
-        start_end = np.searchsorted(self.times, [start,end])
+        start_end = np.searchsorted(self.times, start_end)
         self.current_ev_rate = self.ev_rate[start_end[0]]
-        start, end = start_end * self.ev_per_period
-        data_subset = self.data[start:end,:]
-        nev = data_subset.shape[0]
+        start, end = self.idx[start_end]
 
-        if nev > max_events:
-            data_subset = data_subset[0:max_events,:]
+        if end - start > max_events:
+            end = int(start + max_events)
+
+        data_subset = self.data[start:end]
 
         print(f'Load {data_subset.shape[0] / 1e6}M events')
 
@@ -282,15 +285,17 @@ class CoincidenceProfilePlot(tk.Toplevel):
         self.block_files = {}
 
         for ub in unique_blocks:
-            print(f'Block {ub}')
+            print(f'Block {ub}', end = '\r')
             self.block_files[ub] = calibration.load_block_coincidence_data(
                     data_subset, blka, blkb, ub)
+        print('')
 
     def save(self):
         self.block_files = {}
 
-        startt, endt = sorted([l.get_xdata()[0] for l in self.lines])
-        start, end = np.searchsorted(self.times, [startt,endt]) * self.ev_per_period
+        start_end = np.sort([l.get_xdata()[0] for l in self.lines])
+        start_end = np.searchsorted(self.times, start_end)
+        start, end = self.idx[start_end]
         data_subset = self.data[start:end,:]
         nev = data_subset.shape[0]
 

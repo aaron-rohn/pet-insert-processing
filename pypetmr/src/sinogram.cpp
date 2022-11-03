@@ -31,12 +31,12 @@ int Michelogram::doi_window(size_t blk, size_t scale, size_t xtal, double val) c
 ListmodeData
 Michelogram::event_to_coords(const CoincidenceData& c, size_t scale) const
 {
-    // Lookup crystal index
     auto [ba, bb] = c.blk();
-    auto [pos_xa, pos_ya, pos_xb, pos_yb] = c.pos();
 
-    unsigned int xa = lut_lookup(ba, scale, pos_ya, pos_xa);
-    unsigned int xb = lut_lookup(bb, scale, pos_yb, pos_xb);
+    // Lookup crystal index
+    auto [pos_xa, pos_ya, pos_xb, pos_yb] = c.pos();
+    size_t xa = lut_lookup(ba, scale, pos_ya, pos_xa);
+    size_t xb = lut_lookup(bb, scale, pos_yb, pos_xb);
     if (xa >= Geometry::ncrystals_total || xb >= Geometry::ncrystals_total)
         return ListmodeData();
 
@@ -151,8 +151,11 @@ std::streampos Michelogram::sort_span(
         rdr.read((char*)&lm, sizeof(lm));
         if ((prompt && lm.prompt) || (delay && !lm.prompt))
         {
-            (*this)(lm.ring_a, lm.ring_b).add_event(
-                    lm.crystal_a, lm.crystal_b);
+            if (lm.doi_a <= max_doi && lm.doi_b <= max_doi)
+            {
+                (*this)(lm.ring_a, lm.ring_b).add_event(
+                        lm.crystal_a, lm.crystal_b);
+            }
         }
     }
 

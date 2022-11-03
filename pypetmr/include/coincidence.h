@@ -26,7 +26,7 @@ struct CoincidenceData
     uint16_t data[vals_per_ev] = {0};
 
     CoincidenceData() {};
-    CoincidenceData(const Single&, const Single&, bool=true);
+    CoincidenceData(const Single&, const Single&, bool = true);
 
     static void write(std::ofstream &f, const Coincidences &cd)
     { f.write((char*)cd.data(), cd.size()*sizeof(CoincidenceData)); }
@@ -49,7 +49,7 @@ struct CoincidenceData
     inline void blk(uint16_t a, uint16_t b)
     { data[0] = (a << 8) | b; }
 
-    inline void tdiff(uint16_t prompt, int8_t td)
+    inline void tdiff(bool prompt, int8_t td)
     { data[1] = (prompt << 8) | td; }
 
     inline void e_aF(uint16_t val) { data[2] = val; }
@@ -108,7 +108,7 @@ struct ListmodeData {
     signed int tdiff        : 5;
     unsigned int prompt     : 1;
 
-    bool valid() { return ring_a != invalid; }
+    bool valid() const { return ring_a != invalid; }
 };
 
 #endif

@@ -23,10 +23,8 @@ CoincidenceData::CoincidenceData(const Single &a, const Single &b, bool prompt)
     t /= (TimeTag::clks_per_tt * 100);
     abstime(t);
 
-    int64_t td = ev1.abs_time - ev2.abs_time;
-    td %= width;
+    tdiff(prompt, int8_t(ev1.abs_time - ev2.abs_time));
 
-    tdiff(prompt, td);
     blk(ev1.blk, ev2.blk);
     e_aF(sd1.eF);
     e_aR(sd1.eR);
@@ -93,22 +91,17 @@ Coincidences CoincidenceData::sort(
 ) {
     Coincidences coin;
 
-    for (auto a = singles.begin(), d = singles.begin(), e = singles.end(); a != e; ++a)
+    for (auto a = singles.begin(), e = singles.end(); a != e; ++a)
     {
-        // Identify prompt coincidences
-        auto prompt_end = a->abs_time + width;
-        for (auto b = a + 1; b != e && b->before(prompt_end); ++b)
-        {
-            if (a->valid_module(b->mod))
-                coin.emplace_back(*a, *b, true);
-        }
+        auto pend = a->abs_time + width;
+        auto dbeg = a->abs_time + delay;
+        auto dend = dbeg + width;
 
-        // Identify delay coincidences
-        for (auto end = a->abs_time - delay, start = end - width;
-                d != a && d->before(end); ++d)
+        for (auto b = a + 1; b != e && *b < dend; ++b)
         {
-            if (d->after(start) && d->valid_module(a->mod))
-                coin.emplace_back(*d, *a, false);
+            bool prompt = *b < pend, delay = *b >= dbeg;
+            if ((prompt || delay) && a->valid_module(b->mod))
+                coin.emplace_back(*a, *b, prompt);
         }
     }
 

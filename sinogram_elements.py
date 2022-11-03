@@ -133,16 +133,15 @@ class SinogramDisplay:
         dirs = dirs[order]
         rates = rates[order]
 
-        # get the event rates for the current coincidence file
-        *_, ev_rate, _, fpos = calibration.open_coincidence_file(coincidence_file)
+        cf = calibration.CoincidenceFileHandle(coincidence_file)
 
         # find the nearest corresponding count rate in the calibration data set
         nearest = lambda vals, v: np.abs(vals - v).argmin()
-        calib_idx = np.array([nearest(rates, rt) for rt in ev_rate])
+        calib_idx = np.array([nearest(rates, rt) for rt in cf.event_rate])
         dirs = dirs[calib_idx]
 
         d, f = [], []
-        for di, fi in zip(dirs, fpos):
+        for di, fi in zip(dirs, cf.file_position()):
             if di not in d:
                 d.append(di)
                 f.append(fi)
@@ -237,9 +236,10 @@ class SinogramDisplay:
             self.count_map_draw()
             self.ldr = None
 
+        max_doi = 0
         self.ldr = SinogramLoaderPopup(
                 self.root, sorting_callback, petmr.sort_sinogram,
-                fname, self.sort_prompts_var.get(), self.sort_delays_var.get())
+                fname, self.sort_prompts_var.get(), self.sort_delays_var.get(), max_doi)
 
     def load_sinogram(self):
         fname = tk.filedialog.askopenfilename(

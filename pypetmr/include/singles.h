@@ -145,10 +145,10 @@ struct Single
     inline bool operator<(const Single &rhs) const
     { return abs_time < rhs.abs_time; }
 
-    inline bool before(const uint64_t &time) const
+    inline bool operator<(const uint64_t &time) const
     { return abs_time < time; }
 
-    inline bool after(const uint64_t &time) const
+    inline bool operator>=(const uint64_t &time) const
     { return abs_time >= time; }
 
     inline bool valid_module(int m) const

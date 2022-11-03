@@ -1,37 +1,47 @@
-import os, petmr, json, pyelastix, crystal, tempfile
+import os, json, tempfile
 import numpy as np
 import cv2 as cv
-import matplotlib.pyplot as plt
-from data_loader import coincidence_cols, n_doi_bins, max_events
 from scipy import ndimage
 
-def open_coincidence_file(f, nperiods = 10, naverage = 10):
-    if isinstance(f, str):
-        sz = os.path.getsize(f)
-        nevents = int((sz/2) // coincidence_cols)
-        data = np.memmap(f, np.uint16, shape = (nevents, coincidence_cols))
-    else:
-        data = f
-        nevents = data.shape[0]
+import petmr, crystal, pyelastix
+from data_loader import coincidence_cols, n_doi_bins, max_events
 
-    ev_per_period = int(nevents / nperiods)
-    times_idx = np.linspace(0, nevents-1, nperiods*naverage + 1, dtype = np.ulonglong)
-    times = data[times_idx,10].astype(float)
+class CoincidenceFileHandle:
+    def __init__(self, data, nperiods = 10, naverage = 10):
+        if isinstance(data, str):
+            nev = int((os.path.getsize(data)/2) // coincidence_cols)
+            self.data = np.memmap(data, np.uint16, shape = (nev, coincidence_cols))
+        else:
+            nev = data.shape[0]
+            self.data = data
 
-    rollover = np.diff(times)
-    rollover = np.where(rollover < 0)[0]
-    for i in rollover:
-        times[i+1:] += 2**16
+        idx = np.linspace(0, nev-1, nperiods*naverage + 1, dtype = np.ulonglong)
+        times = self.data[idx,10].astype(float)
 
-    ev_rate = np.diff(times_idx) / np.diff(times)
+        rollover = np.diff(times)
+        rollover = np.where(rollover < 0)[0]
+        for i in rollover:
+            times[i+1:] += 2**16
 
-    times = times[:-1].reshape(-1,naverage).mean(1)
-    ev_rate = ev_rate.reshape(-1,naverage).mean(1)
+        ev_rate = np.diff(idx) / np.diff(times)
 
-    fpos = np.cumsum(times_idx)[:nperiods*naverage:naverage]
-    fpos *= (2 * coincidence_cols)
+        self.event_rate = ev_rate.reshape(-1,naverage).mean(1)
+        self.times = times[:-1].reshape(-1,naverage).mean(1)
+        self.idx = idx[:nperiods*naverage:naverage]
 
-    return data, ev_per_period, ev_rate, times, fpos
+    def __iter__(self):
+        yield from zip(self.event_rate, self.times, self.idx)
+
+    def events_per_period(self, max_events = None):
+        n = int(np.diff(self.idx).mean())
+
+        if max_events is not None: 
+            n = min(n, max_events)
+
+        return n
+
+    def file_position(self):
+        return self.idx * 2 * coincidence_cols
 
 def load_block_coincidence_data(data, blka, blkb, blk):
     idxa = np.where(blka == blk)[0]
@@ -122,14 +132,32 @@ def make_cfg_subdir(cfg_dir, subdir):
 
     return cfg
 
-def create_cfg_vals(data, lut, blk, cfg):
+def create_cfg_vals(data, lut, blk, cfg, energy_hist = None):
+    """
+    Config json format:
+
+    - block
+        - photopeak
+        - FWHM
+        - crystal
+            - energy
+                - photopeak
+                - FWHM 
+            - DOI
+                - thresholds
+    """
+
     blk_vals = cfg[blk] = {}
     xtal_vals = blk_vals['crystal'] = {}
 
-    es = data[:,0]
-    rng = np.quantile(es, [0.01, 0.99])
-    nbins = int(round((rng[1] - rng[0]) / 10))
-    n, bins = np.histogram(es, bins = nbins, range = rng)
+    if energy_hist is None:
+        es = data[:,0]
+        rng = np.quantile(es, [0.01, 0.99])
+        nbins = int(round((rng[1] - rng[0]) / 10))
+        n, bins = np.histogram(es, bins = nbins, range = rng)
+    else:
+        n, bins = energy_hist
+
     peak, fwhm, *_ = crystal.fit_photopeak(n = n, bins = bins[:-1])
 
     blk_vals['photopeak'] = peak
@@ -154,18 +182,15 @@ def register(src, dst, nres = 4, niter = 500, spacing = 32):
 def create_scaled_calibration(coincidence_file, cfg_dir,
                               status_queue, data_queue, terminate):
 
-    data, ev_per_period, ev_rate, *_ = open_coincidence_file(coincidence_file)
+    cf = CoincidenceFileHandle(coincidence_file)
     default_cfg = os.path.join(cfg_dir, 'default')
     status_queue.put((0, (None,None)))
 
-    for i, rt in enumerate(ev_rate):
-        new_cfg = make_cfg_subdir(cfg_dir, round(rt))
+    for i, (rate, time, start) in enumerate(cf):
+        new_cfg = make_cfg_subdir(cfg_dir, round(rate))
+        end = start + cf.events_per_period(max_events)
 
-        nev = min([ev_per_period, max_events])
-        start = ev_per_period * i
-        end = start + nev
-
-        data_subset = data[start:end]
+        data_subset = cf.data[start:end]
         blocks = data_subset[:,0]
         blka, blkb = blocks >> 8, blocks & 0xFF
         unique_blocks = np.unique(np.concatenate([blka, blkb])).tolist()
@@ -177,7 +202,7 @@ def create_scaled_calibration(coincidence_file, cfg_dir,
 
         for ub in unique_blocks:
             status_queue.put((
-                (i * 64 + ub) / (len(ev_rate) * 64) * 100,
+                (i * 64 + ub) / (len(cf.event_rate) * 64) * 100,
                 (i, ub)))
 
             if terminate.is_set():

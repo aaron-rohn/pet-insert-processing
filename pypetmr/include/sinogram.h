@@ -22,7 +22,7 @@ class Sinogram
     public:
 
     std::vector<stype> s;
-    Sinogram(int dt): s(std::vector<stype> (dt*Geometry::dim_r, 0)) {};
+    Sinogram(size_t dt): s(std::vector<stype> (dt*Geometry::dim_r, 0)) {};
     Sinogram(const Sinogram &other): m(), s(other.s) {};
 
     inline stype& operator() (int theta, int r){ return s[theta*Geometry::dim_r + r]; };
@@ -79,6 +79,8 @@ class Michelogram
 
     public:
 
+    const size_t max_doi = Geometry::ndoi;
+
     bool loaded() { return photopeaks && doi && lut; }
 
     inline int lut_lookup(int blk, int scale_idx, int y, int x) const
@@ -98,12 +100,13 @@ class Michelogram
     PyObject *to_py_data();
     Michelogram(PyObject*);
 
-    Michelogram(int dt,
+    Michelogram(size_t dt, size_t max_doi = Geometry::ndoi,
             PyArrayObject *lut = NULL,
             PyArrayObject *photopeaks = NULL,
             PyArrayObject *doi = NULL):
         m(std::vector<Sinogram> (Geometry::nring*Geometry::nring, Sinogram(dt))),
-        photopeaks(photopeaks), doi(doi), lut(lut) {};
+        photopeaks(photopeaks), doi(doi), lut(lut),
+        max_doi(max_doi) {};
 
     class Iterator
     {

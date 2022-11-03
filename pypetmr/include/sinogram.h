@@ -87,8 +87,8 @@ class Michelogram
     // first arg is horiz. index, second arg is vert. index
     inline Sinogram& operator() (int h, int v){ return m[v*Geometry::nring + h]; };
 
-    int energy_window(size_t, size_t, double) const;
-    int doi_window(size_t, size_t, double) const;
+    int energy_window(size_t, size_t, size_t, double) const;
+    int doi_window(size_t, size_t, size_t, double) const;
     void write_to(std::string);
     void read_from(std::string);
     ListmodeData event_to_coords(const CoincidenceData&, size_t) const;

@@ -33,11 +33,17 @@ def fit_photopeak(energy = None, n = None, bins = None):
              n[ppeak_idx],
              slope,
              intercept)
+    
+    bounds = ((ppeak_energy/2, ppeak_energy*2),
+              (ppeak_energy * 0.05, ppeak_energy * 0.5),
+              (n[ppeak_idx] * 0.1, n[ppeak_idx] * 2),
+              (-np.inf, np.inf),
+              (-np.inf, np.inf))
 
     try:
         popt, *_ = optimize.curve_fit(photopeak,
                                       bins[subset], n[subset],
-                                      p0 = pinit)
+                                      p0 = pinit, bounds = list(zip(*bounds)))
     except RuntimeError:
         popt = pinit
 

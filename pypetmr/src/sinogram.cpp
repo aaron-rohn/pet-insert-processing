@@ -5,9 +5,9 @@
 #include <sinogram.h>
 #include <cstdio>
 
-int Michelogram::energy_window(size_t blk, size_t xtal, double e) const
+int Michelogram::energy_window(size_t blk, size_t scale, size_t xtal, double e) const
 {
-    double th = *(double*)PyArray_GETPTR2(photopeaks, blk, xtal);
+    double th = *(double*)PyArray_GETPTR3(photopeaks, blk, scale, xtal);
 
     if (th < 0) return 0;
 
@@ -18,38 +18,38 @@ int Michelogram::energy_window(size_t blk, size_t xtal, double e) const
     return (e - lld) / (uld - lld) * 63.0;
 }
 
-int Michelogram::doi_window(size_t blk, size_t xtal, double val) const
+int Michelogram::doi_window(size_t blk, size_t scale, size_t xtal, double val) const
 {
     for (size_t i = 0; i < Geometry::ndoi; i++)
     {
-        double th = *(double*)PyArray_GETPTR3(doi, blk, xtal, i);
+        double th = *(double*)PyArray_GETPTR4(doi, blk, scale, xtal, i);
         if (val >  th) return i;
     }
     return Geometry::ndoi;
 }
 
 ListmodeData
-Michelogram::event_to_coords(const CoincidenceData& c, size_t scale_idx) const
+Michelogram::event_to_coords(const CoincidenceData& c, size_t scale) const
 {
     // Lookup crystal index
     auto [ba, bb] = c.blk();
     auto [pos_xa, pos_ya, pos_xb, pos_yb] = c.pos();
 
-    unsigned int xa = lut_lookup(ba, scale_idx, pos_ya, pos_xa);
-    unsigned int xb = lut_lookup(bb, scale_idx, pos_yb, pos_xb);
+    unsigned int xa = lut_lookup(ba, scale, pos_ya, pos_xa);
+    unsigned int xb = lut_lookup(bb, scale, pos_yb, pos_xb);
     if (xa >= Geometry::ncrystals_total || xb >= Geometry::ncrystals_total)
         return ListmodeData();
 
     // Apply energy thresholds
     auto [ea, eb] = c.e_sum();
-    int scaled_ea = energy_window(ba, xa, ea);
-    int scaled_eb = energy_window(bb, xb, eb);
+    int scaled_ea = energy_window(ba, scale, xa, ea);
+    int scaled_eb = energy_window(bb, scale, xb, eb);
     if (scaled_ea < 0 || scaled_eb < 0)
         return ListmodeData();
 
     auto [doia_val, doib_val] = c.doi();
-    unsigned int doia = doi_window(ba, xa, doia_val);
-    unsigned int doib = doi_window(bb, xb, doib_val);
+    unsigned int doia = doi_window(ba, scale, xa, doia_val);
+    unsigned int doib = doi_window(bb, scale, xb, doib_val);
 
     unsigned int ra = Sinogram::ring(ba, xa), rb = Sinogram::ring(bb, xb);
     unsigned int idxa = Sinogram::idx(ba, xa), idxb = Sinogram::idx(bb, xb);

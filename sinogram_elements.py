@@ -6,8 +6,8 @@ from matplotlib.figure import Figure, SubplotParams
 import matplotlib.pyplot as plt
 
 from scipy import ndimage
-import petmr
-from data_loader import coincidence_filetypes, listmode_filetypes, read_times
+import petmr, calibration
+from data_loader import coincidence_filetypes, listmode_filetypes
 from sinogram_loader import SinogramLoaderPopup
 
 class SinogramDisplay:
@@ -118,49 +118,73 @@ class SinogramDisplay:
 
         return sout
 
-    def scale_luts(self, cfgdir, coincidence_file):
-        nscales = 100
+    def find_calib_dirs(self, cfgdir, coincidence_file):
+        """ For a coincidence file, identify the count-rate configuration directory
+        that is the closest match for each included time period. Return a list of the
+        calibration directories and corresponding file offsets
+        """
+
+        # find the count rates with existing calibrations in the cfg dir
+        dirs = glob.glob(os.path.join(cfgdir, '*'))
+        dirs  = np.array([d for d in dirs if os.path.basename(d).isnumeric()])
+        rates = np.array([int(os.path.basename(d)) for d in dirs])
+        order = np.argsort(rates)
+
+        dirs = dirs[order]
+        rates = rates[order]
+
+        # get the event rates for the current coincidence file
+        *_, ev_rate, _, fpos = calibration.open_coincidence_file(coincidence_file)
+
+        # find the nearest corresponding count rate in the calibration data set
+        nearest = lambda vals, v: np.abs(vals - v).argmin()
+        calib_idx = np.array([nearest(rates, rt) for rt in ev_rate])
+        dirs = dirs[calib_idx]
+
+        d, f = [], []
+        for di, fi in zip(dirs, fpos):
+            if di not in d:
+                d.append(di)
+                f.append(fi)
+
+        return d, np.array(f)
+
+    def load_luts(self, calib_dirs):
         lut_dim = [512,512]
+        lut_arr = np.ones([petmr.nblocks, len(calib_dirs)] + lut_dim, dtype = np.intc) * petmr.ncrystals_total
 
-        scaling, times, fpos = read_times(coincidence_file, nscales)
+        for i, d in enumerate(calib_dirs):
+            luts = glob.glob(os.path.join(d, 'lut', '*'))
 
-        # Load and rescale the LUTs
-        luts = sorted(glob.glob(f'{cfgdir}/*.lut'))
-        lut_arr = np.ones([petmr.nblocks, nscales] + lut_dim, dtype = np.intc) * petmr.ncrystals_total
+            for fname in luts:
+                # Lut fils are named .../blockXX.lut
+                lut_idx = re.findall(r'\d+', os.path.basename(fname))
+                lut_idx = int(lut_idx[0])
+                # TODO if not 0 <= lut_idx < petmr.nblocks: raise Error
 
-        for fname in luts:
-            # Lut fils are named .../blockXX.lut
-            lut_idx = re.findall(r'\d+', os.path.basename(fname))
-            lut_idx = int(lut_idx[0])
-            # TODO if not 0 <= lut_idx < petmr.nblocks: raise Error
+                lut_arr[lut_idx, i] = np.fromfile(fname, np.intc).reshape(lut_dim)
 
-            lut = np.fromfile(fname, np.intc).reshape(lut_dim)
+        return np.ascontiguousarray(lut_arr)
 
-            for i, scale in enumerate(scaling):
-                lut_scale = ndimage.zoom(lut, scale, order = 0)
-                nr, nc = (np.array(lut_scale.shape) / 2).astype(int)
-                dr, dc = (np.array(lut_dim) / 2).astype(int)
-                lut_arr[lut_idx,i] = lut_scale[nr-dr:nr+dr, nc-dc:nc+dc]
+    def load_json_cfg(self, calib_dirs):
+        dims = (petmr.nblocks, len(calib_dirs), petmr.ncrystals_total)
+        ppeak = np.ones(dims, np.double) * -1;
+        doi = np.ones(dims + (petmr.ndoi,), np.double) * -1;
 
-        return fpos, np.ascontiguousarray(lut_arr)
+        for i, d in enumerate(calib_dirs):
+            cfg_file = glob.glob(os.path.join(d,'*.json'))[0]
+            with open(cfg_file, 'r') as f:
+                cfg = json.load(f)
 
-    def load_json_cfg(self, cfgdir):
-        cfg_file = glob.glob(f'{cfgdir}/*.json')[0]
-        with open(cfg_file, 'r') as f:
-            cfg = json.load(f)
+            for blk, bval in cfg.items():
+                ppeak[int(blk),i,:] = bval['photopeak']
 
-        ppeak = np.ones((petmr.nblocks, petmr.ncrystals_total), np.double) * -1;
-        doi = np.ones((petmr.nblocks, petmr.ncrystals_total, petmr.ndoi), np.double) * -1;
+                for xtal, xval in bval['crystal'].items():
+                    if int(xtal) >= petmr.ncrystals_total:
+                        continue
 
-        for blk, bval in cfg.items():
-            ppeak[int(blk),:] = bval['photopeak']
-
-            for xtal, xval in bval['crystal'].items():
-                if int(xtal) >= petmr.ncrystals_total:
-                    continue
-
-                ppeak[int(blk),int(xtal)] = xval['energy']['photopeak']
-                doi[int(blk),int(xtal),:] = xval['DOI']
+                    ppeak[int(blk), i, int(xtal)] = xval['energy']['photopeak']
+                    doi[int(blk), i, int(xtal),:] = xval['DOI']
 
         return ppeak, doi
 
@@ -184,8 +208,9 @@ class SinogramDisplay:
                 filetypes = listmode_filetypes)
         if not lmfname: return
 
-        ppeak, doi = self.load_json_cfg(cfgdir)
-        fpos, lut = self.scale_luts(cfgdir, coin_fname)
+        calib_dirs, fpos = self.find_calib_dirs(cfgdir, coin_fname)
+        lut = self.load_luts(calib_dirs)
+        ppeak, doi = self.load_json_cfg(calib_dirs)
 
         self.ldr = SinogramLoaderPopup(
                 self.root, None, petmr.save_listmode,

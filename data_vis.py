@@ -104,18 +104,18 @@ class ScrolledListbox(tk.Frame):
         self.active.bind('<<ListboxSelect>>', new_block_cb)
 
 class App(ttk.Notebook):
-    def collect_data(self, d, scaling = 1):
+    def collect_data(self, d, ev_rate = 0):
         def fmt(num):
             n = math.log10(num) // 3
             suffix = ['', 'K', 'M'][int(n)]
             return f'{round(num / 10**(n*3), 1)}{suffix}'
 
-        self.scaling = scaling
+        self.ev_rate = ev_rate
         self.d = d
         self.block.set([f'{a}  -  {fmt(b.shape[0])}' for a,b in d.items()])
 
     def return_data(self, block):
-        return self.d[block], self.scaling
+        return self.d[block], self.ev_rate
     
     def return_block(self, all_blocks = False):
         return self.block.get_active(all_blocks)

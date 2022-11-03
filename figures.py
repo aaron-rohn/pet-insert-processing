@@ -1,13 +1,15 @@
-import os, json, copy, matplotlib
+import os, glob, json, copy, matplotlib, threading, queue
 import numpy as np
 import tkinter as tk
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.figure import Figure, SubplotParams
 from scipy.spatial import Voronoi, voronoi_plot_2d
 from scipy import ndimage
 
-from flood import Flood, nearest_peak, PerspectiveTransformDialog
-import crystal
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure, SubplotParams
+
+from flood import Flood, PerspectiveTransformDialog
+from data_loader import ProgressPopup, coincidence_filetypes
+import crystal, calibration
 
 class MPLFigure:
     def __init__(self, root, show_axes = True, **pack_args):
@@ -37,6 +39,9 @@ class FloodHist(MPLFigure):
         self.voronoi = True
 
         self.canvas.mpl_connect('button_press_event', self.click)
+
+        self.cmap = copy.copy(matplotlib.colormaps['Pastel1'])
+        self.cmap.set_bad(alpha = 0)
 
     def click(self, ev):
         if self.pts is None: return
@@ -96,9 +101,7 @@ class FloodHist(MPLFigure):
         self.plot.imshow(self.f.fld, aspect = 'auto')
 
         if self.overlay is not None:
-            cmap = copy.copy(matplotlib.colormaps['Pastel1'])
-            cmap.set_bad(alpha = 0)
-            self.plot.imshow(self.overlay, aspect = 'auto', cmap = cmap)
+            self.plot.imshow(self.overlay, aspect = 'auto', cmap = self.cmap)
 
         if self.pts is not None:
             active = self.pts[self.pts_active].T
@@ -132,21 +135,11 @@ class FloodHist(MPLFigure):
         self.pts = self.pts.reshape(self.npts, self.npts, 2)
         self.redraw()
 
-    def update(self, x, y, scaling, warp = None, overlay = None, voronoi = True):
+    def update(self, x, y, warp = None, overlay = None, voronoi = True):
         # First coord -> rows -> y
         # Second coord -> cols -> x
         self.img, *_ = np.histogram2d(y, x, bins = self.img_size,
                 range = [[0,self.img_size-1],[0,self.img_size-1]])
-
-        if overlay is not None:
-            overlay = ndimage.binary_dilation(overlay, np.ones((2,2)))
-            overlay = ndimage.zoom(overlay, scaling, order = 0)
-
-            nr, nc = (np.array(overlay.shape) / 2).astype(int)
-            dr, dc = (np.array(self.img.shape) / 2).astype(int)
-
-            overlay = overlay[nr-dr:nr+dr, nc-dc:nc+dc]
-            overlay = np.ma.array(overlay, mask = (overlay == 0))
 
         self.f = Flood(self.img, warp)
 
@@ -241,19 +234,20 @@ class Plots(tk.Frame):
 
         self.d = None
         self.output_dir = None
-        self.transformation_matrix = None
+        self.warp = None
 
         # Flood operation buttons
 
         self.button_frame = tk.Frame(self)
 
         self.select_dir_button = tk.Button(self.button_frame,
-                text = "Select Directory",
-                command = lambda: self.check_output_dir(True))
+                text = "Select Directory", command = lambda: self.check_output_dir(True))
 
         self.store_lut_button = tk.Button(self.button_frame,
-                text = "Store Configuration",
-                command = self.store_lut_cb)
+                text = "Store Configuration", command = self.store_lut_cb)
+
+        self.create_scaled_config = tk.Button(self.button_frame,
+                text = "Scale Configuration", command = self.scale_config)
 
         self.register_button = tk.Button(self.button_frame, text = "Register Peaks")
 
@@ -271,6 +265,7 @@ class Plots(tk.Frame):
         self.button_frame.pack(pady = 10);
         self.select_dir_button.pack(side = tk.LEFT, padx = 5)
         self.store_lut_button.pack(side = tk.LEFT, padx = 5)
+        self.create_scaled_config.pack(side = tk.LEFT, padx = 5)
         self.register_button.pack(side = tk.LEFT, padx = 5)
         self.transform_button.pack(side = tk.LEFT, padx = 5)
         self.overlay_lut_cb.pack(side = tk.LEFT, padx = 5)
@@ -293,15 +288,15 @@ class Plots(tk.Frame):
 
     def perspective_transform(self):
         def callback(mat):
-            self.transformation_matrix = mat
+            self.warp = mat
             self.flood_cb()
         PerspectiveTransformDialog(self, self.flood.f.fld, callback)
 
     def plots_update(self, *args):
         """ Update all plots when new data is available """
-        self.transformation_matrix = None
+        self.warp = None
         blk = self.return_block()
-        self.d, self.scaling = self.return_data(blk)
+        self.d, self.ev_rate = self.return_data(blk)
 
         self.energy.update(self.d[:,0], retain = False)
         self.doi_cb(retain = False)
@@ -309,11 +304,25 @@ class Plots(tk.Frame):
 
     def create_lut_borders(self):
         blk = self.return_block()
-        lut_fname = os.path.join(self.output_dir, 'default', 'lut', f'block{blk}.lut')
+
+        dirs = glob.glob(os.path.join(self.output_dir, '*'))
+        dirs  = np.array([d for d in dirs if os.path.basename(d).isnumeric()])
+        rates = np.array([int(os.path.basename(d)) for d in dirs])
+        order = np.argsort(rates)
+
+        dirs = dirs[order]
+        rates = rates[order]
+        idx = np.abs(rates - self.ev_rate).argmin()
+
+        lut_fname = os.path.join(dirs[idx], 'lut', f'block{blk}.lut')
         lut = np.fromfile(lut_fname, np.intc).reshape((512,512))
+
         yd = np.diff(lut, axis = 0, prepend = lut.max()) != 0
         xd = np.diff(lut, axis = 1, prepend = lut.max()) != 0
-        return np.logical_or(xd, yd)
+
+        overlay = np.logical_or(xd, yd)
+        overlay = ndimage.binary_dilation(overlay, np.ones((3,3)))
+        return np.ma.array(overlay, mask = (overlay == 0))
 
     def flood_cb(self):
         """ Update the flood according to energy and DOI thresholds """
@@ -332,9 +341,8 @@ class Plots(tk.Frame):
                        (dth[0] < doi) & (doi < dth[1]))[0]
 
         x, y = self.d[idx,2], self.d[idx,3]
-        self.flood.update(x, y, self.scaling,
-                          warp = self.transformation_matrix,
-                          overlay = lut,
+        self.flood.update(x, y,
+                          warp = self.warp, overlay = lut,
                           voronoi = self.show_voronoi.get())
 
     def doi_cb(self, retain = True):
@@ -378,11 +386,14 @@ class Plots(tk.Frame):
 
         # store the LUT for this block to the specified directory
         lut_fname = os.path.join(output_dir, 'default', 'lut', f'block{blk}.lut')
-        lut = nearest_peak((self.flood.img_size,)*2,
+        lut = Flood.nearest_peak((self.flood.img_size,)*2,
                 self.flood.pts.reshape(-1,2))
-        lut = self.flood.f.warp_lut(lut)
+
+        if self.warp is not None:
+            lut = Flood.warp_lut(lut, self.warp)
+            self.warp = None
+
         lut.astype(np.intc).tofile(lut_fname)
-        self.transformation_matrix = None
 
         flood_fname = os.path.join(output_dir, 'default', 'flood', f'block{blk}.raw')
         self.flood.img.astype(np.intc).tofile(flood_fname)
@@ -435,3 +446,22 @@ class Plots(tk.Frame):
             self.set_block(all_blks.index(blk) + 1)
             self.plots_update()
         except KeyError: pass
+
+    def scale_config(self):
+        input_file = tk.filedialog.askopenfilename(
+                title = "Load coincidence listmode data",
+                initialdir = "/",
+                filetypes = coincidence_filetypes)
+
+        cfgdir = self.check_output_dir()
+
+        stat_queue = queue.Queue()
+        data_queue = queue.Queue()
+        terminate = threading.Event()
+        thr = threading.Thread(target = calibration.create_scaled_calibration,
+                               args = [input_file, cfgdir, stat_queue, data_queue, terminate])
+        thr.start()
+
+        ProgressPopup(stat_queue, data_queue, terminate,
+                      callback = lambda *args: None,
+                      fmt = 'Period: {} Block: {}')

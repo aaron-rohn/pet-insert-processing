@@ -1,8 +1,9 @@
-import os, threading, queue, traceback, tempfile, petmr
+import os, threading, queue, traceback, tempfile, petmr, calibration
 import concurrent.futures
 import tkinter as tk
 import numpy as np
 from tkinter.ttk import Progressbar
+from collections.abc import Iterable
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure, SubplotParams
@@ -17,36 +18,14 @@ n_doi_bins = 4096
 max_events = int(1e9)
 coincidence_cols = 11
 
-scaling_nevents = 1000e3
-scaling_factor  = 0.050
-scale = lambda ev_rate: 1 + (ev_rate / scaling_nevents * scaling_factor)
-
-def read_times(fname, nperiods = 500):
-    sz = os.path.getsize(fname)
-    nevents = int((sz/2) // coincidence_cols)
-    data = np.memmap(fname, np.uint16, shape = (nevents, coincidence_cols))
-    ev_per_period = int(nevents / nperiods)
-    times = data[::ev_per_period,10].astype(np.double)
-
-    rollover = np.diff(times)
-    rollover = np.where(rollover < 0)[0]
-    for i in rollover:
-        times[i+1:] += 2**16
-
-    ev_rate = ev_per_period / np.diff(times)
-
-    # The scaling reflects the expansion of the flood due to count rate
-    scaling = scale(ev_rate)
-    fpos = np.linspace(0, sz, len(scaling), dtype = np.ulonglong)
-    return scaling, times[:-1], fpos
-
 class ProgressPopup(tk.Toplevel):
-    def __init__(self, stat_queue, data_queue, terminate, callback):
+    def __init__(self, stat_queue, data_queue, terminate, callback, fmt = 'Counts: {:,}'):
         super().__init__()
         self.stat_queue = stat_queue
         self.data_queue = data_queue
         self.terminate = terminate
         self.callback = callback
+        self.fmt = fmt
 
         self.title('Progress')
         self.attributes('-type', 'dialog')
@@ -56,14 +35,19 @@ class ProgressPopup(tk.Toplevel):
 
         self.progbar.pack(fill = tk.X, expand = True, padx = 10, pady = 10)
         self.counts_label.pack(pady = 10)
+        self.update()
 
     def on_close(self):
         self.terminate.set()
 
     def update(self, interval = 100):
         while not self.stat_queue.empty():
-            perc, counts = self.stat_queue.get()
-            self.counts_label.config(text = f'Counts: {counts:,}')
+            perc, val = self.stat_queue.get()
+
+            self.counts_label.config(text =
+                self.fmt.format(*val) if isinstance(val, Iterable) else
+                self.fmt.format(val))
+
             self.progbar['value'] = perc
 
         if self.data_queue.empty():
@@ -92,7 +76,6 @@ class SinglesLoader:
                                    self.data_queue,
                                    self.terminate,
                                    callback)
-        self.popup.update()
 
     def load_singles(self):
         args = [self.terminate, self.stat_queue, self.input_file, max_events]
@@ -103,24 +86,8 @@ class SinglesLoader:
         block_files = {}
 
         for ub in unique_blocks:
-            tf = tempfile.NamedTemporaryFile()
-            idx = np.where(blocks == ub)[0]
-            arr = np.memmap(tf.name, np.uint16,
-                    mode = 'w+', shape = (len(idx), 4))
-
-            # Energy sum -> eF + eR
-            arr[:,0] = d[1][idx] + d[2][idx]
-
-            # DOI -> eF / eSUM
-            tmp = d[1][idx].astype(float)
-            tmp *= (n_doi_bins / arr[:,0])
-            arr[:,1] = tmp
-
-            # X, Y
-            arr[:,2] = d[3][idx]
-            arr[:,3] = d[4][idx]
-
-            block_files[ub] = arr
+            block_files[ub] = calibration.load_block_singles_data(
+                    d, blocks, ub)
 
         self.data_queue.put(block_files)
 
@@ -165,7 +132,6 @@ class CoincidenceSorter:
                                    self.data_queue,
                                    self.terminate,
                                    self.callback)
-        self.popup.update()
 
     def sort_coincidences(self):
         """ Load coincicdence data by sorting the events in one or more singles files. If
@@ -240,24 +206,12 @@ class CoincidenceProfilePlot(tk.Toplevel):
         self.title(title)
 
     def draw_hist(self):
-        nevents = self.data.shape[0]
-        nperiods = 500
-
-        self.ev_per_period = int(nevents / nperiods)
-        self.times = self.data[::self.ev_per_period,10].astype(float)
-
-        rollover = np.diff(self.times)
-        rollover = np.where(rollover < 0)[0]
-        for i in rollover:
-            self.times[i+1:] += 2**16
+        _, self.ev_per_period, self.ev_rate, self.times, _ = calibration.open_coincidence_file(self.data, 500, 1)
 
         self.lims = (self.times[0], self.times[-1])
         self.init_lines(self.lims)
 
-        self.ev_rate = self.ev_per_period / np.diff(self.times)
-        self.scaling = scale(self.ev_rate)
-
-        self.plt.plot(self.times[:-1], self.ev_rate)
+        self.plt.plot(self.times, self.ev_rate)
         self.plt.grid()
         self.canvas.draw()
 
@@ -304,17 +258,15 @@ class CoincidenceProfilePlot(tk.Toplevel):
             self.set_title()
             self.load_button.config(state = tk.NORMAL)
             self.save_button.config(state = tk.NORMAL)
-            self.callback(self.block_files, self.current_scaling)
+            self.callback(self.block_files, self.current_ev_rate)
 
     def load(self):
         start, end = sorted([l.get_xdata()[0] for l in self.lines])
         print(f'Load from {round(start/10)}s to {round(end/10)}s')
 
         start_end = np.searchsorted(self.times, [start,end])
-        self.current_scaling = self.scaling[start_end[0]]
+        self.current_ev_rate = self.ev_rate[start_end[0]]
         start, end = start_end * self.ev_per_period
-        print(f'Flood scaling factor: {self.current_scaling}')
-
         data_subset = self.data[start:end,:]
         nev = data_subset.shape[0]
 
@@ -331,33 +283,8 @@ class CoincidenceProfilePlot(tk.Toplevel):
 
         for ub in unique_blocks:
             print(f'Block {ub}')
-            idxa = np.where(blka == ub)[0]
-            idxb = np.where(blkb == ub)[0]
-
-            rowa = data_subset[idxa,:]
-            rowb = data_subset[idxb,:]
-
-            tf = tempfile.NamedTemporaryFile()
-
-            shape = (len(idxa) + len(idxb), 4)
-            arr = np.memmap(tf.name, np.uint16,
-                    mode = 'w+', shape = shape)
-
-            # Energy sum
-            arr[:,0] = np.concatenate(
-                    [rowa[:,2] + rowa[:,3], rowb[:,4] + rowb[:,5]])
-
-            # DOI
-            tmp = np.concatenate([rowa[:,2], rowb[:,4]]).astype(float)
-            with np.errstate(divide = 'ignore', invalid = 'ignore'):
-                tmp *= (n_doi_bins / arr[:,0])
-            arr[:,1] = tmp
-
-            # X, Y
-            arr[:,2] = np.concatenate([rowa[:,6], rowb[:,8]])
-            arr[:,3] = np.concatenate([rowa[:,7], rowb[:,9]])
-
-            self.block_files[ub] = arr
+            self.block_files[ub] = calibration.load_block_coincidence_data(
+                    data_subset, blka, blkb, ub)
 
     def save(self):
         self.block_files = {}

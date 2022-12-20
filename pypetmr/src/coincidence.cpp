@@ -93,6 +93,10 @@ Coincidences CoincidenceData::sort(
 
     for (auto a = singles.begin(), e = singles.end(); a != e; ++a)
     {
+        // a               pend          dbeg           dend
+        // |*** prompts ***| ----------- |*** delays ***| ---->
+        // |<--- width --->|
+        // |<------------ delay -------->|
         auto pend = a->abs_time + width;
         auto dbeg = a->abs_time + delay;
         auto dend = dbeg + width;

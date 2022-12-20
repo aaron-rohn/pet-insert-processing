@@ -127,6 +127,11 @@ class SinogramDisplay:
         # find the count rates with existing calibrations in the cfg dir
         dirs = glob.glob(os.path.join(cfgdir, '*'))
         dirs  = np.array([d for d in dirs if os.path.basename(d).isnumeric()])
+
+        if len(dirs) == 0:
+            print('No event rate directories found, using default')
+            return [os.path.join(cfgdir, 'default')], np.array([0], np.ulonglong)
+
         rates = np.array([int(os.path.basename(d)) for d in dirs])
         order = np.argsort(rates)
 
@@ -159,8 +164,6 @@ class SinogramDisplay:
                 # Lut fils are named .../blockXX.lut
                 lut_idx = re.findall(r'\d+', os.path.basename(fname))
                 lut_idx = int(lut_idx[0])
-                # TODO if not 0 <= lut_idx < petmr.nblocks: raise Error
-
                 lut_arr[lut_idx, i] = np.fromfile(fname, np.intc).reshape(lut_dim)
 
         return np.ascontiguousarray(lut_arr)

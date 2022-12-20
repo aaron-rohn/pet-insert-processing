@@ -280,7 +280,13 @@ petmr_coincidences(PyObject *self, PyObject *args)
         {
             auto [pos, coin] = workers.front().get();
             workers.pop_front();
+
             CoincidenceData::write(output_file_handle, coin);
+            if (!output_file_handle.good())
+            {
+                std::cout << "Failed to write data to coincidence file" << std::endl;
+                stop = true;
+            }
 
             // calculate data to update the UI
             ncoin += coin.size();
@@ -401,7 +407,7 @@ petmr_save_listmode(PyObject* self, PyObject* args)
     bool stop = false;
     std::streampos coincidence_file_size = fsize(fname);
     std::streamoff incr = sizeof(CoincidenceData)*1e6;
-    size_t sz = fpos.size(), idx = 0;
+    int sz = fpos.size(), idx = 0;
 
     std::vector<char> buf(1024*4);
     std::deque<std::future<FILE*>> workers;

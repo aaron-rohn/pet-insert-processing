@@ -212,6 +212,14 @@ def create_scaled_calibration(coincidence_file, cfg_dir,
             arr = load_block_coincidence_data(data_subset, blka, blkb, ub)
             idx = apply_energy_threshold(arr, cfg, ub)
 
+            # apply block LLD
+
+            blk_ppeak = cfg[str(blk)]['photopeak']
+            blk_res = cfg[str(blk)]['FWHM']
+            idx = np.where(data[:,0] > (blk_ppeak - blk_res))[0]
+
+            # TODO get doi bins, then iterate all the following over each bin
+
             # Create the flood histogram
 
             x, y = arr[idx,2], arr[idx,3]

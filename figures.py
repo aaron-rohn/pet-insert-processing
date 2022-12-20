@@ -250,8 +250,7 @@ class Plots(tk.Frame):
         self.store_lut_button = tk.Button(self.button_frame,
                 text = "Store Configuration", command = self.store_lut_cb)
 
-        self.create_scaled_config = tk.Button(self.button_frame,
-                text = "Scale Configuration", command = self.scale_config)
+        #self.create_scaled_config = tk.Button(self.button_frame, text = "Scale Configuration", command = self.scale_config)
 
         self.register_button = tk.Button(self.button_frame, text = "Register Peaks")
 
@@ -273,7 +272,7 @@ class Plots(tk.Frame):
         self.button_frame.pack(pady = 10);
         self.select_dir_button.pack(side = tk.LEFT, padx = 5)
         self.store_lut_button.pack(side = tk.LEFT, padx = 5)
-        self.create_scaled_config.pack(side = tk.LEFT, padx = 5)
+        #self.create_scaled_config.pack(side = tk.LEFT, padx = 5)
         self.register_button.pack(side = tk.LEFT, padx = 5)
         self.transform_button.pack(side = tk.LEFT, padx = 5)
         self.show_points_cb.pack(side = tk.LEFT, padx = 5)
@@ -391,9 +390,8 @@ class Plots(tk.Frame):
         if not output_dir or self.flood.f is None:
             return
 
-        print(f'Store calibration data for block {blk}...', end = ' ')
-
         blk = self.return_block()
+        print(f'Store calibration data for block {blk}...', end = ' ', flush = True)
 
         # store the LUT for this block to the specified directory
         lut = Flood.nearest_peak((self.flood.img_size,)*2,
@@ -417,7 +415,7 @@ class Plots(tk.Frame):
         except FileNotFoundError: cfg = {}
 
         calibration.create_cfg_vals(self.d, lut, blk, cfg,
-                                    (self.energy.counts, self.energy.bins[:-1]))
+                                    (self.energy.counts, self.energy.bins))
 
         # save the config file
         with open(config_file, 'w') as f:

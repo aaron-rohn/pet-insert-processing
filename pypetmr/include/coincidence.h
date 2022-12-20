@@ -49,8 +49,8 @@ struct CoincidenceData
     inline void blk(uint16_t a, uint16_t b)
     { data[0] = (a << 8) | b; }
 
-    inline void tdiff(bool prompt, int8_t td)
-    { data[1] = (prompt << 8) | td; }
+    inline void tdiff(bool isprompt, int8_t dt)
+    { data[1] = (isprompt << 8) | (dt & 0xFF); }
 
     inline void e_aF(uint16_t val) { data[2] = val; }
     inline void e_aR(uint16_t val) { data[3] = val; }

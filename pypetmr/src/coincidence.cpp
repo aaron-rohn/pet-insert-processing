@@ -8,7 +8,7 @@
 #include <algorithm>
 #include <numeric>
 
-CoincidenceData::CoincidenceData(const Single &a, const Single &b, bool prompt)
+CoincidenceData::CoincidenceData(const Single &a, const Single &b, bool isprompt)
 {
     // Event a is earlier (lower abstime), b is later (greater abstime)
     // Event 1 has the lower block number, 2 has the higher
@@ -23,7 +23,8 @@ CoincidenceData::CoincidenceData(const Single &a, const Single &b, bool prompt)
     t /= (TimeTag::clks_per_tt * 100);
     abstime(t);
 
-    tdiff(prompt, int8_t(ev1.abs_time - ev2.abs_time));
+    int8_t dt = ev1.abs_time - ev2.abs_time;
+    tdiff(isprompt, dt);
 
     blk(ev1.blk, ev2.blk);
     e_aF(sd1.eF);
@@ -93,19 +94,17 @@ Coincidences CoincidenceData::sort(
 
     for (auto a = singles.begin(), e = singles.end(); a != e; ++a)
     {
-        // a               pend          dbeg           dend
+        // a
         // |*** prompts ***| ----------- |*** delays ***| ---->
         // |<--- width --->|
         // |<------------ delay -------->|
-        auto pend = a->abs_time + width;
-        auto dbeg = a->abs_time + delay;
-        auto dend = dbeg + width;
-
-        for (auto b = a + 1; b != e && *b < dend; ++b)
+        auto dend = a->abs_time + delay + width;
+        for (auto b = a + 1; b != e && b->abs_time < dend; ++b)
         {
-            bool prompt = *b < pend, delay = *b >= dbeg;
-            if ((prompt || delay) && a->valid_module(b->mod))
-                coin.emplace_back(*a, *b, prompt);
+            auto dt = b->abs_time - a->abs_time;
+            bool isprompt = dt < width, isdelay = dt >= delay;
+            if ((isprompt || isdelay) && a->valid_module(b->mod))
+                coin.emplace_back(*a, *b, isprompt);
         }
     }
 

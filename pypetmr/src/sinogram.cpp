@@ -15,7 +15,7 @@ int Michelogram::energy_window(size_t blk, size_t scale, size_t xtal, double e) 
     double uld = (1.0 + Geometry::energy_window)*th;
     if (e < lld || e > uld) return -1;
 
-    return (e - lld) / (uld - lld) * 63.0;
+    return (e - lld) / (uld - lld) * energy_scale;
 }
 
 int Michelogram::doi_window(size_t blk, size_t scale, size_t xtal, double val) const

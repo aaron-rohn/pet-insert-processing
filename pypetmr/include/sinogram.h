@@ -80,6 +80,7 @@ class Michelogram
     public:
 
     const size_t max_doi = Geometry::ndoi;
+    const double energy_scale = 63.0;
 
     bool loaded() { return photopeaks && doi && lut; }
 

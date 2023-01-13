@@ -4,7 +4,10 @@ import cv2 as cv
 from scipy import ndimage
 
 import petmr, crystal, pyelastix
-from data_loader import coincidence_cols, n_doi_bins, max_events
+
+n_doi_bins = 4096
+max_events = int(1e9)
+coincidence_cols = 11
 
 class CoincidenceFileHandle:
     def __init__(self, data, nperiods = 10, naverage = 10):

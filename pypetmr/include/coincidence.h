@@ -34,7 +34,7 @@ struct CoincidenceData
     inline uint8_t blka()  const { return data[0] >> 8; }
     inline uint8_t blkb()  const { return data[0] & 0xFF; }
     inline bool prompt()   const { return data[1] >> 8; }
-    inline int8_t tdiff()  const { return data[1] & 0xFF; }
+    inline int8_t tdiff()  const { return int8_t(data[1] & 0xFF) % delay; }
 
     inline uint16_t e_aF() const { return data[2]; }
     inline uint16_t e_aR() const { return data[3]; }

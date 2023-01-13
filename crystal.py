@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
 from scipy import optimize
-import matplotlib.pyplot as plt
 
 doi_bins = np.array([5,10,15,20])
 lyso_attn_length = 12

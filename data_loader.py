@@ -8,15 +8,18 @@ from collections.abc import Iterable
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure, SubplotParams
 
-import petmr, calibration
+import petmr
+
+from calibration import (load_block_singles_data,
+                         load_block_coincidence_data,
+                         CoincidenceFileHandle,
+                         n_doi_bins,
+                         max_events,
+                         coincidence_cols)
 
 singles_filetypes = [("Singles",".SGL")]
 coincidence_filetypes = [("Coincidences",".COIN")]
 listmode_filetypes = [("Listmode data",".lm")]
-
-n_doi_bins = 4096
-max_events = int(1e9)
-coincidence_cols = 11
 
 class ProgressPopup(tk.Toplevel):
     def __init__(self, stat_queue, data_queue, terminate, callback, fmt = 'Counts: {:,}'):
@@ -86,7 +89,7 @@ class SinglesLoader:
         block_files = {}
 
         for ub in unique_blocks:
-            block_files[ub] = calibration.load_block_singles_data(
+            block_files[ub] = load_block_singles_data(
                     d, blocks, ub)
 
         self.data_queue.put(block_files)
@@ -206,7 +209,7 @@ class CoincidenceProfilePlot(tk.Toplevel):
         self.title(title)
 
     def draw_hist(self):
-        cf = calibration.CoincidenceFileHandle(self.data, 500, 1)
+        cf = CoincidenceFileHandle(self.data, 500, 1)
         self.ev_rate = cf.event_rate
         self.times = cf.times
         self.idx = cf.idx
@@ -286,7 +289,7 @@ class CoincidenceProfilePlot(tk.Toplevel):
 
         for ub in unique_blocks:
             print(f'Block {ub}', end = '\r')
-            self.block_files[ub] = calibration.load_block_coincidence_data(
+            self.block_files[ub] = load_block_coincidence_data(
                     data_subset, blka, blkb, ub)
         print('')
 

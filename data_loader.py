@@ -295,6 +295,7 @@ class CoincidenceProfilePlot(tk.Toplevel):
 
     def save(self):
         self.block_files = {}
+        self.current_ev_rate = 0
 
         start_end = np.sort([l.get_xdata()[0] for l in self.lines])
         start_end = np.searchsorted(self.times, start_end)
@@ -304,7 +305,7 @@ class CoincidenceProfilePlot(tk.Toplevel):
 
         idx = int(np.clip(np.log10(nev) / 3, 1, 4))
         char = ['K', 'M', 'B', 'T'][idx-1]
-        print(f'Save {round(nev/(1e3 ** idx), 1)}{char} events from {round(startt/10)}s to {round(endt/10)}s')
+        print(f'Save {round(nev/(1e3 ** idx), 1)}{char} events from {round(start/10)}s to {round(end/10)}s')
 
         newfile = tk.filedialog.asksaveasfilename(
                 title = "New coincidence file",

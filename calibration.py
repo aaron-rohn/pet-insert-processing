@@ -32,6 +32,9 @@ class CoincidenceFileHandle:
         self.times = times[:-1].reshape(-1,naverage).mean(1)
         self.idx = idx[:nperiods*naverage:naverage]
 
+        duration = (times[-1] - times[0]) / 10
+        print(f'{nev} events over {duration}: {nev / duration} cps')
+
     def __iter__(self):
         yield from zip(self.event_rate, self.times, self.idx)
 

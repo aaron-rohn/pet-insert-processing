@@ -3,14 +3,14 @@
 
 #include <iostream>
 #include <mutex>
-
-#include <constants.h>
-#include <singles.h>
-#include <coincidence.h>
 #include <Python.h>
 
 #include <numpy/arrayobject.h>
 #include <numpy/ndarraytypes.h>
+
+#include "constants.h"
+#include "singles.h"
+#include "coincidence.h"
 
 using stype = float;
 static const auto npy_type = NPY_FLOAT32;

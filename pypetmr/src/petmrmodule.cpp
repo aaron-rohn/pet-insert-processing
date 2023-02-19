@@ -18,6 +18,7 @@ static PyObject *petmr_sort_sinogram(PyObject*, PyObject*);
 static PyObject *petmr_save_listmode(PyObject*, PyObject*);
 static PyObject *petmr_load_sinogram(PyObject*, PyObject*);
 static PyObject *petmr_save_sinogram(PyObject*, PyObject*);
+static PyObject *petmr_rebin_sinogram(PyObject*, PyObject*);
 static PyObject *petmr_validate_singles_file(PyObject*, PyObject*);
 
 static PyMethodDef petmrMethods[] = {
@@ -27,6 +28,7 @@ static PyMethodDef petmrMethods[] = {
     {"save_listmode", petmr_save_listmode, METH_VARARGS, "Convert coincidence format into a simple listmode format"},
     {"load_sinogram", petmr_load_sinogram, METH_VARARGS, "Load a sinogram from disk"},
     {"save_sinogram", petmr_save_sinogram, METH_VARARGS, "Save a sinogram to disk"},
+    {"rebin_sinogram", petmr_rebin_sinogram, METH_VARARGS, "Simple SSRB for a Michelogram"},
     {"validate_singles_file", petmr_validate_singles_file, METH_VARARGS, "Indicate if a singles file contains a reset and timetags for each module"},
     {NULL, NULL, 0, NULL}
 };
@@ -486,6 +488,37 @@ petmr_save_sinogram(PyObject* self, PyObject* args)
     Michelogram m(arr);
     m.write_to(sinogram_file);
     Py_RETURN_NONE;
+}
+
+static PyObject*
+petmr_rebin_sinogram(PyObject* self, PyObject* args)
+{
+    PyObject *arr;
+    if (!PyArg_ParseTuple(args, "O", &arr))
+        return NULL;
+
+    Michelogram m(arr);
+
+    int n = m.begin()->s.size(), dim_theta = n / Geometry::dim_r;
+    npy_intp dims[] = {Geometry::nring*2 - 1,
+                       dim_theta, Geometry::dim_r};
+
+    PyArrayObject *rebinned = (PyArrayObject*)PyArray_SimpleNew(
+            3, dims, NPY_FLOAT32);
+
+    PyArray_FILLWBYTE(rebinned, 0);
+
+    auto end = m.end();
+    for (auto it = m.begin(); it != end; ++it)
+    {
+        float *py_sino_ptr = (float*)PyArray_GETPTR3(
+                rebinned, it.h + it.v, 0, 0);
+
+        for (int i = 0; i < n; i++)
+            py_sino_ptr[i] += it->s[i];
+    }
+
+    return (PyObject*)rebinned;
 }
 
 static PyObject*

@@ -19,7 +19,10 @@ struct CoincidenceData
     // Columns in python data - block, eF, eR, x, y
     static const long ncol = 5;
     static const size_t vals_per_ev = 11;
-    static const int16_t width = 10;
+
+    // Fine-time LSB equals 1.389 ns (1 / (90e6 * 8) s)
+    // Time window of 10->14ns, 20->28ns
+    static const int16_t width = 20;
     static const int16_t delay = 100;
 
     // only data member of the struct is an array of uint16's

@@ -1,25 +1,12 @@
 import os
 import ycm_core
-
 import numpy as np
 
 flags = [
-    '-Wall',
-    '-Wextra',
-    '-Werror',
-    '-Wno-long-long',
-    '-Wno-variadic-macros',
-    '-Wno-unused-parameter',
-    '-fexceptions',
-    '-ferror-limit=10000',
-    '-DNDEBUG',
-    '-std=c++20',
-    '-xc++',
-    '-I/usr/include/python3.10',
-    '-I/usr/include/opencv4',
-    '-I' + os.path.dirname(__file__) + "/include",
-    '-I' + np.get_include(),
-    ]
+    '-std=c++20', '-xc++',
+    '-I', '/usr/include/python3.10',
+    '-I', os.path.join(os.path.dirname(__file__), "include"),
+    '-I', np.get_include()]
 
 SOURCE_EXTENSIONS = [ '.cpp', '.cxx', '.cc', '.c', ]
 

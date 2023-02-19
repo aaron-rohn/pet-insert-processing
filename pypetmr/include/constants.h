@@ -25,7 +25,10 @@ namespace Geometry
     // number of DOI thresholds
     static const int ndoi = 3;
 
-    static constexpr double energy_window = 0.2;
+    // 0.2 -> 408-613 keV
+    // 0.4 -> 307-715 keV
+    // 0.6 -> 204-818 keV
+    static constexpr double energy_window = 0.6;
 
 };
 

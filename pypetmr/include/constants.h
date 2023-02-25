@@ -28,8 +28,8 @@ namespace Geometry
     // 0.2 -> 408-613 keV
     // 0.4 -> 307-715 keV
     // 0.6 -> 204-818 keV
-    static constexpr double energy_window = 0.6;
-
+    // 1.0 -> 0-1022  keV
+    static constexpr double energy_window = 0.2;
 };
 
 #endif

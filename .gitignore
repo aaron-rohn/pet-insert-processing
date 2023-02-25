@@ -4,3 +4,4 @@ __pycache__/*
 *.so
 .*
 !.gitignore
+compile_flags.txt

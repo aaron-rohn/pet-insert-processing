@@ -1,6 +1,8 @@
 #ifndef SINGLES_H
 #define SINGLES_H
 
+#include <cmath>
+#include <iostream>
 #include <cstring>
 #include <vector>
 #include <fstream>
@@ -8,11 +10,7 @@
 #include <queue>
 #include <condition_variable>
 
-#include <constants.h>
-
-#include <Python.h>
-#include <numpy/ndarraytypes.h>
-#include <numpy/arrayobject.h>
+#include "constants.h"
 
 #define A_FRONT 7
 #define B_FRONT 6
@@ -156,7 +154,7 @@ struct Single
              mod != Record::module_above(m) &&
              mod != Record::module_below(m); }
 
-    static PyObject* to_py_data(std::vector<Single>&);
+    static void* to_py_data(std::vector<Single>&);
 };
 
 struct SingleData

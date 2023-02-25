@@ -1,12 +1,4 @@
-
-#define NO_IMPORT_ARRAY
-#define PY_ARRAY_UNIQUE_SYMBOL petmr_ARRAY_API
-
 #include "coincidence.h"
-#include <iostream>
-#include <filesystem>
-#include <algorithm>
-#include <numeric>
 
 CoincidenceData::CoincidenceData(const Single &a, const Single &b, bool isprompt)
 {

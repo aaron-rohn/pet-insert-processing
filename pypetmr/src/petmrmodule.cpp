@@ -5,12 +5,7 @@
 #include "coincidence.h"
 #include "sinogram.h"
 
-#include <Python.h>
-#include <numpy/arrayobject.h>
-
-#include <cstdio>
 #include <future>
-#include <numeric>
 
 static PyObject *petmr_singles(PyObject*, PyObject*);
 static PyObject *petmr_coincidences(PyObject*, PyObject*);
@@ -93,6 +88,41 @@ pylist_to_strings(PyObject *file_list)
  * Load singles data from a single file
  */
 
+void* Single::to_py_data(std::vector<Single> &events)
+{
+    // Move this function here so that singles and coincidences
+    // dont have any references to python libraries
+
+    // 'block', 'eF', 'eR', 'x', 'y'
+    const int ncol = 5;
+
+    PyArrayObject *cols[ncol];
+    npy_intp nrow = events.size();
+
+    for (size_t i = 0; i < ncol; i++)
+    {
+        cols[i] = (PyArrayObject*)PyArray_SimpleNew(1, &nrow, NPY_UINT16);
+    }
+
+    for (npy_int i = 0; i < nrow; i++)
+    {
+        const Single &s = events[i];
+        SingleData sd(s);
+
+        *((uint16_t*)PyArray_GETPTR1(cols[0], i)) = s.blk;
+        *((uint16_t*)PyArray_GETPTR1(cols[1], i)) = sd.eF;
+        *((uint16_t*)PyArray_GETPTR1(cols[2], i)) = sd.eR;
+        *((uint16_t*)PyArray_GETPTR1(cols[3], i)) = sd.x;
+        *((uint16_t*)PyArray_GETPTR1(cols[4], i)) = sd.y;
+    }
+
+    PyObject *a = PyList_New(ncol);
+    for (size_t i = 0; i < ncol; i++)
+        PyList_SetItem(a, i, (PyObject*)cols[i]);
+
+    return a;
+}
+
 static PyObject *
 petmr_singles(PyObject *self, PyObject *args)
 {
@@ -155,7 +185,7 @@ petmr_singles(PyObject *self, PyObject *args)
     }
 
     PyEval_RestoreThread(_save);
-    return Single::to_py_data(events);
+    return (PyObject*)Single::to_py_data(events);
 }
 
 /*
@@ -508,14 +538,13 @@ petmr_rebin_sinogram(PyObject* self, PyObject* args)
 
     PyArray_FILLWBYTE(rebinned, 0);
 
-    auto end = m.end();
-    for (auto it = m.begin(); it != end; ++it)
+    for (auto b = m.begin(), e = m.end(); b != e; ++b)
     {
-        float *py_sino_ptr = (float*)PyArray_GETPTR3(
-                rebinned, it.h + it.v, 0, 0);
+        float *sino_rebin = (float*)PyArray_GETPTR3(
+                rebinned, b.h + b.v, 0, 0);
 
-        for (int i = 0; i < n; i++)
-            py_sino_ptr[i] += it->s[i];
+        for (int j = 0; j < n; j++)
+            sino_rebin[n] += b->s[j];
     }
 
     return (PyObject*)rebinned;

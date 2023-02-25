@@ -3,10 +3,8 @@
 
 #include <iostream>
 #include <algorithm>
-
-#include <Python.h>
-#include <numpy/ndarraytypes.h>
-#include <numpy/arrayobject.h>
+#include <filesystem>
+#include <numeric>
 
 #include "singles.h"
 
@@ -22,7 +20,7 @@ struct CoincidenceData
 
     // Fine-time LSB equals 1.389 ns (1 / (90e6 * 8) s)
     // Time window of 10->14ns, 20->28ns
-    static const int16_t width = 20;
+    static const int16_t width = 10;
     static const int16_t delay = 100;
 
     // only data member of the struct is an array of uint16's

@@ -105,7 +105,7 @@ class CoincidenceLoader:
 
         sz = os.path.getsize(self.input_file)
         nrow = int((sz/2) // coincidence_cols)
-        data = np.memmap(self.input_file, np.uint16, shape = (nrow, coincidence_cols))
+        data = np.memmap(self.input_file, np.uint16, mode = 'r', shape = (nrow, coincidence_cols))
         self.prof = CoincidenceProfilePlot(data, callback)
 
 class CoincidenceSorter:

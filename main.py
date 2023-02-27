@@ -125,6 +125,7 @@ class App(ttk.Notebook):
 
     def __init__(self, root):
         super().__init__(root)
+        root.title('PET data processing')
 
         listmode_frame = tk.Frame(self)
         sinogram_frame = tk.Frame(self)
@@ -148,6 +149,7 @@ class App(ttk.Notebook):
         self.sino = SinogramDisplay(sinogram_frame)
         self.sino.pack()
 
-root = tk.Tk()
-app = App(root)
-root.mainloop()
+if __name__ == "__main__":
+    root = tk.Tk(className = 'PET data processing')
+    app = App(root)
+    root.mainloop()

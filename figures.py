@@ -313,16 +313,21 @@ class Plots(tk.Frame):
     def create_lut_borders(self):
         blk = self.return_block()
 
+        """
         dirs = glob.glob(os.path.join(self.output_dir, '*'))
         dirs  = np.array([d for d in dirs if os.path.basename(d).isnumeric()])
-        rates = np.array([int(os.path.basename(d)) for d in dirs])
-        order = np.argsort(rates)
 
-        dirs = dirs[order]
-        rates = rates[order]
-        idx = np.abs(rates - self.ev_rate).argmin()
+        if self.ev_rate > 0 and len(dirs) > 0:
+            rates = np.array([int(os.path.basename(d)) for d in dirs])
+            order = np.argsort(rates)
+            dirs = dirs[order]
+            rates = rates[order]
+            d = dirs[np.abs(rates - self.ev_rate).argmin()]
+        else:
+        """
 
-        lut_fname = os.path.join(dirs[idx], 'lut', f'block{blk}.lut')
+        d = os.path.join(self.output_dir, 'default')
+        lut_fname = os.path.join(d, 'lut', f'block{blk}.lut')
         lut = np.fromfile(lut_fname, np.intc).reshape((512,512))
 
         yd = np.diff(lut, axis = 0, prepend = lut.max()) != 0
@@ -430,6 +435,7 @@ class Plots(tk.Frame):
             self.plots_update()
         except KeyError: pass
 
+    """
     def scale_config(self):
         input_file = tk.filedialog.askopenfilename(
                 title = "Load coincidence listmode data",
@@ -448,3 +454,4 @@ class Plots(tk.Frame):
         ProgressPopup(stat_queue, data_queue, terminate,
                       callback = lambda *args: None,
                       fmt = 'Period: {} Block: {}')
+    """

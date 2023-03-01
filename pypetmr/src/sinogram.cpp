@@ -11,8 +11,8 @@ int Michelogram::energy_window(size_t blk, size_t scale, size_t xtal, double e) 
 
     if (th < 0) return 0;
 
-    double lld = (1.0 - Geometry::energy_window)*th;
-    double uld = (1.0 + Geometry::energy_window)*th;
+    double lld = (1.0 - energy_window_width)*th;
+    double uld = (1.0 + energy_window_width)*th;
     if (e < lld || e > uld) return -1;
 
     return (e - lld) / (uld - lld) * energy_scale;

@@ -170,7 +170,8 @@ def create_cfg_vals(data, lut, blk, cfg, energy_hist = None):
     blk_vals['FWHM'] = fwhm 
 
     pks = crystal.calculate_lut_statistics(lut, data)
-    for (lut,_), row in pks.iterrows():
+    #for (lut,_), row in pks.iterrows():
+    for lut, row in pks.iterrows():
         this_xtal = xtal_vals[lut] = {}
         this_xtal['energy'] = {'photopeak': row['peak'], 'FWHM': row['FWHM']}
         this_xtal['DOI'] = row[['5mm','10mm','15mm']].tolist()

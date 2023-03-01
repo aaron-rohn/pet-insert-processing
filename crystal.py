@@ -1,6 +1,8 @@
 import pandas as pd
 import numpy as np
 from scipy import optimize
+import matplotlib.pyplot as plt
+from multiprocessing import Pool, cpu_count
 
 doi_bins = np.array([5,10,15,20])
 lyso_attn_length = 12
@@ -60,6 +62,7 @@ def get_doi(doi):
     return thresholds.round(1)
 
 def summarize_crystal(grp):
+    #print(grp.name)
     e = grp['es']
     peak, fwhm, *_ = fit_photopeak(e)
     fwhm = abs(fwhm)
@@ -88,5 +91,10 @@ def calculate_lut_statistics(lut, data):
     lm_df = pd.DataFrame(data, columns = ['es', 'doi', 'x', 'y'])
     lm_df = lm_df.merge(lut_df, on = ['x', 'y'])
     lm_df = lm_df.drop(columns = ['x', 'y'])
-    lm_df = lm_df.groupby(['lut'])
-    return lm_df.apply(summarize_crystal)
+    lm_df = lm_df.groupby('lut')
+
+    with Pool(cpu_count()) as p:
+        ret = p.map(summarize_crystal, [grp for name, grp in lm_df])
+
+    return pd.concat(ret, ignore_index = True)
+    #return lm_df.apply(summarize_crystal)

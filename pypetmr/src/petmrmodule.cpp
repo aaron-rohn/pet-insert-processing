@@ -408,10 +408,11 @@ static PyObject*
 petmr_save_listmode(PyObject* self, PyObject* args)
 {
     const char *lmfname, *fname, *cfgdir;
+    double energy_window = 0.2;
     PyArrayObject *scaling_array, *fpos_array, *ppeak_array, *doi_array;
     PyObject *terminate, *status_queue, *data_queue;
-    if (!PyArg_ParseTuple(args, "sssOOOOOOO",
-                &lmfname, &fname, &cfgdir,
+    if (!PyArg_ParseTuple(args, "sssdOOOOOOO",
+                &lmfname, &fname, &cfgdir, &energy_window,
                 &scaling_array, &fpos_array,
                 &ppeak_array, &doi_array,
                 &terminate, &status_queue, &data_queue)) return NULL;
@@ -422,7 +423,10 @@ petmr_save_listmode(PyObject* self, PyObject* args)
 
     PyThreadState *_save = PyEval_SaveThread();
 
-    Michelogram m(Geometry::dim_theta_full, Geometry::ndoi,
+    Michelogram m(
+            Geometry::dim_theta_full,
+            Geometry::ndoi,
+            energy_window,
             scaling_array, ppeak_array, doi_array);
 
     if (!m.loaded())
@@ -534,17 +538,17 @@ petmr_rebin_sinogram(PyObject* self, PyObject* args)
                        dim_theta, Geometry::dim_r};
 
     PyArrayObject *rebinned = (PyArrayObject*)PyArray_SimpleNew(
-            3, dims, NPY_FLOAT32);
+            3, dims, npy_type);
 
     PyArray_FILLWBYTE(rebinned, 0);
 
     for (auto b = m.begin(), e = m.end(); b != e; ++b)
     {
-        float *sino_rebin = (float*)PyArray_GETPTR3(
+        stype *sino_rebin = (stype*)PyArray_GETPTR3(
                 rebinned, b.h + b.v, 0, 0);
 
         for (int j = 0; j < n; j++)
-            sino_rebin[n] += b->s[j];
+            sino_rebin[j] += b->s[j];
     }
 
     return (PyObject*)rebinned;

@@ -81,6 +81,7 @@ class Michelogram
 
     const size_t max_doi = Geometry::ndoi;
     const double energy_scale = 63.0;
+    const double energy_window_width = Geometry::energy_window;
 
     bool loaded() { return photopeaks && doi && lut; }
 
@@ -101,13 +102,17 @@ class Michelogram
     PyObject *to_py_data();
     Michelogram(PyObject*);
 
-    Michelogram(size_t dt, size_t max_doi = Geometry::ndoi,
+    Michelogram(
+            size_t dt,
+            size_t max_doi = Geometry::ndoi,
+            double energy_window_value = Geometry::energy_window,
             PyArrayObject *lut = NULL,
             PyArrayObject *photopeaks = NULL,
             PyArrayObject *doi = NULL):
         m(std::vector<Sinogram> (Geometry::nring*Geometry::nring, Sinogram(dt))),
         photopeaks(photopeaks), doi(doi), lut(lut),
-        max_doi(max_doi) {};
+        max_doi(max_doi),
+        energy_window_width(energy_window_value) {};
 
     class Iterator
     {

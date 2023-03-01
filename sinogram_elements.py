@@ -25,8 +25,8 @@ class SinogramDisplay:
         self.multiply_button = tk.Button(self.button_frame, text = "Multiply", command = lambda: self.operation(np.multiply))
         self.subtract_button = tk.Button(self.button_frame, text = "Subtract", command = lambda: self.operation(np.subtract))
 
-        self.sort_prompts_var = tk.IntVar()
-        self.sort_delays_var = tk.IntVar()
+        self.sort_prompts_var = tk.BooleanVar(value = True)
+        self.sort_delays_var = tk.BooleanVar(value = False)
         self.cb_frame = tk.Frame(self.root)
         self.sort_prompts_cb = tk.Checkbutton(self.cb_frame, text = "Prompts", variable = self.sort_prompts_var)
         self.sort_delays_cb = tk.Checkbutton(self.cb_frame, text = "Delays", variable = self.sort_delays_var)
@@ -214,9 +214,10 @@ class SinogramDisplay:
         lut = self.load_luts(calib_dirs)
         ppeak, doi = self.load_json_cfg(calib_dirs)
 
+        energy_window = 0.2
         self.ldr = SinogramLoaderPopup(
                 self.root, None, petmr.save_listmode,
-                lmfname, coin_fname, cfgdir,
+                lmfname, coin_fname, cfgdir, energy_window,
                 lut, fpos, ppeak, doi)
 
     def load_listmode(self):
@@ -239,7 +240,7 @@ class SinogramDisplay:
             self.count_map_draw()
             self.ldr = None
 
-        max_doi = 0
+        max_doi = petmr.ndoi
         self.ldr = SinogramLoaderPopup(
                 self.root, sorting_callback, petmr.sort_sinogram,
                 fname, self.sort_prompts_var.get(), self.sort_delays_var.get(), max_doi)

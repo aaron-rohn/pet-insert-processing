@@ -50,8 +50,8 @@ class CoincidenceFileHandle:
         return self.idx * 2 * coincidence_cols
 
 def load_block_coincidence_data(data, blka, blkb, blk):
-    idxa = np.where(blka == blk)[0]
-    idxb = np.where(blkb == blk)[0]
+    idxa = np.nonzero(blka == blk)[0]
+    idxb = np.nonzero(blkb == blk)[0]
 
     rowa = data[idxa,:]
     rowb = data[idxb,:]

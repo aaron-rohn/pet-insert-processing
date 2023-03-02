@@ -1,8 +1,9 @@
+import os
 import pandas as pd
 import numpy as np
+import concurrent.futures
 from scipy import optimize
 import matplotlib.pyplot as plt
-from multiprocessing import Pool, cpu_count
 
 doi_bins = np.array([5,10,15,20])
 lyso_attn_length = 12
@@ -93,8 +94,8 @@ def calculate_lut_statistics(lut, data):
     lm_df = lm_df.drop(columns = ['x', 'y'])
     lm_df = lm_df.groupby('lut')
 
-    with Pool(cpu_count()) as p:
-        ret = p.map(summarize_crystal, [grp for name, grp in lm_df])
+    with concurrent.futures.ThreadPoolExecutor(os.cpu_count()) as ex:
+        fut = [ex.submit(summarize_crystal, g) for _, g in lm_df]
+        ret = [f.result() for f in fut]
 
     return pd.concat(ret, ignore_index = True)
-    #return lm_df.apply(summarize_crystal)

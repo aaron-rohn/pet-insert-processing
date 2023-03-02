@@ -1,4 +1,4 @@
-import os, threading, queue, traceback, tempfile
+import os, threading, queue, tempfile, datetime
 import concurrent.futures
 import tkinter as tk
 import numpy as np
@@ -277,21 +277,20 @@ class CoincidenceProfilePlot(tk.Toplevel):
         if end - start > max_events:
             end = int(start + max_events)
 
-        data_subset = self.data[start:end]
+        subset = self.data[start:end]
 
-        print(f'Load {data_subset.shape[0] / 1e6}M events')
+        print(f'Load {subset.shape[0] / 1e6}M events')
 
-        blocks = data_subset[:,0]
+        blocks = subset[:,0]
         blka = blocks >> 8
         blkb = blocks & 0xFF
-        unique_blocks = np.unique(np.concatenate([blka,blkb])).tolist()
-        self.block_files = {}
+        #unique_blocks = np.unique(np.concatenate([blka,blkb])).tolist()
+        unique_blocks = list(range(petmr.nblocks))
 
-        for ub in unique_blocks:
-            print(f'Block {ub}', end = '\r')
-            self.block_files[ub] = load_block_coincidence_data(
-                    data_subset, blka, blkb, ub)
-        print('')
+        with concurrent.futures.ThreadPoolExecutor(os.cpu_count()) as ex:
+            fut = {ub: ex.submit(load_block_coincidence_data,
+                                 subset, blka, blkb, ub) for ub in unique_blocks}
+            self.block_files = {ub: f.result() for ub, f in fut.items()}
 
     def save(self):
         self.block_files = {}

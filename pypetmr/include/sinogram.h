@@ -83,21 +83,19 @@ class Michelogram
     const double energy_scale = 63.0;
     const double energy_window_width = Geometry::energy_window;
 
-    bool loaded() { return photopeaks && doi && lut; }
-
-    inline int lut_lookup(int blk, int scale_idx, int y, int x) const
-    { return *(int*)PyArray_GETPTR4(lut, blk, scale_idx, y, x); }
+    inline int lut_lookup(int blk, int y, int x) const
+    { return *(int*)PyArray_GETPTR3(lut, blk, y, x); }
 
     // first arg is horiz. index, second arg is vert. index
     inline Sinogram& operator() (int h, int v){ return m[v*Geometry::nring + h]; };
 
-    int energy_window(size_t, size_t, size_t, double) const;
-    int doi_window(size_t, size_t, size_t, double) const;
+    int energy_window(size_t, size_t, double) const;
+    int doi_window(size_t, size_t, double) const;
     void write_to(std::string);
     void read_from(std::string);
-    ListmodeData event_to_coords(const CoincidenceData&, size_t) const;
+    ListmodeData event_to_coords(const CoincidenceData&) const;
     std::streampos sort_span(std::string, std::streampos, std::streampos, bool, bool);
-    FILE *encode_span (std::string, std::streampos, std::streampos, int) const;
+    FILE *encode_span (std::string, std::streampos, std::streampos) const;
 
     PyObject *to_py_data();
     Michelogram(PyObject*);

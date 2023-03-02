@@ -118,75 +118,39 @@ class SinogramDisplay:
 
         return sout
 
-    def find_calib_dirs(self, cfgdir, coincidence_file):
-        """ For a coincidence file, identify the count-rate configuration directory
-        that is the closest match for each included time period. Return a list of the
-        calibration directories and corresponding file offsets
-        """
-
-        # find the count rates with existing calibrations in the cfg dir
-        dirs = glob.glob(os.path.join(cfgdir, '*'))
-        dirs  = np.array([d for d in dirs if os.path.basename(d).isnumeric()])
-
-        if len(dirs) == 0:
-            print('No event rate directories found, using default')
-            return [os.path.join(cfgdir, 'default')], np.array([0], np.ulonglong)
-
-        rates = np.array([int(os.path.basename(d)) for d in dirs])
-        order = np.argsort(rates)
-
-        dirs = dirs[order]
-        rates = rates[order]
-
-        cf = calibration.CoincidenceFileHandle(coincidence_file)
-
-        # find the nearest corresponding count rate in the calibration data set
-        nearest = lambda vals, v: np.abs(vals - v).argmin()
-        calib_idx = np.array([nearest(rates, rt) for rt in cf.event_rate])
-        dirs = dirs[calib_idx]
-
-        d, f = [], []
-        for di, fi in zip(dirs, cf.file_position()):
-            if di not in d:
-                d.append(di)
-                f.append(fi)
-
-        return d, np.array(f)
-
-    def load_luts(self, calib_dirs):
+    def load_luts(self, calib_dir):
         lut_dim = [512,512]
-        lut_arr = np.ones([petmr.nblocks, len(calib_dirs)] + lut_dim, dtype = np.intc) * petmr.ncrystals_total
+        lut_arr = np.ones([petmr.nblocks] + lut_dim, dtype = np.intc) * petmr.ncrystals_total
+        luts = glob.glob(os.path.join(calib_dir, 'lut', '*'))
 
-        for i, d in enumerate(calib_dirs):
-            luts = glob.glob(os.path.join(d, 'lut', '*'))
-
-            for fname in luts:
-                # Lut fils are named .../blockXX.lut
-                lut_idx = re.findall(r'\d+', os.path.basename(fname))
-                lut_idx = int(lut_idx[0])
-                lut_arr[lut_idx, i] = np.fromfile(fname, np.intc).reshape(lut_dim)
+        for fname in luts:
+            # Lut fils are named .../blockXX.lut
+            lut_idx = re.findall(r'\d+', os.path.basename(fname))
+            lut_idx = int(lut_idx[0])
+            lut_arr[lut_idx] = np.fromfile(fname, np.intc).reshape(lut_dim)
 
         return np.ascontiguousarray(lut_arr)
 
-    def load_json_cfg(self, calib_dirs):
-        dims = (petmr.nblocks, len(calib_dirs), petmr.ncrystals_total)
+    def load_json_cfg(self, cfgdir):
+        dims = (petmr.nblocks, petmr.ncrystals_total)
         ppeak = np.ones(dims, np.double) * -1;
         doi = np.ones(dims + (petmr.ndoi,), np.double) * -1;
 
-        for i, d in enumerate(calib_dirs):
-            cfg_file = glob.glob(os.path.join(d,'*.json'))[0]
-            with open(cfg_file, 'r') as f:
-                cfg = json.load(f)
+        cfg_file = glob.glob(os.path.join(cfgdir,'*.json'))[0]
+        with open(cfg_file, 'r') as f:
+            cfg = json.load(f)
 
-            for blk, bval in cfg.items():
-                ppeak[int(blk),i,:] = bval['photopeak']
+        for blk, bval in cfg.items():
+            # use block photopeak as the default value
+            ppeak[int(blk),:] = bval['photopeak']
 
-                for xtal, xval in bval['crystal'].items():
-                    if int(xtal) >= petmr.ncrystals_total:
-                        continue
+            for xtal, xval in bval['crystal'].items():
+                if int(xtal) >= petmr.ncrystals_total:
+                    continue
 
-                    ppeak[int(blk), i, int(xtal)] = xval['energy']['photopeak']
-                    doi[int(blk), i, int(xtal),:] = xval['DOI']
+                # apply crystal specific thresholds where available
+                ppeak[int(blk), int(xtal)] = xval['energy']['photopeak']
+                doi[int(blk), int(xtal),:] = xval['DOI']
 
         return ppeak, doi
 
@@ -210,15 +174,13 @@ class SinogramDisplay:
                 filetypes = listmode_filetypes)
         if not lmfname: return
 
-        calib_dirs, fpos = self.find_calib_dirs(cfgdir, coin_fname)
-        lut = self.load_luts(calib_dirs)
-        ppeak, doi = self.load_json_cfg(calib_dirs)
+        lut = self.load_luts(cfgdir)
+        ppeak, doi = self.load_json_cfg(cfgdir)
 
         energy_window = 0.2
         self.ldr = SinogramLoaderPopup(
                 self.root, None, petmr.save_listmode,
-                lmfname, coin_fname, cfgdir, energy_window,
-                lut, fpos, ppeak, doi)
+                lmfname, coin_fname, energy_window, lut, ppeak, doi)
 
     def load_listmode(self):
         fname = tk.filedialog.askopenfilename(

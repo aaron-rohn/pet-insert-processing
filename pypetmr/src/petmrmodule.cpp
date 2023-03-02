@@ -221,7 +221,7 @@ petmr_coincidences(PyObject *self, PyObject *args)
     // Declare all the variables at the beginning
     // Allows for saving the thread state early on
 
-    size_t nworkers = 7;
+    size_t nworkers = std::thread::hardware_concurrency() - 1;
     size_t n = file_list.size();
     std::atomic_bool stop = false;
 
@@ -361,7 +361,7 @@ petmr_sort_sinogram(PyObject *self, PyObject *args)
     std::streampos incr = sizeof(ListmodeData) * events_per_thread;
     bool stop = false;
 
-    size_t nworkers = 8;
+    size_t nworkers = std::thread::hardware_concurrency() - 1;
     std::streampos start = 0;
     std::deque<std::future<std::streampos>> workers;
 
@@ -407,43 +407,43 @@ petmr_sort_sinogram(PyObject *self, PyObject *args)
 static PyObject*
 petmr_save_listmode(PyObject* self, PyObject* args)
 {
-    const char *lmfname, *fname, *cfgdir;
-    double energy_window = 0.2;
-    PyArrayObject *scaling_array, *fpos_array, *ppeak_array, *doi_array;
+    const char *lmfname, *fname;
+    double energy_window;
+    PyArrayObject *lut_array, *ppeak_array, *doi_array;
     PyObject *terminate, *status_queue, *data_queue;
-    if (!PyArg_ParseTuple(args, "sssdOOOOOOO",
-                &lmfname, &fname, &cfgdir, &energy_window,
-                &scaling_array, &fpos_array,
-                &ppeak_array, &doi_array,
-                &terminate, &status_queue, &data_queue)) return NULL;
 
-    npy_intp *shp = PyArray_DIMS(fpos_array);
-    std::vector<uint64_t> fpos(shp[0]);
-    std::memcpy(fpos.data(), PyArray_DATA(fpos_array), fpos.size()*sizeof(uint64_t));
+    /*
+     * Arguments are:
+     * 1. Listmode filename (output)
+     * 2. Coincidence filename (input)
+     * 3. Energy window
+     * 4. Numpy array with LUT
+     * 5. Numpy array with photopeaks
+     * 6. Numpy array with DOI
+     * 7. threading.Event to indicate termination
+     * 8. queue.Queue for progress bar
+     * 9. queue.Queue to return data
+     */
+
+    if (!PyArg_ParseTuple(args, "ssdOOOOOO",
+                &lmfname, &fname, &energy_window, &lut_array, &ppeak_array, &doi_array,
+                &terminate, &status_queue, &data_queue)) return NULL;
 
     PyThreadState *_save = PyEval_SaveThread();
 
-    Michelogram m(
-            Geometry::dim_theta_full,
-            Geometry::ndoi,
-            energy_window,
-            scaling_array, ppeak_array, doi_array);
-
-    if (!m.loaded())
-    {
-        PyEval_RestoreThread(_save);
-        PyErr_SetString(PyExc_RuntimeError,
-                "Error loading configuration data");
-        return NULL;
-    }
+    Michelogram m(Geometry::dim_theta_full,
+                  Geometry::ndoi,
+                  energy_window,
+                  lut_array,
+                  ppeak_array,
+                  doi_array);
 
     std::ofstream lf (lmfname, std::ios::binary);
 
-    size_t nworkers = 8;
+    size_t nworkers = std::thread::hardware_concurrency() - 1;
     bool stop = false;
     std::streampos coincidence_file_size = fsize(fname);
     std::streamoff incr = sizeof(CoincidenceData)*1e6;
-    int sz = fpos.size(), idx = 0;
 
     std::vector<char> buf(1024*4);
     std::deque<std::future<FILE*>> workers;
@@ -454,15 +454,11 @@ petmr_save_listmode(PyObject* self, PyObject* args)
     {
         if (!stop)
         {
-            // find the correct scaling factor for this starting file position
-            for (; idx < sz-1 && fpos[idx+1] < (uint64_t)start; idx++) ;
-
             std::streampos end = std::min(start + incr, coincidence_file_size);
             stop = (end == coincidence_file_size);
 
             workers.push_back(std::async(std::launch::async,
-                            &Michelogram::encode_span, &m,
-                            fname, start, end, idx));
+                            &Michelogram::encode_span, &m, fname, start, end));
             start = end;
         }
 

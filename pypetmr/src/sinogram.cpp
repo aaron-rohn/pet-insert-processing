@@ -5,9 +5,9 @@
 #include <sinogram.h>
 #include <cstdio>
 
-int Michelogram::energy_window(size_t blk, size_t scale, size_t xtal, double e) const
+int Michelogram::energy_window(size_t blk, size_t xtal, double e) const
 {
-    double th = *(double*)PyArray_GETPTR3(photopeaks, blk, scale, xtal);
+    double th = *(double*)PyArray_GETPTR2(photopeaks, blk, xtal);
 
     if (th < 0) return 0;
 
@@ -18,38 +18,38 @@ int Michelogram::energy_window(size_t blk, size_t scale, size_t xtal, double e) 
     return (e - lld) / (uld - lld) * energy_scale;
 }
 
-int Michelogram::doi_window(size_t blk, size_t scale, size_t xtal, double val) const
+int Michelogram::doi_window(size_t blk, size_t xtal, double val) const
 {
     for (size_t i = 0; i < Geometry::ndoi; i++)
     {
-        double th = *(double*)PyArray_GETPTR4(doi, blk, scale, xtal, i);
+        double th = *(double*)PyArray_GETPTR3(doi, blk, xtal, i);
         if (val >  th) return i;
     }
     return Geometry::ndoi;
 }
 
 ListmodeData
-Michelogram::event_to_coords(const CoincidenceData& c, size_t scale) const
+Michelogram::event_to_coords(const CoincidenceData& c) const
 {
     auto [ba, bb] = c.blk();
 
     // Lookup crystal index
     auto [pos_xa, pos_ya, pos_xb, pos_yb] = c.pos();
-    size_t xa = lut_lookup(ba, scale, pos_ya, pos_xa);
-    size_t xb = lut_lookup(bb, scale, pos_yb, pos_xb);
+    size_t xa = lut_lookup(ba, pos_ya, pos_xa);
+    size_t xb = lut_lookup(bb, pos_yb, pos_xb);
     if (xa >= Geometry::ncrystals_total || xb >= Geometry::ncrystals_total)
         return ListmodeData();
 
     // Apply energy thresholds
     auto [ea, eb] = c.e_sum();
-    int scaled_ea = energy_window(ba, scale, xa, ea);
-    int scaled_eb = energy_window(bb, scale, xb, eb);
+    int scaled_ea = energy_window(ba, xa, ea);
+    int scaled_eb = energy_window(bb, xb, eb);
     if (scaled_ea < 0 || scaled_eb < 0)
         return ListmodeData();
 
     auto [doia_val, doib_val] = c.doi();
-    unsigned int doia = doi_window(ba, scale, xa, doia_val);
-    unsigned int doib = doi_window(bb, scale, xb, doib_val);
+    unsigned int doia = doi_window(ba, xa, doia_val);
+    unsigned int doib = doi_window(bb, xb, doib_val);
 
     unsigned int ra = Sinogram::ring(ba, xa), rb = Sinogram::ring(bb, xb);
     unsigned int idxa = Sinogram::idx(ba, xa), idxb = Sinogram::idx(bb, xb);
@@ -166,8 +166,7 @@ std::streampos Michelogram::sort_span(
 FILE *Michelogram::encode_span (
         std::string fname, 
         std::streampos start,
-        std::streampos end,
-        int scale_idx
+        std::streampos end
 ) const {
     FILE *fout = std::tmpfile();
     Reader rdr(fname, start, end);
@@ -176,7 +175,7 @@ FILE *Michelogram::encode_span (
     while (rdr)
     {
         rdr.read((char*)&c, sizeof(c));
-        ListmodeData lm = event_to_coords(c, scale_idx);
+        ListmodeData lm = event_to_coords(c);
 
         if (lm.valid())
             std::fwrite(&lm, sizeof(lm), 1, fout);

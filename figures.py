@@ -250,8 +250,6 @@ class Plots(tk.Frame):
         self.store_lut_button = tk.Button(self.button_frame,
                 text = "Store Configuration", command = self.store_lut_cb)
 
-        #self.create_scaled_config = tk.Button(self.button_frame, text = "Scale Configuration", command = self.scale_config)
-
         self.register_button = tk.Button(self.button_frame, text = "Register Peaks")
 
         self.transform_button = tk.Button(self.button_frame,
@@ -272,7 +270,6 @@ class Plots(tk.Frame):
         self.button_frame.pack(pady = 10);
         self.select_dir_button.pack(side = tk.LEFT, padx = 5)
         self.store_lut_button.pack(side = tk.LEFT, padx = 5)
-        #self.create_scaled_config.pack(side = tk.LEFT, padx = 5)
         self.register_button.pack(side = tk.LEFT, padx = 5)
         self.transform_button.pack(side = tk.LEFT, padx = 5)
         self.show_points_cb.pack(side = tk.LEFT, padx = 5)
@@ -312,22 +309,7 @@ class Plots(tk.Frame):
 
     def create_lut_borders(self):
         blk = self.return_block()
-
-        """
-        dirs = glob.glob(os.path.join(self.output_dir, '*'))
-        dirs  = np.array([d for d in dirs if os.path.basename(d).isnumeric()])
-
-        if self.ev_rate > 0 and len(dirs) > 0:
-            rates = np.array([int(os.path.basename(d)) for d in dirs])
-            order = np.argsort(rates)
-            dirs = dirs[order]
-            rates = rates[order]
-            d = dirs[np.abs(rates - self.ev_rate).argmin()]
-        else:
-        """
-
-        d = os.path.join(self.output_dir, 'default')
-        lut_fname = os.path.join(d, 'lut', f'block{blk}.lut')
+        lut_fname = os.path.join(self.output_dir, 'lut', f'block{blk}.lut')
         lut = np.fromfile(lut_fname, np.intc).reshape((512,512))
 
         yd = np.diff(lut, axis = 0, prepend = lut.max()) != 0
@@ -379,11 +361,10 @@ class Plots(tk.Frame):
                 title = "Configuration data directory",
                 initialdir = '/')
 
-        default_dir = os.path.join(self.output_dir, 'default')
-        lut_dir = os.path.join(default_dir, 'lut')
-        fld_dir = os.path.join(default_dir, 'flood')
+        lut_dir = os.path.join(self.output_dir, 'lut')
+        fld_dir = os.path.join(self.output_dir, 'flood')
 
-        for d in [default_dir, lut_dir, fld_dir]:
+        for d in [self.output_dir, lut_dir, fld_dir]:
             try:
                 os.mkdir(d)
             except FileExistsError: pass
@@ -406,13 +387,13 @@ class Plots(tk.Frame):
             lut = Flood.warp_lut(lut, self.warp)
             self.warp = None
 
-        lut_fname = os.path.join(output_dir, 'default', 'lut', f'block{blk}.lut')
+        lut_fname = os.path.join(output_dir, 'lut', f'block{blk}.lut')
         lut.astype(np.intc).tofile(lut_fname)
-        flood_fname = os.path.join(output_dir, 'default', 'flood', f'block{blk}.raw')
+        flood_fname = os.path.join(output_dir, 'flood', f'block{blk}.raw')
         self.flood.img.astype(np.intc).tofile(flood_fname)
 
         # update json file with photopeak position for this block
-        config_file = os.path.join(output_dir, 'default', 'config.json')
+        config_file = os.path.join(output_dir, 'config.json')
 
         try:
             with open(config_file, 'r') as f:
@@ -434,24 +415,3 @@ class Plots(tk.Frame):
             self.set_block(all_blks.index(blk) + 1)
             self.plots_update()
         except KeyError: pass
-
-    """
-    def scale_config(self):
-        input_file = tk.filedialog.askopenfilename(
-                title = "Load coincidence listmode data",
-                initialdir = "/",
-                filetypes = coincidence_filetypes)
-
-        cfgdir = self.check_output_dir()
-
-        stat_queue = queue.Queue()
-        data_queue = queue.Queue()
-        terminate = threading.Event()
-        thr = threading.Thread(target = calibration.create_scaled_calibration,
-                               args = [input_file, cfgdir, stat_queue, data_queue, terminate])
-        thr.start()
-
-        ProgressPopup(stat_queue, data_queue, terminate,
-                      callback = lambda *args: None,
-                      fmt = 'Period: {} Block: {}')
-    """

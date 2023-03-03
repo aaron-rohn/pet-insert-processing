@@ -76,24 +76,25 @@ def load_block_coincidence_data(data, blka, blkb, blk):
 
     return arr
 
-def load_block_singles_data(d, blocks, blk):
+def load_block_singles_data(data, blk):
+    idx = np.nonzero(data[:,0] == blk)[0]
+    subset = data[idx,:]
+
     tf = tempfile.NamedTemporaryFile()
-    idx = np.where(blocks == blk)[0]
     arr = np.memmap(tf.name, np.uint16,
             mode = 'w+', shape = (len(idx), 4))
 
     # Energy sum -> eF + eR
-    arr[:,0] = d[1][idx] + d[2][idx]
+    arr[:,0] = subset[:,1] + subset[:,2]
 
     # DOI -> eF / eSUM
-    tmp = d[1][idx].astype(float)
+    tmp = subset[:,1].astype(float)
     with np.errstate(divide = 'ignore', invalid = 'ignore'):
         tmp *= (n_doi_bins / arr[:,0])
     arr[:,1] = tmp
 
-    # X, Y
-    arr[:,2] = d[3][idx]
-    arr[:,3] = d[4][idx]
+    arr[:,2] = subset[:,3] # X
+    arr[:,3] = subset[:,4] # Y
 
     return arr
 

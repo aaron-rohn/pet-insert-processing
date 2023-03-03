@@ -84,10 +84,6 @@ pylist_to_strings(PyObject *file_list)
     return cfile_list;
 }
 
-/*
- * Load singles data from a single file
- */
-
 void* Single::to_py_data(std::vector<Single> &events)
 {
     // Move this function here so that singles and coincidences
@@ -95,33 +91,27 @@ void* Single::to_py_data(std::vector<Single> &events)
 
     // 'block', 'eF', 'eR', 'x', 'y'
     const int ncol = 5;
+    npy_intp dims[] = {(int)events.size(), ncol};
+    PyObject *singles = PyArray_SimpleNew(2, dims, NPY_UINT16);
 
-    PyArrayObject *cols[ncol];
-    npy_intp nrow = events.size();
-
-    for (size_t i = 0; i < ncol; i++)
-    {
-        cols[i] = (PyArrayObject*)PyArray_SimpleNew(1, &nrow, NPY_UINT16);
-    }
-
-    for (npy_int i = 0; i < nrow; i++)
+    for (size_t i = 0; i < events.size(); i++)
     {
         const Single &s = events[i];
         SingleData sd(s);
-
-        *((uint16_t*)PyArray_GETPTR1(cols[0], i)) = s.blk;
-        *((uint16_t*)PyArray_GETPTR1(cols[1], i)) = sd.eF;
-        *((uint16_t*)PyArray_GETPTR1(cols[2], i)) = sd.eR;
-        *((uint16_t*)PyArray_GETPTR1(cols[3], i)) = sd.x;
-        *((uint16_t*)PyArray_GETPTR1(cols[4], i)) = sd.y;
+        uint16_t *row = (uint16_t*)PyArray_GETPTR2((PyArrayObject*)singles, i, 0);
+        row[0] = s.blk;
+        row[1] = sd.eF;
+        row[2] = sd.eR;
+        row[3] = sd.x;
+        row[4] = sd.y;
     }
 
-    PyObject *a = PyList_New(ncol);
-    for (size_t i = 0; i < ncol; i++)
-        PyList_SetItem(a, i, (PyObject*)cols[i]);
-
-    return a;
+    return singles;
 }
+
+/*
+ * Load singles data from a single file
+ */
 
 static PyObject *
 petmr_singles(PyObject *self, PyObject *args)

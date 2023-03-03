@@ -301,7 +301,7 @@ class Plots(tk.Frame):
         """ Update all plots when new data is available """
         self.warp = None
         blk = self.return_block()
-        self.d, self.ev_rate = self.return_data(blk)
+        self.d = self.return_data(blk)
 
         self.energy.update(self.d[:,0], retain = False)
         self.doi_cb(retain = False)
@@ -332,8 +332,9 @@ class Plots(tk.Frame):
 
         es = self.d[:,0]
         doi = self.d[:,1]
-        idx = np.where((eth[0] < es) & (es < eth[1]) &
-                       (dth[0] < doi) & (doi < dth[1]))[0]
+        idx = np.nonzero(
+                (eth[0] < es) & (es < eth[1]) &
+                (dth[0] < doi) & (doi < dth[1]))[0]
 
         x, y = self.d[idx,2], self.d[idx,3]
         self.flood.update(x, y,
@@ -345,14 +346,14 @@ class Plots(tk.Frame):
         """ Update the DOI according to the energy thresholds """
         eth = self.energy.thresholds()
         es = self.d[:,0]
-        idx = np.where((eth[0] < es) & (es < eth[1]))[0]
+        idx = np.nonzero((eth[0] < es) & (es < eth[1]))[0]
         self.doi.update(self.d[idx,1], retain)
 
     def energy_cb(self, retain = True):
         """ Update the energy according to the DOI thresholds """
         dth = self.doi.thresholds()
         doi = self.d[:,1]
-        idx = np.where((dth[0] < doi) & (doi < dth[1]))[0]
+        idx = np.nonzero((dth[0] < doi) & (doi < dth[1]))[0]
         self.energy.update(self.d[idx,0], retain)
 
     def check_output_dir(self, reset = False):

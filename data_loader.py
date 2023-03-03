@@ -84,15 +84,10 @@ class SinglesLoader:
         args = [self.terminate, self.stat_queue, self.input_file, max_events]
         d = petmr.singles(*args)
 
-        blocks = d[0]
-        unique_blocks = np.unique(blocks).tolist()
-        block_files = {}
-
-        for ub in unique_blocks:
-            block_files[ub] = load_block_singles_data(
-                    d, blocks, ub)
-
-        self.data_queue.put(block_files)
+        unique_blocks = np.unique(d[:,0])
+        with concurrent.futures.ThreadPoolExecutor(os.cpu_count()) as ex:
+            fut = {ub: ex.submit(load_block_singles_data, d, ub) for ub in unique_blocks}
+            self.data_queue.put({ub: f.result() for ub, f in fut.items()})
 
 class CoincidenceLoader:
     def __init__(self, callback):
@@ -264,21 +259,17 @@ class CoincidenceProfilePlot(tk.Toplevel):
             self.set_title()
             self.load_button.config(state = tk.NORMAL)
             self.save_button.config(state = tk.NORMAL)
-            self.callback(self.block_files, self.current_ev_rate)
+            self.callback(self.block_files)
 
     def load(self):
         start_end = np.sort([l.get_xdata()[0] for l in self.lines])
         print('Load from {}s to {}s'.format(*np.round(start_end / 10)))
 
         start_end = np.searchsorted(self.times, start_end)
-        self.current_ev_rate = self.ev_rate[start_end[0]]
         start, end = self.idx[start_end]
-
-        if end - start > max_events:
-            end = int(start + max_events)
-
+        end = min(end, int(start + max_events))
         subset = self.data[start:end]
-        print(f'Load {round(subset.shape[0] / 1e6}M events')
+        print(f'Load {round(subset.shape[0] / 1e6)}M events')
 
         # cast data to uint8 without changing values
         data8_p = self.data.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8))
@@ -301,12 +292,11 @@ class CoincidenceProfilePlot(tk.Toplevel):
 
         with concurrent.futures.ThreadPoolExecutor(os.cpu_count()) as ex:
             fut = {ub: ex.submit(load_block_coincidence_data,
-                                 subset, blka, blkb, ub) for ub in unique_blocks}
+                subset, blka, blkb, ub) for ub in unique_blocks}
             self.block_files = {ub: f.result() for ub, f in fut.items()}
 
     def save(self):
         self.block_files = {}
-        self.current_ev_rate = 0
 
         start_end = np.sort([l.get_xdata()[0] for l in self.lines])
         start_end = np.searchsorted(self.times, start_end)

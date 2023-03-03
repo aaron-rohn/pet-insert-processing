@@ -77,11 +77,7 @@ def summarize_crystal(grp):
 
     vals = np.concatenate([[peak,fwhm], thresholds])
     return pd.DataFrame(vals[None,:],
-                        columns = ['peak',
-                                   'FWHM',
-                                   '5mm',
-                                   '10mm',
-                                   '15mm'])
+                        columns = ['peak','FWHM','5mm','10mm','15mm'])
 
 def calculate_lut_statistics(lut, data):
     lut_df = pd.DataFrame({

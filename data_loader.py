@@ -1,4 +1,4 @@
-import os, threading, queue, tempfile, datetime
+import os, threading, queue, tempfile, datetime, ctypes
 import concurrent.futures
 import tkinter as tk
 import numpy as np
@@ -278,14 +278,26 @@ class CoincidenceProfilePlot(tk.Toplevel):
             end = int(start + max_events)
 
         subset = self.data[start:end]
+        print(f'Load {round(subset.shape[0] / 1e6}M events')
 
-        print(f'Load {subset.shape[0] / 1e6}M events')
+        # cast data to uint8 without changing values
+        data8_p = self.data.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8))
+        data8 = np.ctypeslib.as_array(data8_p, (self.data.shape[0], coincidence_cols*2))
 
-        blocks = subset[:,0]
-        blka = blocks >> 8
-        blkb = blocks & 0xFF
-        #unique_blocks = np.unique(np.concatenate([blka,blkb])).tolist()
-        unique_blocks = list(range(petmr.nblocks))
+        # first two columns are block numbers
+        blka, blkb = data8[start:end, 0], data8[start:end, 1]
+
+        # Sample events in the middle of the acquisition to find all blocks present
+        # This is faster than looking at the whole data set,
+        # and more accurate than just looking at the start or end
+        middle, n = int(blka.shape[0] / 2), 10000
+
+        unique_blocks = np.union1d(
+                np.unique(blka[middle-n:middle+n]),
+                np.unique(blkb[middle-n:middle+n]))
+
+        if len(unique_blocks) != petmr.nblocks:
+            print(f'Data appears to contain only {len(unique_blocks)} blocks')
 
         with concurrent.futures.ThreadPoolExecutor(os.cpu_count()) as ex:
             fut = {ub: ex.submit(load_block_coincidence_data,

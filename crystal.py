@@ -62,8 +62,8 @@ def get_doi(doi):
     thresholds = np.interp(doi_quantiles[:-1], n, bins)
     return thresholds.round(1)
 
-def summarize_crystal(grp):
-    #print(grp.name)
+def summarize_crystal(grp, name = None):
+    if name is None: name = grp.name
     e = grp['es']
     peak, fwhm, *_ = fit_photopeak(e)
     fwhm = abs(fwhm)
@@ -91,7 +91,7 @@ def calculate_lut_statistics(lut, data):
     lm_df = lm_df.groupby('lut')
 
     with concurrent.futures.ThreadPoolExecutor(os.cpu_count()) as ex:
-        fut = [ex.submit(summarize_crystal, g) for _, g in lm_df]
+        fut = [ex.submit(summarize_crystal, g, n) for n, g in lm_df]
         ret = [f.result() for f in fut]
-
     return pd.concat(ret, ignore_index = True)
+    #return lm_df.apply(summarize_crystal)

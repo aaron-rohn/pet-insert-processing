@@ -1,8 +1,9 @@
 import os, glob, json, copy, matplotlib, threading, queue
 import numpy as np
 import tkinter as tk
-from scipy.spatial import Voronoi, voronoi_plot_2d
+
 from scipy import ndimage
+from scipy.spatial import Voronoi, voronoi_plot_2d
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure, SubplotParams
 
@@ -10,23 +11,20 @@ from flood import Flood, PerspectiveTransformDialog
 from data_loader import ProgressPopup, coincidence_filetypes
 import crystal, calibration
 
-class MPLFigure:
-    def __init__(self, root, show_axes = True, **pack_args):
-        if show_axes:
-            self.fig = Figure()
-        else:
-            self.fig = Figure(subplotpars = SubplotParams(0,0,1,1))
-
+class MPLFigure(FigureCanvasTkAgg):
+    def __init__(self, root, show_axes = True, **args):
+        margins = (0.1, 0.1, 0.95, 0.95) if show_axes else (0,0,1,1)
+        self.fig = Figure(subplotpars = SubplotParams(*margins))
         self.plot = self.fig.add_subplot(frame_on = show_axes)
-        self.canvas = FigureCanvasTkAgg(self.fig, master = root)
-        self.canvas.get_tk_widget().config(bd = 3, relief = tk.GROOVE)
-        self.canvas.draw()
-        self.canvas.get_tk_widget().pack(**pack_args)
+
+        super().__init__(self.fig, master = root)
+        self.widget = self.get_tk_widget()
+        self.widget.config(bd = 3, relief = tk.GROOVE)
+        self.widget.grid(**args)
+        self.draw()
 
 class FloodHist(MPLFigure):
-    def __init__(self, root, **pack_args):
-        super().__init__(root, show_axes = False, **pack_args)
-
+    def __init__(self, root, **args):
         self.img_size = 512
         self.npts = 19
         self.img = np.zeros((self.img_size,self.img_size))
@@ -38,8 +36,8 @@ class FloodHist(MPLFigure):
         self.draw_voronoi = False
         self.draw_points = True
 
-        self.canvas.mpl_connect('button_press_event', self.click)
-
+        super().__init__(root, show_axes = False, **args)
+        self.mpl_connect('button_press_event', self.click)
         self.cmap = copy.copy(matplotlib.colormaps['Pastel1'])
         self.cmap.set_bad(alpha = 0)
 
@@ -116,25 +114,27 @@ class FloodHist(MPLFigure):
                         line_alpha = 0.5)
 
             if self.draw_points:
-                self.plot.plot(*active, '.b', *inactive, '.r', ms = 4)
+                min_window_size = min(self.widget.winfo_height(), self.widget.winfo_width())
+                marker_size = 1 if min_window_size < 300 else (
+                              2 if min_window_size < 500 else (
+                              3 if min_window_size < 600 else 4))
+                self.plot.plot(*active, '.b', *inactive, '.r', ms = marker_size)
 
         # Invert Y axis to display A channel in Top right
         self.plot.invert_yaxis()
         self.plot.set_xlim(0,self.img_size-1)
         self.plot.set_ylim(0,self.img_size-1)
-        self.canvas.draw()
+        self.draw()
     
     def register(self):
         """ Apply a deformable 2D registration to the current point set
         based on the loaded flood.
         """
-        if self.pts is None:
-            return
-
-        self.pts = self.pts.reshape(self.npts*self.npts, 2)
-        self.pts = self.f.register_peaks(self.pts)
-        self.pts = self.pts.reshape(self.npts, self.npts, 2)
-        self.redraw()
+        if self.pts is not None:
+            self.pts = self.pts.reshape(self.npts*self.npts, 2)
+            self.pts = self.f.register_peaks(self.pts)
+            self.pts = self.pts.reshape(self.npts, self.npts, 2)
+            self.redraw()
 
     def update(self, x, y, warp = None, overlay = None,
                draw_voronoi = False, draw_points = True):
@@ -151,7 +151,7 @@ class FloodHist(MPLFigure):
             self.pts = self.pts.T.reshape(self.npts, self.npts, 2)
         except RuntimeError as e:
             # Failed to find sufficient peaks
-            print(repr(e))
+            print(e)
             self.pts = None
 
         self.pts_active = np.zeros((self.npts, self.npts), dtype = bool)
@@ -161,8 +161,8 @@ class FloodHist(MPLFigure):
         self.redraw()
 
 class ThresholdHist(MPLFigure):
-    def __init__(self, root, is_energy, **pack_args):
-        super().__init__(root, **pack_args)
+    def __init__(self, root, is_energy, **args):
+        super().__init__(root, **args)
         self.init_lines()
         self.is_energy = is_energy
         self.e_window = 0.2
@@ -171,8 +171,8 @@ class ThresholdHist(MPLFigure):
         self.active_line = None
         self.callback = []
 
-        self.canvas.mpl_connect('button_press_event', self.drag_start)
-        self.canvas.mpl_connect('button_release_event', self.drag_stop)
+        self.mpl_connect('button_press_event', self.drag_start)
+        self.mpl_connect('button_release_event', self.drag_stop)
 
     def init_lines(self, lims = (0,1)):
         self.lines = [self.plot.axvline(x,linewidth=3,color='r') for x in lims]
@@ -202,14 +202,15 @@ class ThresholdHist(MPLFigure):
             rng = np.quantile(data, [0.20, 0.99])
 
         self.init_lines(rng)
-        self.canvas.draw()
+        self.plot.ticklabel_format(axis = 'y', style = 'sci', scilimits = (0,0))
+        self.draw()
 
     def thresholds(self):
         return list(np.sort([l.get_xdata()[0] for l in self.lines]))
 
     def drag_start(self, ev):
         if ev.xdata is not None:
-            self.connection = self.canvas.mpl_connect('motion_notify_event', self.cursor_set)
+            self.connection = self.mpl_connect('motion_notify_event', self.cursor_set)
 
             # set the nearest line as active
             xpos = np.array([l.get_xdata()[0] for l in self.lines])
@@ -218,7 +219,7 @@ class ThresholdHist(MPLFigure):
 
     def drag_stop(self, ev):
         if self.connection is not None:
-            self.canvas.mpl_disconnect(self.connection)
+            self.mpl_disconnect(self.connection)
             self.connection = None
             self.active_line = None
             [cb() for cb in self.callback]
@@ -226,12 +227,12 @@ class ThresholdHist(MPLFigure):
     def cursor_set(self, ev):
         if ev.xdata is not None and self.active_line is not None:
             self.active_line.set_xdata([ev.xdata]*2)
-            self.canvas.draw()
+            self.draw()
 
 class Plots(tk.Frame):
-    def __init__(self, root, return_data, return_block, set_block, **pack_args):
+    def __init__(self, root, return_data, return_block, set_block, **args):
         super().__init__(root)
-        self.pack(**pack_args)
+        self.pack(**args)
         self.return_data = return_data
         self.return_block = return_block
         self.set_block = set_block
@@ -278,10 +279,15 @@ class Plots(tk.Frame):
 
         # Flood, energy and DOI plots
 
-        args = {'fill': tk.BOTH, 'expand': True, 'side': tk.LEFT}
-        self.flood  = FloodHist(self, **args)
-        self.energy = ThresholdHist(self, is_energy = True, **args)
-        self.doi    = ThresholdHist(self, is_energy = False, **args)
+        frm = tk.Frame(self)
+        frm.pack(side = tk.LEFT, fill = tk.BOTH, expand = True)
+        args = {'row': 0, 'columnspan': 1, 'sticky': tk.NSEW}
+        self.flood  = FloodHist(frm, column = 0, **args)
+        self.energy = ThresholdHist(frm, is_energy = True, column = 1, **args)
+        self.doi    = ThresholdHist(frm, is_energy = False, column = 2, **args)
+        frm.columnconfigure((0,1,2), weight = 1, uniform = 'column')
+        frm.rowconfigure(0, weight = 1, uniform = 'row')
+
         self.register_button.config(command = self.flood.register)
 
         # when one plot is updated, update other plots accordingly

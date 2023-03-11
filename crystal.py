@@ -11,7 +11,7 @@ doi_quantiles = 1 - np.exp(-doi_bins / lyso_attn_length)
 
 def photopeak(x, peak, fwhm, amp, slope, intercept):
     # model the photopeak as a FWHM-parametrized gaussian plus a linear offset
-    y = amp * np.exp(-4 * np.log(2) * ((x-peak) ** 2) / (fwhm**2))
+    y = amp * np.exp(-4 * np.log(2) * np.power(x-peak,2) / np.power(fwhm,2))
     return y + (x-peak)*slope + intercept
 
 def fit_photopeak(energy = None, n = None, bins = None):
@@ -48,6 +48,14 @@ def fit_photopeak(energy = None, n = None, bins = None):
                                       p0 = pinit, bounds = list(zip(*bounds)))
     except RuntimeError:
         popt = pinit
+
+    """
+    ppeak = photopeak(bins, *popt)
+    pd.DataFrame({'bins': bins, 'n': n, 'fit': ppeak}).to_csv('/mnt/acq/energy.csv')
+    plt.plot(bins, n)
+    plt.plot(bins, ppeak)
+    plt.show()
+    """
 
     return popt
 

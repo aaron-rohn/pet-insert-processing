@@ -110,7 +110,7 @@ class ScrolledListbox(tk.Frame):
     def bind(self, new_block_cb):
         self.active.bind('<<ListboxSelect>>', new_block_cb)
 
-class App(ttk.Notebook):
+class ProcessingUI(ttk.Notebook):
     def collect_data(self, d):
         self.d = d
         self.block.set([f'{a}  -  {fmt(b.shape[0])}' for a,b in d.items()])
@@ -126,7 +126,6 @@ class App(ttk.Notebook):
 
     def __init__(self, root):
         super().__init__(root)
-        root.title('PET data processing')
 
         listmode_frame = tk.Frame(self)
         sinogram_frame = tk.Frame(self)
@@ -151,6 +150,7 @@ class App(ttk.Notebook):
         self.sino.pack()
 
 if __name__ == "__main__":
-    root = tk.Tk(className = 'PET data processing')
-    app = App(root)
+    root = tk.Tk(className = 'Processing')
+    root.title('PET data processing')
+    ProcessingUI(root)
     root.mainloop()

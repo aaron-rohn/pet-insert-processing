@@ -8,14 +8,17 @@ from collections.abc import Iterable
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure, SubplotParams
 
-import petmr
-
+import petmr, calibration
 from calibration import (load_block_singles_data,
                          load_block_coincidence_data,
-                         CoincidenceFileHandle,
-                         n_doi_bins,
                          max_events,
                          coincidence_cols)
+
+from filedialog import (askopenfilename,
+                        askopenfilenames,
+                        asksaveasfilename,
+                        askdirectory,
+                        check_config_dir)
 
 singles_filetypes = [("Singles",".SGL")]
 coincidence_filetypes = [("Coincidences",".COIN")]
@@ -65,10 +68,9 @@ class SinglesLoader:
         self.data_queue = queue.Queue()
         self.stat_queue = queue.Queue()
 
-        self.input_file = tk.filedialog.askopenfilename(
-            title = "Load singles listmode data",
-            initialdir = "/",
-            filetypes = singles_filetypes)
+        self.input_file = askopenfilename(
+                title = "Load singles listmode data",
+                filetypes = singles_filetypes)
 
         if not self.input_file: raise ValueError("No file specified")
         
@@ -91,9 +93,8 @@ class SinglesLoader:
 
 class CoincidenceLoader:
     def __init__(self, callback):
-        self.input_file = tk.filedialog.askopenfilename(
+        self.input_file = askopenfilename(
                 title = "Load coincidence listmode data",
-                initialdir = "/",
                 filetypes = coincidence_filetypes)
 
         if not self.input_file: raise ValueError("No file specified")
@@ -112,16 +113,15 @@ class CoincidenceSorter:
         # this is the callback given to the CoincidenceProfilePlot
         self.outside_callback = outside_callback
 
-        self.input_files = list(tk.filedialog.askopenfilenames(
-            title = "Select singles listmode data to sort",
-            initialdir = "/", filetypes = singles_filetypes))
+        self.input_files = askopenfilenames(
+                title = "Select singles listmode data to sort",
+                filetypes = singles_filetypes)
 
-        if not self.input_files: raise ValueError("No files specified")
+        if self.input_files is None: raise ValueError("No files specified")
 
-        self.output_file = tk.filedialog.asksaveasfilename(
+        self.output_file = asksaveasfilename(
                 title = "Output file, or none",
-                initialdir = os.path.dirname(self.input_files[0]),
-                filetypes = coincidence_filetypes) or None
+                filetypes = coincidence_filetypes)
 
         self.bg = threading.Thread(target = self.sort_coincidences)
         self.bg.start()
@@ -204,7 +204,7 @@ class CoincidenceProfilePlot(tk.Toplevel):
         self.title(title)
 
     def draw_hist(self):
-        cf = CoincidenceFileHandle(self.data, 500, 1)
+        cf = calibration.CoincidenceFileHandle(self.data, 500, 1)
         self.ev_rate = cf.event_rate
         self.times = cf.times
         self.idx = cf.idx
@@ -308,22 +308,18 @@ class CoincidenceProfilePlot(tk.Toplevel):
         char = ['K', 'M', 'B', 'T'][idx-1]
         print(f'Save {round(nev/(1e3 ** idx), 1)}{char} events from {round(start/10)}s to {round(end/10)}s')
 
-        newfile = tk.filedialog.asksaveasfilename(
-                title = "New coincidence file",
-                initialdir = os.path.abspath(os.path.sep),
-                filetypes = coincidence_filetypes)
+        newfile = asksaveasfilename(title = "New coincidence file",
+                                    filetypes = coincidence_filetypes)
 
-        if not newfile: return
+        if newfile is None: return
 
         arr = np.memmap(newfile, np.uint16,
                 mode = 'w+', shape = data_subset.shape)
         arr[:,:] = data_subset[:,:]
 
 def validate_singles():
-    fnames = list(tk.filedialog.askopenfilenames(
-            title = "Validate singles files",
-            initialdir = "/",
-            filetypes = singles_filetypes))
+    fnames = askopenfilenames(title = "Validate singles files",
+                              filetypes = singles_filetypes)
 
     if not fnames: return
 

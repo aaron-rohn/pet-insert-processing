@@ -9,7 +9,7 @@ int Michelogram::energy_window(size_t blk, size_t xtal, double e) const
 {
     double th = *(double*)PyArray_GETPTR2(photopeaks, blk, xtal);
 
-    if (th < 0) return 0;
+    if (th < 0 || energy_window_width < 0) return 0;
 
     double lld = (1.0 - energy_window_width)*th;
     double uld = (1.0 + energy_window_width)*th;

@@ -6,9 +6,12 @@ from matplotlib.figure import Figure, SubplotParams
 import matplotlib.pyplot as plt
 
 from scipy import ndimage
-import petmr, calibration
+import petmr
 from data_loader import coincidence_filetypes, listmode_filetypes
 from sinogram_loader import SinogramLoaderPopup
+from filedialog import (check_config_dir,
+                        askopenfilename,
+                        asksaveasfilename)
 
 class SinogramDisplay:
     def __init__(self, root):
@@ -155,38 +158,30 @@ class SinogramDisplay:
         return ppeak, doi
 
     def save_listmode(self):
-        coin_fname = tk.filedialog.askopenfilename(
-                title = "Select coincidence file",
-                initialdir = '/',
-                filetypes = coincidence_filetypes)
-        if not coin_fname: return
-        base = os.path.dirname(coin_fname)
-        parent = os.path.dirname(base)
+        coin_fname = askopenfilename(title = "Select coincidence file",
+                                     filetypes = coincidence_filetypes)
 
-        cfgdir = tk.filedialog.askdirectory(
-                title = "Select configuration directory",
-                initialdir = parent)
+        if not coin_fname: return
+
+        cfgdir = check_config_dir()
         if not cfgdir: return
 
-        lmfname = tk.filedialog.asksaveasfilename(
-                title = "Save listmode file",
-                initialdir = parent,
-                filetypes = listmode_filetypes)
+        lmfname = asksaveasfilename(title = "Save listmode file",
+                                    filetypes = listmode_filetypes)
+
         if not lmfname: return
 
         lut = self.load_luts(cfgdir)
         ppeak, doi = self.load_json_cfg(cfgdir)
 
-        energy_window = 0.2
+        energy_window = -1
         self.ldr = SinogramLoaderPopup(
                 self.root, None, petmr.save_listmode,
                 lmfname, coin_fname, energy_window, lut, ppeak, doi)
 
     def load_listmode(self):
-        fname = tk.filedialog.askopenfilename(
-                title = "Select listmode file",
-                initialdir = '/',
-                filetypes = listmode_filetypes)
+        fname = askopenfilename(title = "Select listmode file",
+                                filetypes = listmode_filetypes)
 
         if not fname: return
 
@@ -208,10 +203,8 @@ class SinogramDisplay:
                 fname, self.sort_prompts_var.get(), self.sort_delays_var.get(), max_doi)
 
     def load_sinogram(self):
-        fname = tk.filedialog.askopenfilename(
-                title = "Select sinogram file",
-                initialdir = '/',
-                filetypes = [("Sinogram file", ".raw")])
+        fname = askopenfilename(title = "Select sinogram file",
+                                filetypes = [("Sinogram file", ".raw")])
 
         if fname:
             self.sino_data = petmr.load_sinogram(fname)
@@ -220,10 +213,8 @@ class SinogramDisplay:
     def save_sinogram(self):
         if self.sino_data is None: return
 
-        fname = tk.filedialog.asksaveasfilename(
-                title = "Save sinogram file",
-                initialdir = '/',
-                filetypes = [("Sinogram file", ".raw")])
+        fname = asksaveasfilename(title = "Save sinogram file",
+                                  filetypes = [("Sinogram file", ".raw")])
 
         if not fname: return
 
@@ -246,10 +237,8 @@ class SinogramDisplay:
         if self.sino_data is None:
             return
 
-        other_fname = tk.filedialog.askopenfilename(
-                title = "Select sinogram for operation",
-                initialdir = '/',
-                filetypes = [("Sinogram file", ".raw")])
+        other_fname = askopenfilename(title = "Select sinogram for operation",
+                                      filetypes = [("Sinogram file", ".raw")])
 
         if not other_fname:
             return

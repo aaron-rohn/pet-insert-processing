@@ -5,14 +5,17 @@ class ListmodeEvent(ctypes.Structure):
     _fields_ = [
             ('ring_a',      c_uint, 7),
             ('crystal_a',   c_uint, 9),
+
             ('ring_b',      c_uint, 7),
             ('crystal_b',   c_uint, 9),
+
             ('energy_b',    c_uint, 6),
             ('energy_a',    c_uint, 6),
             ('doi_b',       c_uint, 2),
             ('doi_a',       c_uint, 2),
+
             ('abstime',     c_uint, 10),
-            ('tdiff',       c_int, 5),
+            ('tdiff',       c_int,  5),
             ('prompt',      c_uint, 1)]
 
 class Listmode(ctypes.Structure):

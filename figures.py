@@ -9,7 +9,10 @@ from matplotlib.figure import Figure, SubplotParams
 
 from flood import Flood, PerspectiveTransformDialog
 from data_loader import ProgressPopup, coincidence_filetypes
-import crystal, calibration
+import crystal
+from calibration import create_cfg_vals
+from filedialog import check_config_dir
+
 
 class MPLFigure(FigureCanvasTkAgg):
     def __init__(self, root, show_axes = True, **args):
@@ -238,7 +241,6 @@ class Plots(tk.Frame):
         self.set_block = set_block
 
         self.d = None
-        self.output_dir = None
         self.warp = None
 
         # Flood operation buttons
@@ -246,7 +248,7 @@ class Plots(tk.Frame):
         self.button_frame = tk.Frame(self)
 
         self.select_dir_button = tk.Button(self.button_frame,
-                text = "Select Directory", command = lambda: self.check_output_dir(True))
+                text = "Select Directory", command = lambda: check_config_dir(True))
 
         self.store_lut_button = tk.Button(self.button_frame,
                 text = "Store Configuration", command = self.store_lut_cb)
@@ -313,9 +315,9 @@ class Plots(tk.Frame):
         self.doi_cb(retain = False)
         self.flood_cb()
 
-    def create_lut_borders(self):
+    def create_lut_borders(self, cfg_dir):
         blk = self.return_block()
-        lut_fname = os.path.join(self.output_dir, 'lut', f'block{blk}.lut')
+        lut_fname = os.path.join(cfg_dir, 'lut', f'block{blk}.lut')
         lut = np.fromfile(lut_fname, np.intc).reshape((512,512))
 
         yd = np.diff(lut, axis = 0, prepend = lut.max()) != 0
@@ -330,8 +332,8 @@ class Plots(tk.Frame):
         if self.d is None: return
 
         lut = None
-        if self.show_lut.get() and self.output_dir:
-            lut = self.create_lut_borders()
+        if self.show_lut.get() and (cfg_dir := check_config_dir()):
+            lut = self.create_lut_borders(cfg_dir)
 
         eth = self.energy.thresholds()
         dth = self.doi.thresholds()
@@ -362,25 +364,9 @@ class Plots(tk.Frame):
         idx = np.nonzero((dth[0] < doi) & (doi < dth[1]))[0]
         self.energy.update(self.d[idx,0], retain)
 
-    def check_output_dir(self, reset = False):
-        if reset: self.output_dir = None
-        self.output_dir = self.output_dir or tk.filedialog.askdirectory(
-                title = "Configuration data directory",
-                initialdir = '/')
-
-        lut_dir = os.path.join(self.output_dir, 'lut')
-        fld_dir = os.path.join(self.output_dir, 'flood')
-
-        for d in [self.output_dir, lut_dir, fld_dir]:
-            try:
-                os.mkdir(d)
-            except FileExistsError: pass
-
-        return self.output_dir
 
     def store_lut_cb(self):
-        output_dir = self.check_output_dir()
-        if not output_dir or self.flood.f is None:
+        if (output_dir := check_config_dir()) is None or self.flood.f is None:
             return
 
         blk = self.return_block()
@@ -407,7 +393,7 @@ class Plots(tk.Frame):
                 cfg = json.load(f)
         except FileNotFoundError: cfg = {}
 
-        calibration.create_cfg_vals(self.d, lut, blk, cfg,
+        create_cfg_vals(self.d, lut, blk, cfg,
                                     (self.energy.counts, self.energy.bins))
 
         # save the config file

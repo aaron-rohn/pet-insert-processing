@@ -1,6 +1,8 @@
 import os, json, tempfile
 import numpy as np
 import cv2 as cv
+import tkinter as tk
+import tkinter.filedialog
 from scipy import ndimage
 
 import petmr, crystal, pyelastix

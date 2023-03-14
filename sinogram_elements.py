@@ -1,40 +1,48 @@
-import os, glob, re, json
+import os, glob, re, json, threading
 import tkinter as tk
 import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure, SubplotParams
 import matplotlib.pyplot as plt
+import concurrent.futures
 
 from scipy import ndimage
 import petmr
-from data_loader import coincidence_filetypes, listmode_filetypes
+from data_loader import coincidence_filetypes, listmode_filetypes, sinogram_filetypes
 from sinogram_loader import SinogramLoaderPopup
 from filedialog import (check_config_dir,
                         askopenfilename,
-                        asksaveasfilename)
+                        askopenfilenames,
+                        asksaveasfilename,
+                        askformatfilenames)
 
-class SinogramDisplay:
+class SinogramDisplay(tk.Frame):
     def __init__(self, root):
+        super().__init__(root)
         self.sino_data = None
         self.ldr = None
-        self.root = root
-        self.button_frame = tk.Frame(self.root)
+        self.button_frame = tk.Frame(self)
 
         self.save_lm   = tk.Button(self.button_frame, text = "Save Listmode", command = self.save_listmode)
         self.load_lm = tk.Button(self.button_frame, text = "Load Listmode", command = self.load_listmode)
         self.save_sino = tk.Button(self.button_frame, text = "Save Sinogram", command = self.save_sinogram)
         self.load_sino = tk.Button(self.button_frame, text = "Load Sinogram", command = self.load_sinogram)
-        self.create_norm_button = tk.Button(self.button_frame, text = "Create Norm", command = self.create_norm)
         self.multiply_button = tk.Button(self.button_frame, text = "Multiply", command = lambda: self.operation(np.multiply))
         self.subtract_button = tk.Button(self.button_frame, text = "Subtract", command = lambda: self.operation(np.subtract))
 
+        self.energy_window_var = tk.DoubleVar(value = 0.2)
+        self.max_doi_var = tk.IntVar(value = petmr.ndoi)
         self.sort_prompts_var = tk.BooleanVar(value = True)
         self.sort_delays_var = tk.BooleanVar(value = False)
-        self.cb_frame = tk.Frame(self.root)
+
+        self.cb_frame = tk.Frame(self)
+        self.energy_window_menu = tk.OptionMenu(self.cb_frame, self.energy_window_var,
+                0.2, 0.4, 0.6, 0.8, 1.0, -1.0)
+        self.max_doi_menu = tk.OptionMenu(self.cb_frame, self.max_doi_var, *np.arange(0,petmr.ndoi+1))
         self.sort_prompts_cb = tk.Checkbutton(self.cb_frame, text = "Prompts", variable = self.sort_prompts_var)
         self.sort_delays_cb = tk.Checkbutton(self.cb_frame, text = "Delays", variable = self.sort_delays_var)
 
-        self.plot_frame = tk.Frame(self.root)
+        self.plot_frame = tk.Frame(self)
         self.plot_frame.rowconfigure(0, weight = 1)
         self.plot_frame.columnconfigure(0, weight = 1)
         self.plot_frame.columnconfigure(1, weight = 1)
@@ -68,11 +76,17 @@ class SinogramDisplay:
         self.load_lm.pack(side = tk.LEFT, padx = 5)
         self.save_sino.pack(side = tk.LEFT, padx = 5)
         self.load_sino.pack(side = tk.LEFT, padx = 5)
-        self.create_norm_button.pack(side = tk.LEFT, padx = 5)
         self.multiply_button.pack(side = tk.LEFT, padx = 5)
         self.subtract_button.pack(side = tk.LEFT, padx = 5)
 
         self.cb_frame.pack(pady = 5)
+
+        tk.Label(self.cb_frame, text = "Energy window: ").pack(side = tk.LEFT)
+        self.energy_window_menu.pack(side = tk.LEFT, padx = 5)
+
+        tk.Label(self.cb_frame, text = "Max DOI: ").pack(side = tk.LEFT)
+        self.max_doi_menu.pack(side = tk.LEFT, padx = 5)
+
         self.sort_prompts_cb.pack(side = tk.LEFT, padx = 5)
         self.sort_delays_cb.pack(side = tk.LEFT, padx = 5)
 
@@ -100,7 +114,8 @@ class SinogramDisplay:
             self.sinogram_plt.invert_yaxis()
             self.sinogram_canvas.draw()
 
-    def remap_sinogram(self, s):
+    @staticmethod
+    def remap_sinogram(s: np.ndarray):
         nr = s.shape[0]
         nt = s.shape[2]
         nt2 = int(nt/2)
@@ -158,49 +173,76 @@ class SinogramDisplay:
         return ppeak, doi
 
     def save_listmode(self):
-        coin_fname = askopenfilename(title = "Select coincidence file",
-                                     filetypes = coincidence_filetypes)
-
-        if not coin_fname: return
+        coin_fnames = askopenfilenames(title = "Select 1+ coincidence files",
+                                      filetypes = coincidence_filetypes)
+        if not coin_fnames: return
 
         cfgdir = check_config_dir()
         if not cfgdir: return
 
-        lmfname = asksaveasfilename(title = "Save listmode file",
-                                    filetypes = listmode_filetypes)
-
-        if not lmfname: return
+        lm_fnames = askformatfilenames(coin_fnames,
+                filetypes = listmode_filetypes)
+        if not lm_fnames: return
 
         lut = self.load_luts(cfgdir)
         ppeak, doi = self.load_json_cfg(cfgdir)
+        ewindow = self.energy_window_var.get()
 
-        energy_window = -1
-        self.ldr = SinogramLoaderPopup(
-                self.root, None, petmr.save_listmode,
-                lmfname, coin_fname, energy_window, lut, ppeak, doi)
+        if len(coin_fnames) > 1:
+            self.save_listmode_multi(coin_fnames, lm_fnames, ewindow, lut, ppeak, doi)
+        else:
+            SinogramLoaderPopup(
+                    self, None, petmr.save_listmode,
+                    coin_fnames[0], lm_fnames[0], ewindow, lut, ppeak, doi)
 
     def load_listmode(self):
-        fname = askopenfilename(title = "Select listmode file",
-                                filetypes = listmode_filetypes)
+        lm_fnames = askopenfilenames(title = "Select 1+ listmode file",
+                                 filetypes = listmode_filetypes)
+        if not lm_fnames: return
 
-        if not fname: return
+        prompts = self.sort_prompts_var.get()
+        delays  = self.sort_delays_var.get()
+        max_doi = self.max_doi_var.get()
 
-        def sorting_callback(result):
-            if isinstance(result, RuntimeError):
-                self.sino_data = None
-                tk.messagebox.showerror(message =
-                        f'{type(result).__name__}: {" ".join(result.args)}')
-            else:
-                result = self.remap_sinogram(result)
-                self.sino_data = result
+        if len(lm_fnames) > 1:
+            sino_fnames = askformatfilenames(lm_fnames,
+                    filetypes = sinogram_filetypes)
 
-            self.count_map_draw()
-            self.ldr = None
+            if not sino_fnames: return
 
-        max_doi = petmr.ndoi
-        self.ldr = SinogramLoaderPopup(
-                self.root, sorting_callback, petmr.sort_sinogram,
-                fname, self.sort_prompts_var.get(), self.sort_delays_var.get(), max_doi)
+            self.load_listmode_multi(lm_fnames, sino_fnames, prompts, delays, max_doi)
+
+        else:
+            def callback(sinogram):
+                self.sino_data = self.remap_sinogram(sinogram)
+                self.count_map_draw()
+
+            SinogramLoaderPopup(
+                    self, callback, petmr.load_listmode,
+                    lm_fnames[0], prompts, delays, max_doi)
+
+    def save_listmode_multi(self, coin_fnames, lm_fnames, *args):
+        def launch():
+            with concurrent.futures.ThreadPoolExecutor(4) as ex:
+                for coin,lm in zip(coin_fnames, lm_fnames):
+                    ex.submit(petmr.save_listmode, coin, lm, *args)
+            print(f'Finished saving {len(cname)} listmode files')
+
+        threading.Thread(target = launch).start()
+
+    def load_listmode_multi(self, lm_fnames, sino_fnames, *args):
+        def remap_and_save(fname, fut):
+            s = self.remap_sinogram(fut.result())
+            petmr.save_sinogram(fname, s)
+
+        def launch():
+            with concurrent.futures.ThreadPoolExecutor(4) as ex:
+                for lm, sino in zip(lm_fnames, sino_fnames):
+                    fut = ex.submit(petmr.load_listmode, lm, *args)
+                    fut.add_done_callback(lambda f: remap_and_save(sino,f))
+            print(f'Finished creating sinograms for {len(lm_fnames)} files')
+
+        threading.Thread(target = launch).start()
 
     def load_sinogram(self):
         fname = askopenfilename(title = "Select sinogram file",
@@ -219,19 +261,6 @@ class SinogramDisplay:
         if not fname: return
 
         petmr.save_sinogram(fname, self.sino_data)
-
-    def create_norm(self):
-        if self.sino_data is None:
-            return
-
-        # average over angular dimension
-        proj = self.sino_data.mean((0,1,2))
-
-        np.divide(proj[None,None,None,:], self.sino_data,
-                  out = self.sino_data)
-        np.nan_to_num(self.sino_data, copy = False,
-                      nan = 1, posinf = 1, neginf = 1)
-        self.count_map_draw()
 
     def operation(self, op):
         if self.sino_data is None:

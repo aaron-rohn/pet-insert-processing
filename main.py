@@ -128,9 +128,10 @@ class ProcessingUI(ttk.Notebook):
         super().__init__(root)
 
         listmode_frame = tk.Frame(self)
-        sinogram_frame = tk.Frame(self)
+        self.sino = SinogramDisplay(self)
+
         self.add(listmode_frame, text = "Listmode Processing")
-        self.add(sinogram_frame, text = "Sinogram Processing")
+        self.add(self.sino, text = "Sinogram Processing")
         self.pack(fill = tk.BOTH, expand = True)
 
         lm_top_frame = tk.Frame(listmode_frame)
@@ -146,7 +147,6 @@ class ProcessingUI(ttk.Notebook):
                            padx = 5, pady = 5, fill = tk.BOTH, expand = True)
         self.block.bind(self.plots.plots_update)
 
-        self.sino = SinogramDisplay(sinogram_frame)
         self.sino.pack()
 
 if __name__ == "__main__":

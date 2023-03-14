@@ -9,7 +9,7 @@
 
 static PyObject *petmr_singles(PyObject*, PyObject*);
 static PyObject *petmr_coincidences(PyObject*, PyObject*);
-static PyObject *petmr_sort_sinogram(PyObject*, PyObject*);
+static PyObject *petmr_load_listmode(PyObject*, PyObject*);
 static PyObject *petmr_save_listmode(PyObject*, PyObject*);
 static PyObject *petmr_load_sinogram(PyObject*, PyObject*);
 static PyObject *petmr_save_sinogram(PyObject*, PyObject*);
@@ -17,14 +17,30 @@ static PyObject *petmr_rebin_sinogram(PyObject*, PyObject*);
 static PyObject *petmr_validate_singles_file(PyObject*, PyObject*);
 
 static PyMethodDef petmrMethods[] = {
-    {"singles", petmr_singles, METH_VARARGS, "read PET/MRI insert singles data"},
-    {"coincidences", petmr_coincidences, METH_VARARGS, "read PET/MRI insert singles data, and sort coincidences"},
-    {"sort_sinogram", petmr_sort_sinogram, METH_VARARGS, "Sort coincidence data into a sinogram"},
-    {"save_listmode", petmr_save_listmode, METH_VARARGS, "Convert coincidence format into a simple listmode format"},
-    {"load_sinogram", petmr_load_sinogram, METH_VARARGS, "Load a sinogram from disk"},
-    {"save_sinogram", petmr_save_sinogram, METH_VARARGS, "Save a sinogram to disk"},
-    {"rebin_sinogram", petmr_rebin_sinogram, METH_VARARGS, "Simple SSRB for a Michelogram"},
-    {"validate_singles_file", petmr_validate_singles_file, METH_VARARGS, "Indicate if a singles file contains a reset and timetags for each module"},
+    {"singles", petmr_singles,
+        METH_VARARGS, "read PET/MRI insert singles data"},
+
+    {"coincidences", petmr_coincidences,
+        METH_VARARGS, "read PET/MRI insert singles data, and sort coincidences"},
+
+    {"load_listmode", petmr_load_listmode,
+        METH_VARARGS, "Sort packed listmode into a sinogram"},
+
+    {"save_listmode", petmr_save_listmode,
+        METH_VARARGS, "Convert coincidence data into packed listmode"},
+
+    {"load_sinogram", petmr_load_sinogram,
+        METH_VARARGS, "Load a sinogram from disk"},
+
+    {"save_sinogram", petmr_save_sinogram,
+        METH_VARARGS, "Save a sinogram to disk"},
+
+    {"rebin_sinogram", petmr_rebin_sinogram,
+        METH_VARARGS, "Simple SSRB for a Michelogram"},
+
+    {"validate_singles_file", petmr_validate_singles_file,
+        METH_VARARGS, "Indicate if a singles file contains a reset and timetags for each module"},
+
     {NULL, NULL, 0, NULL}
 };
 
@@ -84,6 +100,20 @@ pylist_to_strings(PyObject *file_list)
     return cfile_list;
 }
 
+bool update_ui(
+        PyObject *terminate,
+        PyObject *status_queue,
+        double perc
+){
+    if (status_queue)
+        PyObject_CallMethod(status_queue, "put", "d", perc);
+
+    if (terminate)
+        return PyObject_CallMethod(terminate, "is_set", "") == Py_True;
+
+    return false;
+}
+
 void* Single::to_py_data(std::vector<Single> &events)
 {
     // Move this function here so that singles and coincidences
@@ -116,14 +146,13 @@ void* Single::to_py_data(std::vector<Single> &events)
 static PyObject *
 petmr_singles(PyObject *self, PyObject *args)
 {
-    PyObject *status_queue, *terminate;
     const char *fname;
     uint64_t max_events = 0;
-    if (!PyArg_ParseTuple(args, "OOsK",
-                          &terminate,
-                          &status_queue,
-                          &fname,
-                          &max_events)) return NULL;
+    PyObject *status_queue = NULL, *terminate = NULL;
+
+    if (!PyArg_ParseTuple(args, "s|KOO",
+                &fname, &max_events,
+                &terminate, &status_queue)) return NULL;
 
     std::ifstream f (fname, std::ios::binary);
     if (!f.good()) 
@@ -167,9 +196,15 @@ petmr_singles(PyObject *self, PyObject *args)
             double perc = ((double)nevents) / nevents_approx* 100.0;
 
             PyEval_RestoreThread(_save);
-            PyObject *term = PyObject_CallMethod(terminate, "is_set", "");
-            PyObject_CallMethod(status_queue, "put", "((dK))", perc, nevents);
-            stop = (term == Py_True);
+            if (terminate)
+            {
+                PyObject *term = PyObject_CallMethod(terminate, "is_set", "");
+                stop |= (term == Py_True);
+            }
+
+            if (status_queue)
+                PyObject_CallMethod(status_queue, "put", "((dK))", perc, nevents);
+
             _save = PyEval_SaveThread();
         }
     }
@@ -185,14 +220,14 @@ petmr_singles(PyObject *self, PyObject *args)
 static PyObject *
 petmr_coincidences(PyObject *self, PyObject *args)
 {
-    PyObject *status_queue, *terminate, *py_file_list;
+    PyObject *py_file_list;
+    char *output_file_str;
     uint64_t max_events = 0;
-    char *output_file_str = NULL;
-    if (!PyArg_ParseTuple(args, "OOOs|K",&terminate,
-                                         &status_queue,
-                                         &py_file_list,
-                                         &output_file_str,
-                                         &max_events)) return NULL;
+    PyObject *status_queue = NULL, *terminate = NULL;
+
+    if (!PyArg_ParseTuple(args, "Os|KOO",
+                &py_file_list, &output_file_str,
+                &max_events, &status_queue, &terminate)) return NULL;
 
     // Parse the input files
     auto file_list = pylist_to_strings(py_file_list);
@@ -201,15 +236,6 @@ petmr_coincidences(PyObject *self, PyObject *args)
     // Create handle to output file
     std::ofstream output_file_handle (
             output_file_str, std::ios::out | std::ios::binary);
-
-    if (!output_file_handle)
-    {
-        PyErr_SetString(PyExc_IOError, strerror(errno));
-        return NULL;
-    }
-
-    // Declare all the variables at the beginning
-    // Allows for saving the thread state early on
 
     size_t nworkers = std::thread::hardware_concurrency() - 1;
     size_t n = file_list.size();
@@ -258,7 +284,7 @@ petmr_coincidences(PyObject *self, PyObject *args)
         all_pos[i].pop();
     }
 
-    // verify that each file as readable and contained a reset
+    // verify that each file is readable and contained a reset
     if (std::any_of(start_pos.begin(), start_pos.end(),
                 [](std::streampos p){ return p == -1; }))
     {
@@ -302,24 +328,26 @@ petmr_coincidences(PyObject *self, PyObject *args)
         {
             auto [pos, coin] = workers.front().get();
             workers.pop_front();
-
             CoincidenceData::write(output_file_handle, coin);
-            if (!output_file_handle.good())
-            {
-                std::cout << "Failed to write data to coincidence file" << std::endl;
-                stop = true;
-            }
 
             // calculate data to update the UI
             ncoin += coin.size();
+            stop = stop || (max_events > 0 && ncoin > max_events);
             auto proc_size = std::accumulate(pos.begin(), pos.end(), std::streampos(0));
             double perc = ((double)proc_size) / total_size * 100.0;
 
             // update the UI and interact with python
             PyEval_RestoreThread(_save);
-            PyObject *term = PyObject_CallMethod(terminate, "is_set", "");
-            PyObject_CallMethod(status_queue, "put", "((dK))", perc, ncoin);
-            stop = stop || (term == Py_True) || (max_events > 0 && ncoin > max_events);
+
+            if (terminate)
+            {
+                PyObject *term = PyObject_CallMethod(terminate, "is_set", "");
+                stop = stop || (term == Py_True);
+            }
+
+            if (status_queue)
+                PyObject_CallMethod(status_queue, "put", "((dK))", perc, ncoin);
+
             _save = PyEval_SaveThread();
         }
     }
@@ -332,17 +360,17 @@ petmr_coincidences(PyObject *self, PyObject *args)
 }
 
 static PyObject*
-petmr_sort_sinogram(PyObject *self, PyObject *args)
+petmr_load_listmode(PyObject *self, PyObject *args)
 {
     const char *fname;
     int prompts = 1, delays = 0, max_doi = Geometry::ndoi;
-    PyObject *terminate, *status_queue, *data_queue;
+    PyObject *terminate = NULL, *status_queue = NULL;
 
-    if (!PyArg_ParseTuple(args, "sppiOOO",
+    if (!PyArg_ParseTuple(args, "sppi|OO",
                 &fname, &prompts, &delays, &max_doi,
-                &terminate, &status_queue, &data_queue)) return NULL;
+                &terminate, &status_queue)) return NULL;
 
-    PyThreadState *_save = PyEval_SaveThread();
+    PyThreadState *thr = PyEval_SaveThread();
 
     Michelogram m(Geometry::dim_theta_full, max_doi);
 
@@ -375,32 +403,26 @@ petmr_sort_sinogram(PyObject *self, PyObject *args)
         {
             auto pos = workers.front().get();
             workers.pop_front();
-
             double perc = (double)pos / coincidence_file_size * 100;
 
             // update the python ui
-            PyEval_RestoreThread(_save);
-            PyObject *term = PyObject_CallMethod(terminate, "is_set", "");
-            PyObject_CallMethod(status_queue, "put", "d", perc);
-            if (term == Py_True) stop = true;
-            _save = PyEval_SaveThread();
+            PyEval_RestoreThread(thr);
+            stop = update_ui(terminate, status_queue, perc) || stop;
+            thr = PyEval_SaveThread();
         }
     }
 
-    PyEval_RestoreThread(_save);
-
-    PyObject *data = m.to_py_data();
-    PyObject_CallMethod(data_queue, "put", "O", data);
-    Py_RETURN_NONE;
+    PyEval_RestoreThread(thr);
+    return m.to_py_data();
 }
 
 static PyObject*
-petmr_save_listmode(PyObject* self, PyObject* args)
+petmr_save_listmode(PyObject *self, PyObject *args)
 {
     const char *lmfname, *fname;
     double energy_window;
     PyArrayObject *lut_array, *ppeak_array, *doi_array;
-    PyObject *terminate, *status_queue, *data_queue;
+    PyObject *terminate = NULL, *status_queue = NULL;
 
     /*
      * Arguments are:
@@ -410,23 +432,20 @@ petmr_save_listmode(PyObject* self, PyObject* args)
      * 4. Numpy array with LUT
      * 5. Numpy array with photopeaks
      * 6. Numpy array with DOI
+     *
      * 7. threading.Event to indicate termination
      * 8. queue.Queue for progress bar
-     * 9. queue.Queue to return data
      */
 
-    if (!PyArg_ParseTuple(args, "ssdOOOOOO",
-                &lmfname, &fname, &energy_window, &lut_array, &ppeak_array, &doi_array,
-                &terminate, &status_queue, &data_queue)) return NULL;
+    if (!PyArg_ParseTuple(args, "ssdOOO|OO",
+                &lmfname, &fname, &energy_window,
+                &lut_array, &ppeak_array, &doi_array,
+                &terminate, &status_queue)) return NULL;
 
-    PyThreadState *_save = PyEval_SaveThread();
+    PyThreadState *thr = PyEval_SaveThread();
 
-    Michelogram m(Geometry::dim_theta_full,
-                  Geometry::ndoi,
-                  energy_window,
-                  lut_array,
-                  ppeak_array,
-                  doi_array);
+    Michelogram m(Geometry::dim_theta_full, Geometry::ndoi, energy_window,
+                  lut_array, ppeak_array, doi_array);
 
     std::ofstream lf (lmfname, std::ios::binary);
 
@@ -471,16 +490,13 @@ petmr_save_listmode(PyObject* self, PyObject* args)
 
             // update the python ui
             double perc = (double)processed / coincidence_file_size * 100;
-            PyEval_RestoreThread(_save);
-            PyObject *term = PyObject_CallMethod(terminate, "is_set", "");
-            PyObject_CallMethod(status_queue, "put", "d", perc);
-            if (term == Py_True) stop = true;
-            _save = PyEval_SaveThread();
+            PyEval_RestoreThread(thr);
+            stop = update_ui(terminate, status_queue, perc) || stop;
+            thr = PyEval_SaveThread();
         }
     }
 
-    PyEval_RestoreThread(_save);
-    PyObject_CallMethod(data_queue, "put", "O", Py_None);
+    PyEval_RestoreThread(thr);
     Py_RETURN_NONE;
 }
 
@@ -548,7 +564,7 @@ petmr_validate_singles_file(PyObject* self, PyObject* args)
         return NULL;
 
     std::ifstream f (singles_file, std::ios::binary);
-    if (!f.good()) 
+    if (!f.good())
     {
         PyErr_SetFromErrno(PyExc_IOError);
         return NULL;

@@ -23,6 +23,7 @@ from filedialog import (askopenfilename,
 singles_filetypes = [("Singles",".SGL")]
 coincidence_filetypes = [("Coincidences",".COIN")]
 listmode_filetypes = [("Listmode data",".lm")]
+sinogram_filetypes = [("Sinogram file", ".raw")]
 
 class ProgressPopup(tk.Toplevel):
     def __init__(self, stat_queue, data_queue, terminate, callback, fmt = 'Counts: {:,}'):
@@ -35,16 +36,13 @@ class ProgressPopup(tk.Toplevel):
 
         self.title('Progress')
         self.attributes('-type', 'dialog')
-        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.protocol("WM_DELETE_WINDOW", self.terminate.set)
         self.progbar = Progressbar(self, length = 500)
         self.counts_label = tk.Label(self, text = '')
-
         self.progbar.pack(fill = tk.X, expand = True, padx = 10, pady = 10)
         self.counts_label.pack(pady = 10)
-        self.update()
 
-    def on_close(self):
-        self.terminate.set()
+        self.update()
 
     def update(self, interval = 100):
         while not self.stat_queue.empty():
@@ -83,8 +81,8 @@ class SinglesLoader:
                                    callback)
 
     def load_singles(self):
-        args = [self.terminate, self.stat_queue, self.input_file, max_events]
-        d = petmr.singles(*args)
+        d = petmr.singles(self.input_file, max_events,
+                self.terminate, self.stat_queue)
 
         unique_blocks = np.unique(d[:,0])
         with concurrent.futures.ThreadPoolExecutor(os.cpu_count()) as ex:
@@ -132,21 +130,17 @@ class CoincidenceSorter:
                                    self.callback)
 
     def sort_coincidences(self):
-        """ Load coincicdence data by sorting the events in one or more singles files. If
-        multiple files are provided, they must be time-aligned from a single acquisition
+        """ Load coincicdence data by sorting the events in one or more singles files.
+        Files must be time-aligned from a single acquisition
         """
-        
-        args = [self.terminate, self.stat_queue, self.input_files]
 
-        if self.output_file is not None:
-            args += [self.output_file]
-            petmr.coincidences(*args)
-            self.data_queue.put(self.output_file)
-        else:
-            tf = tempfile.NamedTemporaryFile()
-            args += [tf.name, max_events]
-            petmr.coincidences(*args)
-            self.data_queue.put(tf)
+        f = self.output_file or tempfile.NamedTemporaryFile()
+        fname = self.output_file or f.name
+        nev = 0 if self.output_file else max_events
+
+        petmr.coincidences(self.input_files, fname, nev,
+                self.stat_queue, self.terminate)
+        self.data_queue.put(f)
 
     def callback(self, data_file):
         """ this is called from the context of the ProgressPopup once
@@ -165,7 +159,6 @@ class CoincidenceProfilePlot(tk.Toplevel):
     def __init__(self, data, callback):
         super().__init__()
         self.attributes('-type', 'dialog')
-        self.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.callback = callback 
         self.data = data
@@ -192,10 +185,6 @@ class CoincidenceProfilePlot(tk.Toplevel):
         self.active_line = None
         self.draw_hist()
         self.set_title()
-
-    def on_close(self):
-        self.callback({})
-        self.destroy()
 
     def set_title(self, status = None):
         title = 'Coincidence time distribution'

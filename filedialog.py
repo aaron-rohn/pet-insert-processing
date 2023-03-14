@@ -28,6 +28,22 @@ askopenfilenames  = lambda *args, **kwds: dialog(tk.filedialog.askopenfilenames,
 asksaveasfilename = lambda *args, **kwds: dialog(tk.filedialog.asksaveasfilename, *args, **kwds)
 askdirectory      = lambda *args, **kwds: dialog(tk.filedialog.askdirectory, *args, **kwds)
 
+def askformatfilenames(files, **kwds):
+    fmt = dialog(tk.filedialog.asksaveasfilename,
+            title = "Format filenames: {i}->index, {f}->filename", **kwds)
+
+    if not fmt: return None
+
+    names = [os.path.basename(f) for f in files]
+    names = [os.path.splitext(n) for n in names]
+    names, _ = zip(*names)
+
+    try:
+        return [fmt.format(i = idx, f = fname) for idx,fname in enumerate(names)]
+    except Exception as e:
+        print(f'Error formatting file names: {e}')
+        return None
+
 def check_config_dir(reset = False):
     global cfg_dir
     if reset: cfg_dir = None

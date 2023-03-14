@@ -20,7 +20,7 @@ struct CoincidenceData
 
     // Fine-time LSB equals 1.389 ns (1 / (90e6 * 8) s)
     // Time window of 10->14ns, 20->28ns
-    static const int16_t width = 30;
+    static const int16_t width = 10;
     static const int16_t delay = 100;
 
     // only data member of the struct is an array of uint16's

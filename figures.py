@@ -13,7 +13,6 @@ import crystal
 from calibration import create_cfg_vals
 from filedialog import check_config_dir
 
-
 class MPLFigure(FigureCanvasTkAgg):
     def __init__(self, root, show_axes = True, **args):
         margins = (0.1, 0.1, 0.95, 0.95) if show_axes else (0,0,1,1)

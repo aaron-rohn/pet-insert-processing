@@ -193,7 +193,7 @@ class SinogramDisplay(tk.Frame):
         else:
             SinogramLoaderPopup(
                     self, None, petmr.save_listmode,
-                    coin_fnames[0], lm_fnames[0], ewindow, lut, ppeak, doi)
+                    lm_fnames[0], coin_fnames[0], ewindow, lut, ppeak, doi)
 
     def load_listmode(self):
         lm_fnames = askopenfilenames(title = "Select 1+ listmode file",
@@ -225,8 +225,8 @@ class SinogramDisplay(tk.Frame):
         def launch():
             with concurrent.futures.ThreadPoolExecutor(4) as ex:
                 for coin,lm in zip(coin_fnames, lm_fnames):
-                    ex.submit(petmr.save_listmode, coin, lm, *args)
-            print(f'Finished saving {len(cname)} listmode files')
+                    ex.submit(petmr.save_listmode, lm, coin, *args)
+            print(f'Finished saving {len(coin_fnames)} listmode files')
 
         threading.Thread(target = launch).start()
 

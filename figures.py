@@ -232,12 +232,12 @@ class ThresholdHist(MPLFigure):
             self.draw()
 
 class Plots(tk.Frame):
-    def __init__(self, root, return_data, return_block, set_block, **args):
+    def __init__(self, root, get_data, get_block, incr_block, **args):
         super().__init__(root)
         self.pack(**args)
-        self.return_data = return_data
-        self.return_block = return_block
-        self.set_block = set_block
+        self.get_data = get_data 
+        self.get_block = get_block 
+        self.incr_block = incr_block
 
         self.d = None
         self.warp = None
@@ -307,15 +307,14 @@ class Plots(tk.Frame):
     def plots_update(self, *args):
         """ Update all plots when new data is available """
         self.warp = None
-        blk = self.return_block()
-        self.d = self.return_data(blk)
+        self.d = self.get_data()
 
         self.energy.update(self.d[:,0], retain = False)
         self.doi_cb(retain = False)
         self.flood_cb()
 
     def create_lut_borders(self, cfg_dir):
-        blk = self.return_block()
+        blk = self.get_block()
         lut_fname = os.path.join(cfg_dir, 'lut', f'block{blk}.lut')
         lut = np.fromfile(lut_fname, np.intc).reshape((512,512))
 
@@ -368,7 +367,7 @@ class Plots(tk.Frame):
         if (output_dir := check_config_dir()) is None or self.flood.f is None:
             return
 
-        blk = self.return_block()
+        blk = self.get_block()
         print(f'Store calibration data for block {blk}...', end = ' ', flush = True)
 
         # store the LUT for this block to the specified directory
@@ -393,7 +392,7 @@ class Plots(tk.Frame):
         except FileNotFoundError: cfg = {}
 
         create_cfg_vals(self.d, lut, blk, cfg,
-                                    (self.energy.counts, self.energy.bins))
+                (self.energy.counts, self.energy.bins))
 
         # save the config file
         with open(config_file, 'w') as f:
@@ -401,9 +400,7 @@ class Plots(tk.Frame):
 
         print('Done')
 
-        # increment the active block and update the UI
-        all_blks = self.return_block(all_blocks = True)
         try: 
-            self.set_block(all_blks.index(blk) + 1)
+            self.incr_block()
             self.plots_update()
         except KeyError: pass

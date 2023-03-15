@@ -48,18 +48,17 @@ def validate_singles():
     tk.messagebox.showinfo(message = '\n'.join(messages))
 
 class ProgressPopup(tk.Toplevel):
-    def __init__(self, fmt = 'Counts: {:,}'):
+    def __init__(self):
         super().__init__()
         self.status     = queue.Queue()
         self.data       = queue.Queue()
         self.terminate  = threading.Event()
-        self.fmt = fmt
 
         self.title('Progress')
         self.attributes('-type', 'dialog')
         self.protocol("WM_DELETE_WINDOW", self.terminate.set)
         self.progbar = Progressbar(self, length = 500)
-        self.counts_label = tk.Label(self, text = '')
+        self.counts_label = tk.Label(self, text = 'Initializing...')
         self.progbar.pack(fill = tk.X, expand = True, padx = 10, pady = 10)
         self.counts_label.pack(pady = 10)
 
@@ -68,11 +67,7 @@ class ProgressPopup(tk.Toplevel):
     def update(self, interval = 100):
         while not self.status.empty():
             perc, val = self.status.get()
-
-            self.counts_label.config(text =
-                self.fmt.format(*val) if isinstance(val, Iterable) else
-                self.fmt.format(val))
-
+            self.counts_label.config(text = 'Counts: {:,}'.format(val))
             self.progbar['value'] = perc
 
         if self.data.empty():
@@ -121,10 +116,6 @@ class CoincidenceSorter(ProgressPopup):
             callback(ValueError("No files specified"))
 
     def sort_coincidences(self):
-        """ Load coincicdence data by sorting the events in one or more singles files.
-        Files must be time-aligned from a single acquisition
-        """
-
         f = self.output_file or tempfile.NamedTemporaryFile()
         fname = self.output_file or f.name
         nev = 0 if self.output_file else max_events

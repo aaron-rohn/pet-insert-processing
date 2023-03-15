@@ -16,15 +16,6 @@ def fmt(num):
     suffix = ['', 'K', 'M'][int(n)]
     return f'{round(num / 10**(n*3), 1)}{suffix}'
 
-class WrappingLabel(tk.Label):
-    def reconfig(self, *args, **kwds):
-        width = self.winfo_width()
-        self.config(wraplength = width)
-
-    def __init__(self, master = None, **kwargs):
-        super().__init__(master, **kwargs)
-        self.bind('<Configure>', self.reconfig)
-
 class FileSelector(tk.Frame):
     def __init__(self, root, callback):
         super().__init__(root)
@@ -39,15 +30,14 @@ class FileSelector(tk.Frame):
         self.sort_coin_button = tk.Button(self, text = "Sort Coincidences",
                 command = lambda: self.loader(CoincidenceSorter))
 
-        self.validate_button = tk.Button(self, text = "Validate files", command = validate_singles)
+        self.validate_button = tk.Button(self, text = "Validate singles", command = validate_singles)
 
     def pack(self, **kwds):
         super().pack(**kwds)
-        args = {'side': tk.TOP, 'padx': 5, 'pady': 5, 'fill': tk.X, 'expand': True}
-        self.load_sgls_button.pack(**args)
-        self.load_coin_button.pack(**args)
-        self.sort_coin_button.pack(**args)
-        self.validate_button.pack(**args)
+        self.load_sgls_button.pack(**kwds)
+        self.load_coin_button.pack(**kwds)
+        self.sort_coin_button.pack(**kwds)
+        self.validate_button.pack(**kwds)
 
     def cfg_buttons(self, state):
         self.load_sgls_button.config(state = state) 
@@ -64,63 +54,42 @@ class FileSelector(tk.Frame):
 
         ldr(cb)
 
-class ScrolledListbox(tk.Frame):
-    def __init__(self, root, title = None):
+class BlockDisplay(tk.Frame):
+    def __init__(self, root, title):
         super().__init__(root)
-        self.active_var = tk.Variable()
-
         self.title_text = title
-        self.title = tk.Label(self, text = self.title_text) if self.title_text else None
-        self.active = tk.Listbox(self, listvariable = self.active_var, exportselection = False)
-        self.scroll = tk.Scrollbar(self, orient = tk.VERTICAL, command = self.active.yview)
-        self.active.config(yscrollcommand = self.scroll.set)
+        self.title = tk.Label(self, text = f'{self.title_text}:')
+
+        self.active = tk.StringVar(root, "")
+        self.menu = ttk.Combobox(root, textvariable = self.active)
 
     def pack(self, **kwds):
         super().pack(**kwds)
+        self.title.pack(**kwds)
+        self.menu.pack(**kwds)
 
-        if self.title is not None:
-            self.title.pack(side = tk.TOP, pady = 5)
+    def incr(self):
+        self.menu.current(newindex = self.menu.current() + 1)
 
-        self.active.pack(fill = tk.X, expand = True, side = tk.LEFT)
-        self.scroll.pack(fill = tk.Y, side = tk.RIGHT)
+    def set(self, *items):
+        self.title.config(text = f'{self.title_text} ({len(items)}):')
+        self.menu['values'] = items
 
-    def get_active(self, all_blocks = False):
-        all_items = self.active_var.get()
-        all_items = [int(i.split()[0]) for i in all_items]
-        if all_blocks: return all_items
-
-        sel = self.active.curselection()
-        return all_items[sel[0]] if len(sel) == 1 else None
-
-    def set_active(self, position = None):
-        self.active.select_clear(0, tk.END)
-        if position is not None:
-            self.active.selection_set(position)
-            self.active.activate(position)
-
-    def set(self, blks):
-        self.title.config(text = f'{self.title_text} ({len(blks)})')
-        return self.active_var.set(blks)
-
-    def bind(self, new_block_cb):
-        self.active.bind('<<ListboxSelect>>', new_block_cb)
+    def get(self):
+        return int(self.active.get().split()[0])
 
 class ProcessingUI(ttk.Notebook):
-    def collect_data(self, d = None):
+    def set_data(self, d = None):
         if isinstance(d, Exception):
             tk.messagebox.showerror(message = f'{d}')
         elif isinstance(d, dict):
             self.d = d
-            self.block.set([f'{a}  -  {fmt(b.shape[0])}' for a,b in d.items()])
+            self.block.set(*[f'{a}  -  {fmt(b.shape[0])}' for a,b in d.items()])
 
-    def return_data(self, block):
-        return self.d[block]
-    
-    def return_block(self, all_blocks = False):
-        return self.block.get_active(all_blocks)
-
-    def set_block(self, *args, **kwds):
-        return self.block.set_active(*args, **kwds)
+    def get_data(self):
+        b = self.block.get()
+        print(f'display block {b}')
+        return self.d[b]
 
     def __init__(self, root):
         super().__init__(root)
@@ -133,17 +102,20 @@ class ProcessingUI(ttk.Notebook):
         self.pack(fill = tk.BOTH, expand = True)
 
         lm_top_frame = tk.Frame(listmode_frame)
-        lm_top_frame.pack(side = tk.TOP, fill = tk.X, expand = False)
+        lm_top_frame.pack(side = tk.TOP)
 
-        self.file = FileSelector(lm_top_frame, self.collect_data)
-        self.block = ScrolledListbox(lm_top_frame, "Active Blocks")
+        self.file = FileSelector(lm_top_frame, self.set_data)
+        self.block = BlockDisplay(lm_top_frame, "Blocks")
 
-        self.file.pack(side = tk.LEFT, padx = 30, pady = 20, fill = tk.X, expand = False)
-        self.block.pack(side = tk.LEFT, fill = tk.X, expand = True, padx = 30, pady = 20)
+        self.file.pack(side = tk.LEFT, padx = 5, pady = 5, fill = tk.X, expand = False)
+        self.block.pack(side = tk.LEFT, padx = 5, pady = 5, fill = tk.X, expand = False)
 
-        self.plots = Plots(listmode_frame, self.return_data, self.return_block, self.set_block,
+        ttk.Separator(listmode_frame).pack(padx = 30, pady = 0, fill = tk.X)
+
+        self.plots = Plots(listmode_frame, self.get_data, self.block.get, self.block.incr,
                            padx = 5, pady = 5, fill = tk.BOTH, expand = True)
-        self.block.bind(self.plots.plots_update)
+
+        self.block.active.trace_add('write', self.plots.plots_update)
 
         self.sino.pack()
 

@@ -31,13 +31,13 @@ class FileSelector(tk.Frame):
         self.callback = callback 
 
         self.load_sgls_button = tk.Button(self, text = "Load Singles",
-                command = lambda: self.loader_wrapper(SinglesLoader))
+                command = lambda: self.loader(SinglesLoader))
 
         self.load_coin_button = tk.Button(self, text = "Load Coincidences",
-                command = lambda: self.loader_wrapper(CoincidenceLoader))
+                command = lambda: self.loader(CoincidenceLoader))
 
         self.sort_coin_button = tk.Button(self, text = "Sort Coincidences",
-                command = lambda: self.loader_wrapper(CoincidenceSorter))
+                command = lambda: self.loader(CoincidenceSorter))
 
         self.validate_button = tk.Button(self, text = "Validate files", command = validate_singles)
 
@@ -55,19 +55,14 @@ class FileSelector(tk.Frame):
         self.sort_coin_button.config(state = state) 
         self.validate_button.config(state = state)
 
-    def callback_wrapper(self, response, *args, **kwds):
-        self.cfg_buttons(tk.NORMAL)
-        if isinstance(response, Exception):
-            tk.messagebox.showerror(message = f'{response}')
-        else:
-            self.callback(response, *args, **kwds)
-
-    def loader_wrapper(self, loader):
+    def loader(self, ldr):
         self.cfg_buttons(tk.DISABLED)
-        try:
-            self.loader = loader(self.callback_wrapper)
-        except Exception as e:
-            self.callback_wrapper(e)
+
+        def cb(*args):
+            self.cfg_buttons(tk.NORMAL)
+            self.callback(*args)
+
+        ldr(cb)
 
 class ScrolledListbox(tk.Frame):
     def __init__(self, root, title = None):
@@ -111,9 +106,12 @@ class ScrolledListbox(tk.Frame):
         self.active.bind('<<ListboxSelect>>', new_block_cb)
 
 class ProcessingUI(ttk.Notebook):
-    def collect_data(self, d):
-        self.d = d
-        self.block.set([f'{a}  -  {fmt(b.shape[0])}' for a,b in d.items()])
+    def collect_data(self, d = None):
+        if isinstance(d, Exception):
+            tk.messagebox.showerror(message = f'{d}')
+        elif isinstance(d, dict):
+            self.d = d
+            self.block.set([f'{a}  -  {fmt(b.shape[0])}' for a,b in d.items()])
 
     def return_data(self, block):
         return self.d[block]

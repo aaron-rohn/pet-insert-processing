@@ -87,9 +87,7 @@ class ProcessingUI(ttk.Notebook):
             self.block.set(*[f'{a}  -  {fmt(b.shape[0])}' for a,b in d.items()])
 
     def get_data(self):
-        b = self.block.get()
-        print(f'display block {b}')
-        return self.d[b]
+        return self.d[self.block.get()]
 
     def __init__(self, root):
         super().__init__(root)

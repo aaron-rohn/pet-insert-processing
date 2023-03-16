@@ -1,4 +1,4 @@
-import os, threading, queue, tempfile, datetime, ctypes
+import os, threading, queue, tempfile
 import concurrent.futures
 import tkinter as tk
 import numpy as np
@@ -90,8 +90,12 @@ class SinglesLoader(ProgressPopup):
             callback(ValueError("No file specified"))
 
     def load_singles(self):
-        d = petmr.singles(self.input_file, max_events,
-                self.terminate, self.status)
+        try:
+            d = petmr.singles(self.input_file, max_events,
+                    self.terminate, self.status)
+        except Exception as e:
+            self.data.put(e)
+            return
 
         unique_blocks = np.unique(d[:,0])
         with concurrent.futures.ThreadPoolExecutor(os.cpu_count()) as ex:
@@ -120,36 +124,31 @@ class CoincidenceSorter(ProgressPopup):
         fname = self.output_file or f.name
         nev = 0 if self.output_file else max_events
 
-        petmr.coincidences(self.input_files, fname, nev,
-                self.status, self.terminate)
-        self.data.put(f)
+        try:
+            petmr.coincidences(self.input_files, fname, nev,
+                    self.status, self.terminate)
+            self.data.put(f)
+        except Exception as e:
+            self.data.put(e)
 
 class CoincidenceLoader(tk.Toplevel):
+    def __init__(self, callback, f = None):
+        if isinstance(f, Exception):
+            callback(f)
+            return
 
-    @staticmethod
-    def map_file(f):
-        if isinstance(f, str):
-            sz = os.path.getsize(f)
-        else:
-            # tempfile.NamedTemporaryFile
-            sz = os.fstat(f.fileno()).st_size
-
-        nrow = int((sz/2) // coincidence_cols)
-        return np.memmap(f, np.uint16, mode = 'r',
-                shape = (nrow, coincidence_cols))
-
-    def __init__(self, callback, fname = None):
-        if fname is None:
-            fname = askopenfilename(
+        if f is None:
+            f = askopenfilename(
                     title = "Load coincidence listmode data",
                     filetypes = coincidence_filetypes)
 
-        if not fname:
+        if not f:
             callback(ValueError("No file specified"))
             return
 
+        self.f = f
         self.callback = callback 
-        self.data = self.map_file(fname)
+        self.data = np.memmap(f, np.uint16).reshape(-1, coincidence_cols)
 
         # create the UI window
 
@@ -236,50 +235,40 @@ class CoincidenceLoader(tk.Toplevel):
             self.save_button.config(state = tk.NORMAL)
             self.callback(self.block_files)
 
-    def load(self):
+    def subset(self, nev = max_events):
         start_end = np.sort([l.get_xdata()[0] for l in self.lines])
-        print('Load from {}s to {}s'.format(*np.round(start_end / 10)))
+        times = np.round(start_end / 10)
 
         start_end = np.searchsorted(self.times, start_end)
         start, end = self.idx[start_end]
-        end = min(end, int(start + max_events))
-        subset = self.data[start:end]
-        print(f'Load {round(subset.shape[0] / 1e6)}M events')
 
-        # cast data to uint8 without changing values
-        data8_p = self.data.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8))
-        data8 = np.ctypeslib.as_array(data8_p, (self.data.shape[0], coincidence_cols*2))
+        if nev:
+            end = min(end, int(start + nev))
+
+        return start, end, *times
+
+    def load(self):
+        start, end, t0, t1 = self.subset()
+        subset = self.data[start:end,:]
+        print(f'Load {t0}s to {t1}s: {round(subset.shape[0] / 1e6)}M events')
 
         # first two columns are block numbers
-        blka, blkb = data8[start:end, 0], data8[start:end, 1]
-
-        # Sample events in the middle of the acquisition to find all blocks present
-        # This is faster than looking at the whole data set,
-        # and more accurate than just looking at the start or end
-        middle, n = int(blka.shape[0] / 2), 10000
-
-        unique_blocks = np.union1d(
-                np.unique(blka[middle-n:middle+n]),
-                np.unique(blkb[middle-n:middle+n]))
-
-        if len(unique_blocks) != petmr.nblocks:
-            print(f'Data appears to contain only {len(unique_blocks)} blocks')
+        data8 = np.memmap(self.f, np.uint8).reshape(-1,coincidence_cols*2)
+        blka, blkb = data8[start:end, 1], data8[start:end, 0]
 
         with concurrent.futures.ThreadPoolExecutor(os.cpu_count()) as ex:
             fut = {ub: ex.submit(load_block_coincidence_data,
-                subset, blka, blkb, ub) for ub in unique_blocks}
+                subset, blka, blkb, ub) for ub in range(petmr.nblocks)}
             self.block_files = {ub: f.result() for ub, f in fut.items()}
 
     def save(self):
-        start_end = np.sort([l.get_xdata()[0] for l in self.lines])
-        start_end = np.searchsorted(self.times, start_end)
-        start, end = self.idx[start_end]
-        data_subset = self.data[start:end,:]
-        nev = data_subset.shape[0]
+        start, end, t0, t1 = self.subset(None)
+        subset = self.data[start:end,:]
+        nev = subset.shape[0]
 
         idx = int(np.clip(np.log10(nev) / 3, 1, 4))
         char = ['K', 'M', 'B', 'T'][idx-1]
-        print(f'Save {round(nev/(1e3 ** idx), 1)}{char} events from {round(start/10)}s to {round(end/10)}s')
+        print(f'Save {round(nev/(1e3 ** idx), 1)}{char} events from {t0}s to {t1}s')
 
         newfile = asksaveasfilename(title = "New coincidence file",
                                     filetypes = coincidence_filetypes)
@@ -287,6 +276,6 @@ class CoincidenceLoader(tk.Toplevel):
         if newfile is None: return
 
         arr = np.memmap(newfile, np.uint16,
-                mode = 'w+', shape = data_subset.shape)
-        arr[:,:] = data_subset[:,:]
+                mode = 'w+', shape = subset.shape)
+        arr[:,:] = subset[:,:]
 

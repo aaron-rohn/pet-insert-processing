@@ -362,7 +362,6 @@ class Plots(tk.Frame):
         idx = np.nonzero((dth[0] < doi) & (doi < dth[1]))[0]
         self.energy.update(self.d[idx,0], retain)
 
-
     def store_lut_cb(self):
         if (output_dir := check_config_dir()) is None or self.flood.f is None:
             return
@@ -399,8 +398,4 @@ class Plots(tk.Frame):
             json.dump(cfg, f)
 
         print('Done')
-
-        try: 
-            self.incr_block()
-            self.plots_update()
-        except KeyError: pass
+        self.incr_block()

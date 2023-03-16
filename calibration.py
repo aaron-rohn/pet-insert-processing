@@ -59,9 +59,8 @@ def load_block_coincidence_data(data, blka, blkb, blk):
     rowb = data[idxb,:]
 
     tf = tempfile.NamedTemporaryFile()
-
-    shape = (len(idxa) + len(idxb), 4)
-    arr = np.memmap(tf.name, np.uint16, mode = 'w+', shape = shape)
+    arr = np.memmap(tf.name, np.uint16, mode = 'w+',
+            shape = (len(idxa) + len(idxb), 4))
 
     # Energy sum
     arr[:,0] = np.concatenate(

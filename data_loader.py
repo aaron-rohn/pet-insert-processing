@@ -48,11 +48,14 @@ def validate_singles():
     tk.messagebox.showinfo(message = '\n'.join(messages))
 
 class ProgressPopup(tk.Toplevel):
-    def __init__(self):
+    def __init__(self, callback = None, fmt = 'Counts: {:,}'):
         super().__init__()
         self.status     = queue.Queue()
         self.data       = queue.Queue()
         self.terminate  = threading.Event()
+
+        self.callback = callback
+        self.fmt = fmt
 
         self.title('Progress')
         self.attributes('-type', 'dialog')
@@ -67,14 +70,15 @@ class ProgressPopup(tk.Toplevel):
     def update(self, interval = 100):
         while not self.status.empty():
             perc, val = self.status.get()
-            self.counts_label.config(text = 'Counts: {:,}'.format(val))
+            self.counts_label.config(text = self.fmt.format(val))
             self.progbar['value'] = perc
 
         if self.data.empty():
             self.after(interval, self.update)
         else:
             self.destroy()
-            self.callback(self.data.get())
+            if self.callback is not None:
+                self.callback(self.data.get())
 
 class SinglesLoader(ProgressPopup):
     def __init__(self, callback):
@@ -84,7 +88,7 @@ class SinglesLoader(ProgressPopup):
                 filetypes = singles_filetypes)
 
         if self.input_file:
-            super().__init__()
+            super().__init__(self.callback)
             threading.Thread(target = self.load_singles).start()
         else:
             callback(ValueError("No file specified"))
@@ -98,7 +102,7 @@ class SinglesLoader(ProgressPopup):
             return
 
         unique_blocks = np.unique(d[:,0])
-        with concurrent.futures.ThreadPoolExecutor(os.cpu_count()) as ex:
+        with concurrent.futures.ThreadPoolExecutor(8) as ex:
             fut = {ub: ex.submit(load_block_singles_data, d, ub) for ub in unique_blocks}
             self.data.put({ub: f.result() for ub, f in fut.items()})
 
@@ -114,7 +118,7 @@ class CoincidenceSorter(ProgressPopup):
                     title = "Output file, or none",
                     filetypes = coincidence_filetypes)
 
-            super().__init__()
+            super().__init__(self.callback)
             threading.Thread(target = self.sort_coincidences).start()
         else:
             callback(ValueError("No files specified"))
@@ -148,7 +152,12 @@ class CoincidenceLoader(tk.Toplevel):
 
         self.f = f
         self.callback = callback 
-        self.data = np.memmap(f, np.uint16).reshape(-1, coincidence_cols)
+
+        try:
+            self.data = np.memmap(f, np.uint16).reshape(-1, coincidence_cols)
+        except Exception as e:
+            callback(e)
+            return
 
         # create the UI window
 
@@ -174,6 +183,7 @@ class CoincidenceLoader(tk.Toplevel):
 
         self.canvas.mpl_connect('button_press_event', self.drag_start)
         self.canvas.mpl_connect('button_release_event', self.drag_stop)
+        self.pp = None
         self.connection = None
         self.active_line = None
         self.block_files = {}
@@ -221,6 +231,8 @@ class CoincidenceLoader(tk.Toplevel):
     """ Methods for loading or saving a subset of the coincidence data """
 
     def load_start(self, target):
+        self.pp = ProgressPopup(fmt = 'Block: {}')
+
         self.bg = threading.Thread(target = target)
         self.load_button.config(state = tk.DISABLED)
         self.save_button.config(state = tk.DISABLED)
@@ -234,6 +246,8 @@ class CoincidenceLoader(tk.Toplevel):
             self.load_button.config(state = tk.NORMAL)
             self.save_button.config(state = tk.NORMAL)
             self.callback(self.block_files)
+            self.pp.data.put(None)
+            self.pp = None
 
     def subset(self, nev = max_events):
         start_end = np.sort([l.get_xdata()[0] for l in self.lines])
@@ -256,10 +270,20 @@ class CoincidenceLoader(tk.Toplevel):
         data8 = np.memmap(self.f, np.uint8).reshape(-1,coincidence_cols*2)
         blka, blkb = data8[start:end, 1], data8[start:end, 0]
 
+        lk = threading.Lock()
+        n = 0
+
+        def launch(ub):
+            nonlocal n
+            d = load_block_coincidence_data(subset, blka, blkb, ub)
+            with lk:
+                self.pp.status.put(((n / petmr.nblocks * 100), n))
+                n = n + 1
+            return d
+
         with concurrent.futures.ThreadPoolExecutor(os.cpu_count()) as ex:
-            fut = {ub: ex.submit(load_block_coincidence_data,
-                subset, blka, blkb, ub) for ub in range(petmr.nblocks)}
-            self.block_files = {ub: f.result() for ub, f in fut.items()}
+            futs = {ub: ex.submit(launch, ub) for ub in range(petmr.nblocks)}
+            self.block_files = {ub: f.result() for ub, f in futs.items()}
 
     def save(self):
         start, end, t0, t1 = self.subset(None)

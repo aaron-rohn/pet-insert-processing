@@ -28,8 +28,13 @@ class SinogramLoaderPopup:
             self.progbar.after(interval, self.check)
         else:
             self.popup.destroy()
-            if self.callback is not None:
+            if isinstance(self.result, Exception):
+                tk.messagebox.showerror(message = f'{self.result}')
+            elif self.callback is not None:
                 self.callback(self.result)
 
     def wrapper(self, *args):
-        self.result = self.target(*args, self.terminate, self.status)
+        try:
+            self.result = self.target(*args, self.terminate, self.status)
+        except Exception as e:
+            self.result = e

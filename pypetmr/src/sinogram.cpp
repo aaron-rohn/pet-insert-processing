@@ -137,7 +137,7 @@ PyObject *Michelogram::to_py_data()
     return arr;
 }
 
-std::streampos Michelogram::sort_span(
+std::streampos Michelogram::add_to_sinogram(
         std::string fname,
         std::streampos start,
         std::streampos end,
@@ -163,7 +163,7 @@ std::streampos Michelogram::sort_span(
 }
 
 
-FILE *Michelogram::encode_span (
+FILE *Michelogram::save_listmode (
         std::string fname, 
         std::streampos start,
         std::streampos end

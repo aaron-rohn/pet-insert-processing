@@ -94,8 +94,8 @@ class Michelogram
     void write_to(std::string);
     void read_from(std::string);
     ListmodeData event_to_coords(const CoincidenceData&) const;
-    std::streampos sort_span(std::string, std::streampos, std::streampos, bool, bool);
-    FILE *encode_span (std::string, std::streampos, std::streampos) const;
+    std::streampos add_to_sinogram(std::string, std::streampos, std::streampos, bool, bool);
+    FILE *save_listmode (std::string, std::streampos, std::streampos) const;
 
     PyObject *to_py_data();
     Michelogram(PyObject*);

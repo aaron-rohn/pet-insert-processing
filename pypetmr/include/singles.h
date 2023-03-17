@@ -2,6 +2,7 @@
 #define SINGLES_H
 
 #include <cmath>
+#include <ios>
 #include <iostream>
 #include <cstring>
 #include <vector>
@@ -212,6 +213,10 @@ class Reader: std::streambuf, public std::istream
         std::ifstream base(fname, std::ios::binary);
         base.seekg(start);
         base.read(buf.data(), buf.size());
+
+        if (base.gcount() != (std::streamsize)buf.size())
+            buf.resize(base.gcount());
+
         setg(buf.data(), buf.data(), buf.data() + buf.size());
     }
 };

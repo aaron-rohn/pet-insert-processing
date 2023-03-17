@@ -9,10 +9,10 @@
 
 static PyObject *petmr_singles(PyObject*, PyObject*);
 static PyObject *petmr_coincidences(PyObject*, PyObject*);
-static PyObject *petmr_load_listmode(PyObject*, PyObject*);
 static PyObject *petmr_save_listmode(PyObject*, PyObject*);
-static PyObject *petmr_load_sinogram(PyObject*, PyObject*);
+static PyObject *petmr_load_listmode(PyObject*, PyObject*);
 static PyObject *petmr_save_sinogram(PyObject*, PyObject*);
+static PyObject *petmr_load_sinogram(PyObject*, PyObject*);
 static PyObject *petmr_rebin_sinogram(PyObject*, PyObject*);
 static PyObject *petmr_validate_singles_file(PyObject*, PyObject*);
 
@@ -23,17 +23,17 @@ static PyMethodDef petmrMethods[] = {
     {"coincidences", petmr_coincidences,
         METH_VARARGS, "read PET/MRI insert singles data, and sort coincidences"},
 
-    {"load_listmode", petmr_load_listmode,
-        METH_VARARGS, "Sort packed listmode into a sinogram"},
-
     {"save_listmode", petmr_save_listmode,
         METH_VARARGS, "Convert coincidence data into packed listmode"},
 
-    {"load_sinogram", petmr_load_sinogram,
-        METH_VARARGS, "Load a sinogram from disk"},
+    {"load_listmode", petmr_load_listmode,
+        METH_VARARGS, "Sort packed listmode into a sinogram"},
 
     {"save_sinogram", petmr_save_sinogram,
         METH_VARARGS, "Save a sinogram to disk"},
+
+    {"load_sinogram", petmr_load_sinogram,
+        METH_VARARGS, "Load a sinogram from disk"},
 
     {"rebin_sinogram", petmr_rebin_sinogram,
         METH_VARARGS, "Simple SSRB for a Michelogram"},
@@ -360,63 +360,6 @@ petmr_coincidences(PyObject *self, PyObject *args)
 }
 
 static PyObject*
-petmr_load_listmode(PyObject *self, PyObject *args)
-{
-    const char *fname;
-    int prompts = 1, delays = 0, max_doi = Geometry::ndoi;
-    PyObject *terminate = NULL, *status_queue = NULL;
-
-    if (!PyArg_ParseTuple(args, "sppi|OO",
-                &fname, &prompts, &delays, &max_doi,
-                &terminate, &status_queue)) return NULL;
-
-    PyThreadState *thr = PyEval_SaveThread();
-
-    Michelogram m(Geometry::dim_theta_full, max_doi);
-
-    std::streampos coincidence_file_size = fsize(fname);
-    uint64_t events_per_thread = 1'000'000;
-    std::streampos incr = sizeof(ListmodeData) * events_per_thread;
-    bool stop = false;
-
-    size_t nworkers = std::thread::hardware_concurrency() - 1;
-    std::streampos start = 0;
-    std::deque<std::future<std::streampos>> workers;
-
-    // spawn workers that add events to the michelogram
-    while (!stop || workers.size() > 0)
-    {
-        if (!stop)
-        {
-            // create a worker for a specific span of the file
-            auto end = std::min(start + incr, coincidence_file_size);
-            stop = (end == coincidence_file_size);
-
-            workers.push_back(std::async(std::launch::async,
-                &Michelogram::sort_span, &m,
-                fname, start, end, prompts, delays));
-
-            start = end;
-        }
-
-        if (stop || workers.size() >= nworkers)
-        {
-            auto pos = workers.front().get();
-            workers.pop_front();
-            double perc = (double)pos / coincidence_file_size * 100;
-
-            // update the python ui
-            PyEval_RestoreThread(thr);
-            stop = update_ui(terminate, status_queue, perc) || stop;
-            thr = PyEval_SaveThread();
-        }
-    }
-
-    PyEval_RestoreThread(thr);
-    return m.to_py_data();
-}
-
-static PyObject*
 petmr_save_listmode(PyObject *self, PyObject *args)
 {
     const char *lmfname, *fname;
@@ -442,17 +385,23 @@ petmr_save_listmode(PyObject *self, PyObject *args)
                 &lut_array, &ppeak_array, &doi_array,
                 &terminate, &status_queue)) return NULL;
 
+    std::ofstream lf (lmfname, std::ios::binary);
+    std::streampos coincidence_file_size = fsize(fname);
+
+    if (coincidence_file_size < 0 || !lf.good())
+    {
+        PyErr_SetFromErrno(PyExc_IOError);
+        return NULL;
+    }
+
     PyThreadState *thr = PyEval_SaveThread();
 
     Michelogram m(Geometry::dim_theta_full, Geometry::ndoi, energy_window,
                   lut_array, ppeak_array, doi_array);
 
-    std::ofstream lf (lmfname, std::ios::binary);
-
+    std::streamoff incr = sizeof(CoincidenceData)*1e6;
     size_t nworkers = std::thread::hardware_concurrency() - 1;
     bool stop = false;
-    std::streampos coincidence_file_size = fsize(fname);
-    std::streamoff incr = sizeof(CoincidenceData)*1e6;
 
     std::vector<char> buf(1024*4);
     std::deque<std::future<FILE*>> workers;
@@ -467,7 +416,7 @@ petmr_save_listmode(PyObject *self, PyObject *args)
             stop = (end == coincidence_file_size);
 
             workers.push_back(std::async(std::launch::async,
-                            &Michelogram::encode_span, &m, fname, start, end));
+                            &Michelogram::save_listmode, &m, fname, start, end));
             start = end;
         }
 
@@ -501,15 +450,64 @@ petmr_save_listmode(PyObject *self, PyObject *args)
 }
 
 static PyObject*
-petmr_load_sinogram(PyObject* self, PyObject* args)
+petmr_load_listmode(PyObject *self, PyObject *args)
 {
-    const char *sinogram_file;
-    if (!PyArg_ParseTuple(args, "s", &sinogram_file))
+    const char *fname;
+    int prompts, delays, max_doi;
+    PyObject *terminate = NULL, *status_queue = NULL;
+
+    if (!PyArg_ParseTuple(args, "sppi|OO",
+                &fname, &prompts, &delays, &max_doi,
+                &terminate, &status_queue)) return NULL;
+
+    std::streampos lm_file_size = fsize(fname);
+    if (lm_file_size < 0)
+    {
+        PyErr_SetFromErrno(PyExc_IOError);
         return NULL;
+    }
 
-    Michelogram m(Geometry::dim_theta_half);
+    PyThreadState *thr = PyEval_SaveThread();
 
-    m.read_from(sinogram_file);
+    Michelogram m(Geometry::dim_theta_full, max_doi);
+    uint64_t events_per_thread = 1'000'000;
+    std::streampos incr = sizeof(ListmodeData) * events_per_thread;
+    bool stop = false;
+
+    size_t nworkers = std::thread::hardware_concurrency() - 1;
+    std::streampos start = 0;
+    std::deque<std::future<std::streampos>> workers;
+
+    // spawn workers that add events to the michelogram
+    while (!stop || workers.size() > 0)
+    {
+        if (!stop)
+        {
+            // create a worker for a specific span of the file
+            auto end = std::min(start + incr, lm_file_size);
+            stop = (end == lm_file_size);
+
+            workers.push_back(std::async(std::launch::async,
+                &Michelogram::add_to_sinogram, &m,
+                fname, start, end, prompts, delays));
+
+            start = end;
+        }
+
+        if (stop || workers.size() >= nworkers)
+        {
+            auto pos = workers.front().get();
+            workers.pop_front();
+            double perc = (double)pos / lm_file_size * 100;
+
+            // update the python ui
+            PyEval_RestoreThread(thr);
+            stop = update_ui(terminate, status_queue, perc) || stop;
+            thr = PyEval_SaveThread();
+        }
+    }
+
+    PyEval_RestoreThread(thr);
     return m.to_py_data();
 }
 
@@ -524,6 +522,19 @@ petmr_save_sinogram(PyObject* self, PyObject* args)
     Michelogram m(arr);
     m.write_to(sinogram_file);
     Py_RETURN_NONE;
+}
+
+static PyObject*
+petmr_load_sinogram(PyObject* self, PyObject* args)
+{
+    const char *sinogram_file;
+    if (!PyArg_ParseTuple(args, "s", &sinogram_file))
+        return NULL;
+
+    Michelogram m(Geometry::dim_theta_half);
+
+    m.read_from(sinogram_file);
+    return m.to_py_data();
 }
 
 static PyObject*

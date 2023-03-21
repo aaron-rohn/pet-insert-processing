@@ -72,13 +72,13 @@ def get_doi(doi):
 
 def summarize_crystal(grp, name = None):
     if name is None: name = grp.name
-    e = grp['es']
+    e = grp['E']
     peak, fwhm, *_ = fit_photopeak(e)
     fwhm = abs(fwhm)
 
-    g = grp[((peak-fwhm/2) < e) & (e < (peak+fwhm/2))]
+    g = grp[((peak-fwhm) < e) & (e < (peak+fwhm))]
     try:
-        thresholds = get_doi(g['doi'])
+        thresholds = get_doi(g['DOI'])
     except IndexError:
         print(f'Error measuring DOI thresholds: {peak}, {fwhm}')
         thresholds = np.array([2200,2000,1800])
@@ -89,17 +89,16 @@ def summarize_crystal(grp, name = None):
 
 def calculate_lut_statistics(lut, data):
     lut_df = pd.DataFrame({
-        'x'  : np.tile(np.arange(lut.shape[1]), lut.shape[0]),
-        'y'  : np.repeat(np.arange(lut.shape[0]), lut.shape[1]),
+        'X'  : np.tile(np.arange(lut.shape[1]), lut.shape[0]),
+        'Y'  : np.repeat(np.arange(lut.shape[0]), lut.shape[1]),
         'lut': lut.flat})
 
-    lm_df = pd.DataFrame(data, columns = ['es', 'doi', 'x', 'y'])
-    lm_df = lm_df.merge(lut_df, on = ['x', 'y'])
-    lm_df = lm_df.drop(columns = ['x', 'y'])
+    lm_df = pd.DataFrame(data)
+    lm_df = lm_df.merge(lut_df, on = ['X', 'Y'])
+    lm_df = lm_df.drop(columns = ['X', 'Y'])
     lm_df = lm_df.groupby('lut')
 
     with concurrent.futures.ThreadPoolExecutor(os.cpu_count()) as ex:
         fut = [ex.submit(summarize_crystal, g, n) for n, g in lm_df]
         ret = [f.result() for f in fut]
     return pd.concat(ret, ignore_index = True)
-    #return lm_df.apply(summarize_crystal)

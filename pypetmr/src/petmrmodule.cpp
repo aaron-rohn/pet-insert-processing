@@ -1,3 +1,4 @@
+#include <ios>
 #define PY_SSIZE_T_CLEAN
 #define PY_ARRAY_UNIQUE_SYMBOL petmr_ARRAY_API
 
@@ -365,7 +366,9 @@ petmr_save_listmode(PyObject *self, PyObject *args)
     const char *lmfname, *fname;
     double energy_window;
     PyArrayObject *lut_array, *ppeak_array, *doi_array;
+
     PyObject *terminate = NULL, *status_queue = NULL;
+    long long startpos = -1, stoppos = -1;
 
     /*
      * Arguments are:
@@ -376,17 +379,29 @@ petmr_save_listmode(PyObject *self, PyObject *args)
      * 5. Numpy array with photopeaks
      * 6. Numpy array with DOI
      *
-     * 7. threading.Event to indicate termination
-     * 8. queue.Queue for progress bar
+     * threading.Event to indicate termination
+     * queue.Queue for progress bar
+     * starting byte position in input file or -1
+     * ending byte position in input file or -1
      */
 
-    if (!PyArg_ParseTuple(args, "ssdOOO|OO",
+    if (!PyArg_ParseTuple(args, "ssdOOO|LLOO",
                 &lmfname, &fname, &energy_window,
                 &lut_array, &ppeak_array, &doi_array,
-                &terminate, &status_queue)) return NULL;
+                &startpos, &stoppos, &terminate, &status_queue)) return NULL;
 
-    std::ofstream lf (lmfname, std::ios::binary);
-    std::streampos coincidence_file_size = fsize(fname);
+    auto flags = std::ios::binary;
+    std::streampos start = 0;
+    if (startpos > 0)
+    {
+        start = startpos;
+        flags |= std::ios::ate;
+    }
+
+    std::ofstream lf (lmfname, flags);
+
+    std::streampos coincidence_file_size =
+        stoppos == -1 ? fsize(fname) : (std::streampos)stoppos;
 
     if (coincidence_file_size < 0 || !lf.good())
     {
@@ -405,7 +420,7 @@ petmr_save_listmode(PyObject *self, PyObject *args)
 
     std::vector<char> buf(1024*4);
     std::deque<std::future<FILE*>> workers;
-    std::streampos start = 0, processed = 0;
+    std::streampos processed = 0;
 
     // spawn workers to convert coincidence data to listmode data
     while (!stop || workers.size() > 0)
@@ -438,6 +453,7 @@ petmr_save_listmode(PyObject *self, PyObject *args)
             std::fclose(f);
 
             // update the python ui
+            // TODO gives the wrong value if startpos/stoppos is specified
             double perc = (double)processed / coincidence_file_size * 100;
             PyEval_RestoreThread(thr);
             stop = update_ui(terminate, status_queue, perc) || stop;

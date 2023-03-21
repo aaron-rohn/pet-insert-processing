@@ -13,6 +13,19 @@ import crystal
 from calibration import create_cfg_vals
 from filedialog import check_config_dir
 
+def try_open(fname: str) -> dict:
+    try:
+        with open(fname, 'r') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.decoder.JSONDecodeError): return {}
+
+def lut_edges(lut: np.array) -> np.ma.array:
+    yd = np.diff(lut, axis = 0, prepend = lut.max()) != 0
+    xd = np.diff(lut, axis = 1, prepend = lut.max()) != 0
+    overlay = np.logical_or(xd, yd)
+    overlay = ndimage.binary_dilation(overlay, np.ones((3,3)))
+    return np.ma.array(overlay, mask = (overlay == 0))
+
 class MPLFigure(FigureCanvasTkAgg):
     def __init__(self, root, show_axes = True, **args):
         margins = (0.1, 0.1, 0.95, 0.95) if show_axes else (0,0,1,1)
@@ -309,7 +322,7 @@ class Plots(tk.Frame):
         self.warp = None
         self.d = self.get_data()
 
-        self.energy.update(self.d[:,0], retain = False)
+        self.energy.update(self.d['E'], retain = False)
         self.doi_cb(retain = False)
         self.flood_cb()
 
@@ -317,13 +330,7 @@ class Plots(tk.Frame):
         blk = self.get_block()
         lut_fname = os.path.join(cfg_dir, 'lut', f'block{blk}.lut')
         lut = np.fromfile(lut_fname, np.intc).reshape((512,512))
-
-        yd = np.diff(lut, axis = 0, prepend = lut.max()) != 0
-        xd = np.diff(lut, axis = 1, prepend = lut.max()) != 0
-
-        overlay = np.logical_or(xd, yd)
-        overlay = ndimage.binary_dilation(overlay, np.ones((3,3)))
-        return np.ma.array(overlay, mask = (overlay == 0))
+        return lut_edges(lut)
 
     def flood_cb(self):
         """ Update the flood according to energy and DOI thresholds """
@@ -336,13 +343,13 @@ class Plots(tk.Frame):
         eth = self.energy.thresholds()
         dth = self.doi.thresholds()
 
-        es = self.d[:,0]
-        doi = self.d[:,1]
+        es = self.d['E']
+        doi = self.d['DOI']
         idx = np.nonzero(
                 (eth[0] < es) & (es < eth[1]) &
                 (dth[0] < doi) & (doi < dth[1]))[0]
 
-        x, y = self.d[idx,2], self.d[idx,3]
+        x, y = self.d['X'][idx], self.d['Y'][idx]
         self.flood.update(x, y,
                           warp = self.warp, overlay = lut,
                           draw_voronoi = self.show_voronoi.get(),
@@ -351,16 +358,16 @@ class Plots(tk.Frame):
     def doi_cb(self, retain = True):
         """ Update the DOI according to the energy thresholds """
         eth = self.energy.thresholds()
-        es = self.d[:,0]
+        es = self.d['E']
         idx = np.nonzero((eth[0] < es) & (es < eth[1]))[0]
-        self.doi.update(self.d[idx,1], retain)
+        self.doi.update(self.d['DOI'][idx], retain)
 
     def energy_cb(self, retain = True):
         """ Update the energy according to the DOI thresholds """
         dth = self.doi.thresholds()
-        doi = self.d[:,1]
+        doi = self.d['DOI']
         idx = np.nonzero((dth[0] < doi) & (doi < dth[1]))[0]
-        self.energy.update(self.d[idx,0], retain)
+        self.energy.update(self.d['E'][idx], retain)
 
     def store_lut_cb(self):
         if (output_dir := check_config_dir()) is None or self.flood.f is None:
@@ -369,31 +376,28 @@ class Plots(tk.Frame):
         blk = self.get_block()
         print(f'Store calibration data for block {blk}...', end = ' ', flush = True)
 
-        # store the LUT for this block to the specified directory
-        lut = Flood.nearest_peak((self.flood.img_size,)*2,
-                self.flood.pts.reshape(-1,2))
+        # calculate the LUT based on the peak positions
+        peak_pos = self.flood.pts.reshape(-1,2)
+        lut = Flood.nearest_peak((self.flood.img_size,)*2, peak_pos)
 
+        # invert any perspective transform, if necessary
         if self.warp is not None:
             lut = Flood.warp_lut(lut, self.warp)
             self.warp = None
 
+        # save the LUT and flood images
         lut_fname = os.path.join(output_dir, 'lut', f'block{blk}.lut')
         lut.astype(np.intc).tofile(lut_fname)
         flood_fname = os.path.join(output_dir, 'flood', f'block{blk}.raw')
         self.flood.img.astype(np.intc).tofile(flood_fname)
 
-        # update json file with photopeak position for this block
+        # create energy and DOI calibrations
         config_file = os.path.join(output_dir, 'config.json')
-
-        try:
-            with open(config_file, 'r') as f:
-                cfg = json.load(f)
-        except FileNotFoundError: cfg = {}
+        cfg = try_open(config_file)
 
         create_cfg_vals(self.d, lut, blk, cfg,
                 (self.energy.counts, self.energy.bins))
 
-        # save the config file
         with open(config_file, 'w') as f:
             json.dump(cfg, f)
 

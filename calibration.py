@@ -9,19 +9,27 @@ import petmr, crystal, pyelastix
 
 n_doi_bins = 4096
 max_events = int(1e9)
-coincidence_cols = 11
+
+CoincidenceDType = np.dtype([
+    ('blkb', np.uint8), ('blka', np.uint8),
+    ('prompt', np.uint8), ('tdiff', np.int8),
+    ('eaF', np.uint16), ('eaR', np.uint16),
+    ('ebF', np.uint16), ('ebR', np.uint16),
+    ('xa', np.uint16), ('ya', np.uint16),
+    ('xb', np.uint16), ('yb', np.uint16),
+    ('abstime', np.uint16)])
+
+VisualizationDType = np.dtype([
+    ('E', np.uint16), ('DOI', np.uint16),
+    ('X', np.uint16), ('Y', np.uint16)])
 
 class CoincidenceFileHandle:
     def __init__(self, data, nperiods = 10, naverage = 10):
-        if isinstance(data, str):
-            nev = int((os.path.getsize(data)/2) // coincidence_cols)
-            self.data = np.memmap(data, np.uint16, shape = (nev, coincidence_cols))
-        else:
-            nev = data.shape[0]
-            self.data = data
+        self.data = np.memmap(data, CoincidenceDType)
+        nev = self.data.shape[0]
 
         idx = np.linspace(0, nev-1, nperiods*naverage + 1, dtype = np.ulonglong)
-        times = self.data[idx,10].astype(float)
+        times = self.data['abstime'][idx].astype(float)
 
         rollover = np.diff(times)
         rollover = np.where(rollover < 0)[0]
@@ -33,69 +41,77 @@ class CoincidenceFileHandle:
         self.event_rate = ev_rate.reshape(-1,naverage).mean(1)
         self.times = times[:-1].reshape(-1,naverage).mean(1)
         self.idx = idx[:nperiods*naverage:naverage]
+        self.fpos = self.idx * CoincidenceDType.itemsize
 
         duration = (times[-1] - times[0]) / 10
         print(f'{nev} events over {duration}: {nev / duration} cps')
 
     def __iter__(self):
-        yield from zip(self.event_rate, self.times, self.idx)
+        self.i = 0
+        return self
+
+    def __next__(self):
+        if self.i == self.idx.size:
+            raise StopIteration
+        
+        i = self.i
+
+        s, si = self.fpos[i], self.idx[i]
+        e, ei = (-1,-1) if i == self.idx.size-1 else (self.fpos[i+1], self.idx[i+1])
+        d = self.data[si:ei]
+
+        self.i += 1
+        return s, e, d
 
     def events_per_period(self, max_events = None):
         n = int(np.diff(self.idx).mean())
+        return n if max_events is None else min(n, int(max_events))
 
-        if max_events is not None: 
-            n = min(n, max_events)
+def load_block_coincidence_data(data, blk):
+    idxa = np.nonzero(data['blka'] == blk)[0]
+    idxb = np.nonzero(data['blkb'] == blk)[0]
 
-        return n
-
-    def file_position(self):
-        return self.idx * 2 * coincidence_cols
-
-def load_block_coincidence_data(data, blka, blkb, blk):
-    idxa = np.nonzero(blka == blk)[0]
-    idxb = np.nonzero(blkb == blk)[0]
-
-    rowa = data[idxa,:]
-    rowb = data[idxb,:]
+    rowa = data[idxa]
+    rowb = data[idxb]
 
     tf = tempfile.NamedTemporaryFile()
-    arr = np.memmap(tf.name, np.uint16, mode = 'w+',
-            shape = (len(idxa) + len(idxb), 4))
+    arr = np.memmap(tf.name, VisualizationDType, mode = 'w+',
+            shape = (len(idxa) + len(idxb),))
 
-    # Energy sum
-    arr[:,0] = np.concatenate(
-            [rowa[:,2] + rowa[:,3], rowb[:,4] + rowb[:,5]])
+    arr['E'] = np.concatenate(
+            [rowa['eaF'] + rowa['eaR'],
+             rowb['ebF'] + rowb['ebR']])
 
-    # DOI
-    tmp = np.concatenate([rowa[:,2], rowb[:,4]]).astype(float)
+    tmp = np.concatenate([rowa['eaF'], rowb['ebF']]).astype(float)
     with np.errstate(divide = 'ignore', invalid = 'ignore'):
-        tmp *= (n_doi_bins / arr[:,0])
-    arr[:,1] = tmp
+        arr['DOI'] = tmp * n_doi_bins / arr['E']
 
-    arr[:,2] = np.concatenate([rowa[:,6], rowb[:,8]]) # X
-    arr[:,3] = np.concatenate([rowa[:,7], rowb[:,9]]) # Y
+    arr['X'] = np.concatenate([rowa['xa'], rowb['xb']])
+    arr['Y'] = np.concatenate([rowa['ya'], rowb['yb']])
 
     return arr
 
 def load_block_singles_data(data, blk):
+    # data returned from the C library is not structured
+    # columns are block, e_front, e_rear, x, y
+
     idx = np.nonzero(data[:,0] == blk)[0]
-    subset = data[idx,:]
+    subset = data[idx]
 
     tf = tempfile.NamedTemporaryFile()
-    arr = np.memmap(tf.name, np.uint16,
-            mode = 'w+', shape = (len(idx), 4))
+    arr = np.memmap(tf.name, VisualizationDType,
+            mode = 'w+', shape = (len(idx),))
 
     # Energy sum -> eF + eR
-    arr[:,0] = subset[:,1] + subset[:,2]
+    arr['E'] = subset[:,1] + subset[:,2]
 
     # DOI -> eF / eSUM
     tmp = subset[:,1].astype(float)
     with np.errstate(divide = 'ignore', invalid = 'ignore'):
-        tmp *= (n_doi_bins / arr[:,0])
-    arr[:,1] = tmp
+        arr['DOI'] = tmp * n_doi_bins / arr['E']
 
-    arr[:,2] = subset[:,3] # X
-    arr[:,3] = subset[:,4] # Y
+    arr['X'] = subset[:,3]
+    arr['Y'] = subset[:,4]
 
     return arr
 
@@ -104,19 +120,8 @@ def apply_energy_threshold(data, cfg, blk):
     blk_res = cfg[str(blk)]['FWHM']
     lld, uld = blk_ppeak - blk_res, blk_ppeak + blk_res
 
-    es = data[:,0]
+    es = data['E']
     return np.where((lld < es) & (es < uld))[0]
-
-def load_img(cfg_dir, blk, is_flood = False):
-    if is_flood:
-        subdir = 'flood'
-        fname = f'block{blk}.raw'
-    else:
-        subdir = 'lut'
-        fname = f'block{blk}.lut'
-
-    fname = os.path.join(cfg_dir, subdir, fname)
-    return np.fromfile(fname, np.intc).reshape(512,512)
 
 def flood_preprocess(fld):
     fld = fld.astype(float)
@@ -159,7 +164,7 @@ def create_cfg_vals(data, lut, blk, cfg, energy_hist = None):
     xtal_vals = blk_vals['crystal'] = {}
 
     if energy_hist is None:
-        es = data[:,0]
+        es = data['E']
         rng = np.quantile(es, [0.01, 0.99])
         nbins = int(round((rng[1] - rng[0]) / 10))
         n, bins = np.histogram(es, bins = nbins, range = rng)
@@ -172,7 +177,6 @@ def create_cfg_vals(data, lut, blk, cfg, energy_hist = None):
     blk_vals['FWHM'] = fwhm 
 
     pks = crystal.calculate_lut_statistics(lut, data)
-    #for (lut,_), row in pks.iterrows():
     for lut, row in pks.iterrows():
         this_xtal = xtal_vals[lut] = {}
         this_xtal['energy'] = {'photopeak': row['peak'], 'FWHM': row['FWHM']}
@@ -188,77 +192,53 @@ def register(src, dst, nres = 4, niter = 500, spacing = 32):
     x = np.tile(np.arange(512, dtype = np.float32), 512).reshape(512,512)
     return x + xf, x.T + yf
 
-def create_scaled_calibration(coincidence_file, cfg_dir,
-                              status_queue, data_queue, terminate):
+def remap(lut, x, y):
+    return cv.remap(lut, x, y, cv.INTER_NEAREST,
+            borderMode = cv.BORDER_CONSTANT, borderValue = int(lut.max()))
 
-    cf = CoincidenceFileHandle(coincidence_file)
-    default_cfg = os.path.join(cfg_dir, 'default')
-    status_queue.put((0, (None,None)))
 
-    for i, (rate, time, start) in enumerate(cf):
-        new_cfg = make_cfg_subdir(cfg_dir, round(rate))
-        end = start + cf.events_per_period(max_events)
+def create_scaled_calibration(subset):
+    lut_dim = [512,512]
+    calib_dims = (petmr.nblocks, petmr.ncrystals_total)
 
-        data_subset = cf.data[start:end]
-        blocks = data_subset[:,0]
-        blka, blkb = blocks >> 8, blocks & 0xFF
-        unique_blocks = np.unique(np.concatenate([blka, blkb])).tolist()
+    luts = np.ones([petmr.nblocks] + lut_dim, dtype = np.intc) * petmr.ncrystals_total
+    ppeak = np.ones(calib_dims, np.double) * -1;
+    doi = np.ones(calib_dims + (petmr.ndoi,), np.double) * -1;
 
-        with open(os.path.join(default_cfg, 'config.json')) as f:
-            cfg = json.load(f)
+    for blk in range(64):
+        blk_data = load_block_coincidence_data(subset, blk)
 
-        cfg_new_vals = {}
+        # get the energy histogram and block photopeak
 
-        for ub in unique_blocks:
-            status_queue.put((
-                (i * 64 + ub) / (len(cf.event_rate) * 64) * 100,
-                (i, ub)))
+        es = blk_data['E']
+        rng = np.quantile(es, [0.01, 0.99])
+        nbins = int(round((rng[1] - rng[0]) / 10))
+        n, bins = np.histogram(es, bins = nbins, range = rng)
+        peak, fwhm, *_ = crystal.fit_photopeak(n = n, bins = bins[:-1])
+        ppeak[blk] = peak
 
-            if terminate.is_set():
-                data_queue.put(None)
-                return
+        # get the energy windowed flood
 
-            arr = load_block_coincidence_data(data_subset, blka, blkb, ub)
-            idx = apply_energy_threshold(arr, cfg, ub)
+        idx, *_ = np.nonzero(((peak-fwhm) < es) & (es < (peak+fwhm)))
+        x, y = blk_data['X'][idx], blk_data['Y'][idx]
+        fld, *_ = np.histogram2d(y, x, bins = 512, range = [[0,511],[0,511]])
+        fld = flood_preprocess(fld)
 
-            # apply block LLD
+        # load the reference flood and LUT, and generate the warped LUT
 
-            blk_ppeak = cfg[str(blk)]['photopeak']
-            blk_res = cfg[str(blk)]['FWHM']
-            idx = np.where(data[:,0] > (blk_ppeak - blk_res))[0]
+        ref_fld = np.fromfile(f'{cfgdir}/flood/block{blk}.raw', np.intc).reshape(512,512)
+        ref_fld = flood_preprocess(ref_fld)
 
-            # TODO get doi bins, then iterate all the following over each bin
+        fields = register(ref_fld, fld, 2, 250, 32)
 
-            # Create the flood histogram
+        ref_lut = np.fromfile(f'{cfgdir}/lut/block{blk}.lut', np.intc).reshape(512,512)
+        luts[blk] = remap(ref_lut, *fields)
 
-            x, y = arr[idx,2], arr[idx,3]
-            fld, *_ = np.histogram2d(y, x, bins = 512,
-                    range = [[0,511],[0,511]])
+        # get energy and DOI calibration values
 
-            fld.astype(np.intc).tofile(
-                    os.path.join(new_cfg, 'flood', f'block{ub}.raw'))
+        stats_df = crystal.calculate_lut_statistics(luts[blk], blk_data)
+        stats_df = stats_df.filter(items = range(petmr.ncrystals_total), axis = 0)
+        ppeak[blk][stats_df.index] = stats_df['peak'].to_numpy()
+        doi[blk][stats_df.index] = stats_df[['5mm', '10mm', '15mm']].to_numpy()
 
-            fld = flood_preprocess(fld)
-
-            # Load the reference flood and perform the registration
-
-            ref_fld = load_img(default_cfg, ub, is_flood = True)
-            ref_fld = flood_preprocess(ref_fld)
-
-            xf, yf = register(ref_fld, fld, 4, 500, 32)
-
-            ref_lut = load_img(default_cfg, ub, is_flood = False)
-            deformed_lut = cv.remap(ref_lut, xf, yf, cv.INTER_NEAREST,
-                    borderMode = cv.BORDER_CONSTANT, borderValue = int(ref_lut.max()))
-
-            deformed_lut.astype(np.intc).tofile(
-                    os.path.join(new_cfg, 'lut', f'block{ub}.lut'))
-
-            # Calculate energy and DOI bins for each crystal
-            create_cfg_vals(arr, deformed_lut, ub, cfg_new_vals)
-
-        # save the config file
-        with open(os.path.join(new_cfg, 'config.json'), 'w') as f:
-            json.dump(cfg_new_vals, f)
-
-    data_queue.put(None)
+    return luts, ppeak, doi

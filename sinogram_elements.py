@@ -1,4 +1,4 @@
-import os, glob, re, json, threading
+import os, glob, re, json, threading, copy, matplotlib
 import tkinter as tk
 import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -6,8 +6,8 @@ from matplotlib.figure import Figure, SubplotParams
 import matplotlib.pyplot as plt
 import concurrent.futures
 
-from scipy import ndimage
-import petmr
+import petmr, crystal, calibration, figures
+from calibration import CoincidenceFileHandle
 from data_loader import coincidence_filetypes, listmode_filetypes, sinogram_filetypes
 from sinogram_loader import SinogramLoaderPopup
 from filedialog import (check_config_dir,
@@ -24,19 +24,21 @@ class SinogramDisplay(tk.Frame):
         self.button_frame = tk.Frame(self)
 
         self.save_lm   = tk.Button(self.button_frame, text = "Save Listmode", command = self.save_listmode)
+        self.scale_lm  = tk.Button(self.button_frame, text = "Save Listmode (scaled)", command = self.scale_listmode)
         self.load_lm = tk.Button(self.button_frame, text = "Load Listmode", command = self.load_listmode)
         self.save_sino = tk.Button(self.button_frame, text = "Save Sinogram", command = self.save_sinogram)
         self.load_sino = tk.Button(self.button_frame, text = "Load Sinogram", command = self.load_sinogram)
         self.multiply_button = tk.Button(self.button_frame, text = "Multiply", command = lambda: self.operation(np.multiply))
         self.subtract_button = tk.Button(self.button_frame, text = "Subtract", command = lambda: self.operation(np.subtract))
 
-        self.energy_window_var = tk.DoubleVar(value = 0.2)
+        self.energy_window_var = tk.DoubleVar(value = 0.315)
         self.max_doi_var = tk.IntVar(value = petmr.ndoi)
         self.sort_prompts_var = tk.BooleanVar(value = True)
         self.sort_delays_var = tk.BooleanVar(value = False)
 
         self.cb_frame = tk.Frame(self)
         self.energy_window_menu = tk.OptionMenu(self.cb_frame, self.energy_window_var,
+                #0.315, 0.510, -1.0) # 350-672, 250-772, all
                 0.2, 0.4, 0.6, 0.8, 1.0, -1.0)
         self.max_doi_menu = tk.OptionMenu(self.cb_frame, self.max_doi_var, *np.arange(0,petmr.ndoi+1))
         self.sort_prompts_cb = tk.Checkbutton(self.cb_frame, text = "Prompts", variable = self.sort_prompts_var)
@@ -73,6 +75,7 @@ class SinogramDisplay(tk.Frame):
         self.button_frame.pack(pady = 30)
 
         self.save_lm.pack(side = tk.LEFT, padx = 5)
+        self.scale_lm.pack(side = tk.LEFT, padx = 5)
         self.load_lm.pack(side = tk.LEFT, padx = 5)
         self.save_sino.pack(side = tk.LEFT, padx = 5)
         self.load_sino.pack(side = tk.LEFT, padx = 5)
@@ -154,7 +157,7 @@ class SinogramDisplay(tk.Frame):
         ppeak = np.ones(dims, np.double) * -1;
         doi = np.ones(dims + (petmr.ndoi,), np.double) * -1;
 
-        cfg_file = glob.glob(os.path.join(cfgdir,'*.json'))[0]
+        cfg_file = os.path.join(cfgdir,'config.json')
         with open(cfg_file, 'r') as f:
             cfg = json.load(f)
 
@@ -251,6 +254,34 @@ class SinogramDisplay(tk.Frame):
         if fname:
             self.sino_data = petmr.load_sinogram(fname)
             self.count_map_draw()
+
+    def scale_listmode(self):
+        coin_fname = askopenfilename(title = "Select coincidence file",
+                filetypes = coincidence_filetypes)
+        if not coin_fname: return
+
+        cfgdir = check_config_dir()
+        if not cfgdir: return
+
+        lm_fname = asksaveasfilename(title = "New listmode file",
+                filetypes = listmode_filetypes)
+        if not lm_fname: return
+
+        ewindow = self.energy_window_var.get()
+
+        cf = CoincidenceFileHandle(coin_fname)
+        nev = cf.events_per_period(200e6)
+
+        def launch():
+            for start_fpos, end_fpos, period_data in cf:
+                subset = period_data[:nev]
+                luts, ppeak, doi = calibration.create_scaled_calibration(subset)
+                petmr.save_listmode(
+                        lm_fname, coin_fname,
+                        ewindow, luts, ppeak, doi,
+                        start_fpos, end_fpos)
+
+        threading.Thread(target = launch).start()
 
     def save_sinogram(self):
         if self.sino_data is None: return

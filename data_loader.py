@@ -8,11 +8,14 @@ from collections.abc import Iterable
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure, SubplotParams
 
-import petmr, calibration
+import petmr
 
-from calibration import (load_block_singles_data,
-                         load_block_coincidence_data,
-                         max_events, coincidence_cols)
+from calibration import (
+        CoincidenceFileHandle,
+        CoincidenceDType,
+        load_block_singles_data,
+        load_block_coincidence_data,
+        max_events)
 
 from filedialog import (askopenfilename,
                         askopenfilenames,
@@ -154,7 +157,7 @@ class CoincidenceLoader(tk.Toplevel):
         self.callback = callback 
 
         try:
-            self.data = np.memmap(f, np.uint16).reshape(-1, coincidence_cols)
+            self.data = np.memmap(f, CoincidenceDType)
         except Exception as e:
             callback(e)
             return
@@ -190,7 +193,7 @@ class CoincidenceLoader(tk.Toplevel):
         self.draw_hist()
 
     def draw_hist(self):
-        cf = calibration.CoincidenceFileHandle(self.data, 500, 1)
+        cf = CoincidenceFileHandle(self.f, 500, 1)
         self.ev_rate = cf.event_rate
         self.times = cf.times
         self.idx = cf.idx
@@ -263,19 +266,15 @@ class CoincidenceLoader(tk.Toplevel):
 
     def load(self):
         start, end, t0, t1 = self.subset()
-        subset = self.data[start:end,:]
+        subset = self.data[start:end]
         print(f'Load {t0}s to {t1}s: {round(subset.shape[0] / 1e6)}M events')
-
-        # first two columns are block numbers
-        data8 = np.memmap(self.f, np.uint8).reshape(-1,coincidence_cols*2)
-        blka, blkb = data8[start:end, 1], data8[start:end, 0]
 
         lk = threading.Lock()
         n = 0
 
         def launch(ub):
             nonlocal n
-            d = load_block_coincidence_data(subset, blka, blkb, ub)
+            d = load_block_coincidence_data(subset, ub)
             with lk:
                 self.pp.status.put(((n / petmr.nblocks * 100), n))
                 n = n + 1
@@ -287,9 +286,9 @@ class CoincidenceLoader(tk.Toplevel):
 
     def save(self):
         start, end, t0, t1 = self.subset(None)
-        subset = self.data[start:end,:]
-        nev = subset.shape[0]
+        subset = self.data[start:end]
 
+        nev = subset.shape[0]
         idx = int(np.clip(np.log10(nev) / 3, 1, 4))
         char = ['K', 'M', 'B', 'T'][idx-1]
         print(f'Save {round(nev/(1e3 ** idx), 1)}{char} events from {t0}s to {t1}s')
@@ -299,7 +298,7 @@ class CoincidenceLoader(tk.Toplevel):
 
         if newfile is None: return
 
-        arr = np.memmap(newfile, np.uint16,
+        arr = np.memmap(newfile, subset.dtype,
                 mode = 'w+', shape = subset.shape)
-        arr[:,:] = subset[:,:]
+        arr[:] = subset[:]
 

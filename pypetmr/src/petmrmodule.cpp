@@ -368,7 +368,7 @@ petmr_save_listmode(PyObject *self, PyObject *args)
     PyArrayObject *lut_array, *ppeak_array, *doi_array;
 
     PyObject *terminate = NULL, *status_queue = NULL;
-    long long startpos = -1, stoppos = -1;
+    int64_t startpos = -1, stoppos = -1;
 
     /*
      * Arguments are:
@@ -379,10 +379,10 @@ petmr_save_listmode(PyObject *self, PyObject *args)
      * 5. Numpy array with photopeaks
      * 6. Numpy array with DOI
      *
-     * threading.Event to indicate termination
-     * queue.Queue for progress bar
      * starting byte position in input file or -1
      * ending byte position in input file or -1
+     * threading.Event to indicate termination
+     * queue.Queue for progress bar
      */
 
     if (!PyArg_ParseTuple(args, "ssdOOO|LLOO",
@@ -390,20 +390,16 @@ petmr_save_listmode(PyObject *self, PyObject *args)
                 &lut_array, &ppeak_array, &doi_array,
                 &startpos, &stoppos, &terminate, &status_queue)) return NULL;
 
-    auto flags = std::ios::binary;
-    std::streampos start = 0;
-    if (startpos > 0)
-    {
-        start = startpos;
-        flags |= std::ios::ate;
-    }
-
+    auto flags = startpos > 0 ?
+        std::ios::binary | std::ios::app :
+        std::ios::binary | std::ios::trunc;
     std::ofstream lf (lmfname, flags);
 
-    std::streampos coincidence_file_size =
-        stoppos == -1 ? fsize(fname) : (std::streampos)stoppos;
+    if (startpos < 0) startpos = 0;
+    if (stoppos < 0) stoppos = fsize(fname);
+    auto span = stoppos - startpos;
 
-    if (coincidence_file_size < 0 || !lf.good())
+    if (stoppos < 0 || !lf.good())
     {
         PyErr_SetFromErrno(PyExc_IOError);
         return NULL;
@@ -414,25 +410,24 @@ petmr_save_listmode(PyObject *self, PyObject *args)
     Michelogram m(Geometry::dim_theta_full, Geometry::ndoi, energy_window,
                   lut_array, ppeak_array, doi_array);
 
-    std::streamoff incr = sizeof(CoincidenceData)*1e6;
+    int64_t incr = sizeof(CoincidenceData)*1e6, processed = 0;
     size_t nworkers = std::thread::hardware_concurrency() - 1;
     bool stop = false;
 
     std::vector<char> buf(1024*4);
     std::deque<std::future<FILE*>> workers;
-    std::streampos processed = 0;
 
     // spawn workers to convert coincidence data to listmode data
     while (!stop || workers.size() > 0)
     {
         if (!stop)
         {
-            std::streampos end = std::min(start + incr, coincidence_file_size);
-            stop = (end == coincidence_file_size);
+            int64_t end = std::min(startpos + incr, stoppos);
+            stop = (end == stoppos);
 
             workers.push_back(std::async(std::launch::async,
-                            &Michelogram::save_listmode, &m, fname, start, end));
-            start = end;
+                            &Michelogram::save_listmode, &m, fname, startpos, end));
+            startpos = end;
         }
 
         if (stop || workers.size() >= nworkers)
@@ -453,8 +448,7 @@ petmr_save_listmode(PyObject *self, PyObject *args)
             std::fclose(f);
 
             // update the python ui
-            // TODO gives the wrong value if startpos/stoppos is specified
-            double perc = (double)processed / coincidence_file_size * 100;
+            double perc = (double)processed / span * 100;
             PyEval_RestoreThread(thr);
             stop = update_ui(terminate, status_queue, perc) || stop;
             thr = PyEval_SaveThread();

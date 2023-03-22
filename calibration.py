@@ -1,9 +1,10 @@
-import os, json, tempfile
+import os, json, tempfile, concurrent, datetime
 import numpy as np
 import cv2 as cv
 import tkinter as tk
 import tkinter.filedialog
 from scipy import ndimage
+from numpy.lib import recfunctions as rfn
 
 import petmr, crystal, pyelastix
 
@@ -177,68 +178,75 @@ def create_cfg_vals(data, lut, blk, cfg, energy_hist = None):
     blk_vals['FWHM'] = fwhm 
 
     pks = crystal.calculate_lut_statistics(lut, data)
-    for lut, row in pks.iterrows():
-        this_xtal = xtal_vals[lut] = {}
+    for row in pks:
+        this_xtal = xtal_vals[int(row['crystal'])] = {}
         this_xtal['energy'] = {'photopeak': row['peak'], 'FWHM': row['FWHM']}
         this_xtal['DOI'] = row[['5mm','10mm','15mm']].tolist()
 
-def register(src, dst, nres = 4, niter = 500, spacing = 32):
-    pars = pyelastix.get_default_params()
+def register(src, dst, nres = 4, niter = 500, spacing = 32, type = 'BSPLINE'):
+    pars = pyelastix.get_default_params(type = type)
     pars.NumberOfResolution = nres
     pars.MaximumNumberOfIterations = niter
     pars.FinalGridSpacingInPhysicalUnits = spacing
 
-    _, (xf, yf) = pyelastix.register(src, dst, pars, verbose = 0)
-    x = np.tile(np.arange(512, dtype = np.float32), 512).reshape(512,512)
+    _, (xf, yf) = pyelastix.register(
+            np.ascontiguousarray(src),
+            np.ascontiguousarray(dst),
+            pars, verbose = 0)
+
+    nr, nc = src.shape
+    x = np.tile(np.arange(nc, dtype = np.float32), nr).reshape(src.shape)
     return x + xf, x.T + yf
 
 def remap(lut, x, y):
     return cv.remap(lut, x, y, cv.INTER_NEAREST,
             borderMode = cv.BORDER_CONSTANT, borderValue = int(lut.max()))
 
+def create_scaled_calibration(data, cfgdir):
+    luts    = np.ones((petmr.nblocks, 512, 512), np.intc) * petmr.ncrystals_total
+    ppeak   = np.ones((petmr.nblocks, petmr.ncrystals_total), np.double) * -1;
+    doi     = np.ones((petmr.nblocks, petmr.ncrystals_total, petmr.ndoi), np.double) * -1;
 
-def create_scaled_calibration(subset):
-    lut_dim = [512,512]
-    calib_dims = (petmr.nblocks, petmr.ncrystals_total)
+    with concurrent.futures.ThreadPoolExecutor(8) as ex:
+        futs = [ex.submit(scale_single_block, data, blk, cfgdir)
+                for blk in range(petmr.nblocks)]
 
-    luts = np.ones([petmr.nblocks] + lut_dim, dtype = np.intc) * petmr.ncrystals_total
-    ppeak = np.ones(calib_dims, np.double) * -1;
-    doi = np.ones(calib_dims + (petmr.ndoi,), np.double) * -1;
-
-    for blk in range(64):
-        blk_data = load_block_coincidence_data(subset, blk)
-
-        # get the energy histogram and block photopeak
-
-        es = blk_data['E']
-        rng = np.quantile(es, [0.01, 0.99])
-        nbins = int(round((rng[1] - rng[0]) / 10))
-        n, bins = np.histogram(es, bins = nbins, range = rng)
-        peak, fwhm, *_ = crystal.fit_photopeak(n = n, bins = bins[:-1])
-        ppeak[blk] = peak
-
-        # get the energy windowed flood
-
-        idx, *_ = np.nonzero(((peak-fwhm) < es) & (es < (peak+fwhm)))
-        x, y = blk_data['X'][idx], blk_data['Y'][idx]
-        fld, *_ = np.histogram2d(y, x, bins = 512, range = [[0,511],[0,511]])
-        fld = flood_preprocess(fld)
-
-        # load the reference flood and LUT, and generate the warped LUT
-
-        ref_fld = np.fromfile(f'{cfgdir}/flood/block{blk}.raw', np.intc).reshape(512,512)
-        ref_fld = flood_preprocess(ref_fld)
-
-        fields = register(ref_fld, fld, 2, 250, 32)
-
-        ref_lut = np.fromfile(f'{cfgdir}/lut/block{blk}.lut', np.intc).reshape(512,512)
-        luts[blk] = remap(ref_lut, *fields)
-
-        # get energy and DOI calibration values
-
-        stats_df = crystal.calculate_lut_statistics(luts[blk], blk_data)
-        stats_df = stats_df.filter(items = range(petmr.ncrystals_total), axis = 0)
-        ppeak[blk][stats_df.index] = stats_df['peak'].to_numpy()
-        doi[blk][stats_df.index] = stats_df[['5mm', '10mm', '15mm']].to_numpy()
+    for blk, f in enumerate(futs):
+        luts[blk], ppeak[blk], doi[blk] = f.result()
 
     return luts, ppeak, doi
+
+def scale_single_block(data, blk, cfgdir):
+    blk_data = load_block_coincidence_data(data, blk)
+    ppeak = np.ones(petmr.ncrystals_total, np.double) * -1
+    doi = np.ones((petmr.ncrystals_total, petmr.ndoi), np.double) * -1
+
+    # get the energy histogram and block photopeak
+
+    es = blk_data['E']
+    rng = np.quantile(es, [0.01, 0.99])
+    nbins = int(round((rng[1] - rng[0]) / 10))
+    n, bins = np.histogram(es, bins = nbins, range = rng)
+    peak, fwhm, *_ = crystal.fit_photopeak(n = n, bins = bins[:-1])
+    ppeak[:] = peak
+
+    # get the energy windowed flood
+
+    idx, *_ = np.nonzero(((peak-fwhm) < es) & (es < (peak+fwhm)))
+    x, y = blk_data['X'][idx], blk_data['Y'][idx]
+    fld, *_ = np.histogram2d(y, x, bins = 512, range = [[0,511],[0,511]])
+
+    # load the reference flood and LUT, and generate the warped LUT
+
+    ref_fld = np.fromfile(f'{cfgdir}/flood/block{blk}.raw', np.intc).reshape(512,512)
+    xf, yf = register(ref_fld, fld, nres = 2, niter = 250, type = 'AFFINE')
+    ref_lut = np.fromfile(f'{cfgdir}/lut/block{blk}.lut', np.intc).reshape(512,512)
+    lut = remap(ref_lut, xf, yf)
+
+    # get energy and DOI calibration values
+
+    stats = crystal.calculate_lut_statistics(lut, blk_data)
+    ppeak[stats['crystal']] = stats['peak']
+    doi[stats['crystal']] = rfn.structured_to_unstructured(
+            stats[['5mm', '10mm', '15mm']])
+    return lut, ppeak, doi

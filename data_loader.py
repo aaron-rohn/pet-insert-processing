@@ -3,8 +3,8 @@ import concurrent.futures
 import tkinter as tk
 import numpy as np
 import matplotlib.pyplot as plt
-from tkinter.ttk import Progressbar
 from collections.abc import Iterable
+from tkinter.ttk import Progressbar
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure, SubplotParams
 
@@ -72,8 +72,12 @@ class ProgressPopup(tk.Toplevel):
 
     def update(self, interval = 100):
         while not self.status.empty():
-            perc, val = self.status.get()
-            self.counts_label.config(text = self.fmt.format(val))
+            vals = self.status.get()
+            if isinstance(vals, Iterable):
+                perc, val = vals
+                self.counts_label.config(text = self.fmt.format(val))
+            else: perc = vals
+            
             self.progbar['value'] = perc
 
         if self.data.empty():

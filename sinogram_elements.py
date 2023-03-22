@@ -1,4 +1,4 @@
-import os, glob, re, json, threading, copy, matplotlib
+import os, glob, re, json, threading, copy, matplotlib, queue
 import tkinter as tk
 import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -8,8 +8,14 @@ import concurrent.futures
 
 import petmr, crystal, calibration, figures
 from calibration import CoincidenceFileHandle
-from data_loader import coincidence_filetypes, listmode_filetypes, sinogram_filetypes
 from sinogram_loader import SinogramLoaderPopup
+
+from data_loader import (
+        ProgressPopup,
+        coincidence_filetypes,
+        listmode_filetypes,
+        sinogram_filetypes)
+
 from filedialog import (check_config_dir,
                         askopenfilename,
                         askopenfilenames,
@@ -267,19 +273,24 @@ class SinogramDisplay(tk.Frame):
                 filetypes = listmode_filetypes)
         if not lm_fname: return
 
+        nperiods = 5
+        cf = CoincidenceFileHandle(coin_fname, nperiods = nperiods)
+        nev = cf.events_per_period(200e6)
         ewindow = self.energy_window_var.get()
 
-        cf = CoincidenceFileHandle(coin_fname)
-        nev = cf.events_per_period(200e6)
+        pp = ProgressPopup(fmt = '{}')
 
         def launch():
-            for start_fpos, end_fpos, period_data in cf:
-                subset = period_data[:nev]
-                luts, ppeak, doi = calibration.create_scaled_calibration(subset)
-                petmr.save_listmode(
-                        lm_fname, coin_fname,
-                        ewindow, luts, ppeak, doi,
-                        start_fpos, end_fpos)
+            try:
+                for i, (start, end, data) in enumerate(cf):
+                    pp.status.put((0, f'Scale calibration for period {i+1}/{nperiods}'))
+                    luts, ppeak, doi = calibration.create_scaled_calibration(data[:nev], cfgdir)
+                    pp.status.put((0, f'Sort listmode data {start} to {end}'))
+                    petmr.save_listmode(lm_fname, coin_fname,
+                            ewindow, luts, ppeak, doi, start, end,
+                            pp.terminate, pp.status)
+            finally:
+                pp.data.put(None)
 
         threading.Thread(target = launch).start()
 

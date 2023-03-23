@@ -1,6 +1,5 @@
-import os
+import os, datetime
 import numpy as np
-import concurrent.futures
 from scipy import optimize
 import matplotlib.pyplot as plt
 
@@ -17,19 +16,22 @@ def photopeak(x, peak, fwhm, amp, slope, intercept):
     y = amp * np.exp(-4 * np.log(2) * np.power(x-peak,2) / np.power(fwhm,2))
     return y + (x-peak)*slope + intercept
 
-def fit_photopeak(energy = None, n = None, bins = None):
+def fit_photopeak(energy = None, n = None, bins = None, approx = False):
     if energy is not None:
         n,bins = np.histogram(energy, bins = 100,
                 range = np.quantile(energy, [0, 0.95]))
         bins = bins[:-1]
 
-    """
-    idx = np.argmax(n)
-    thr = n < (n[idx]/2)
-    upper = np.argmax(thr[idx:]) + idx
-    lower = idx - np.argmax(thr[idx::-1])
-    return bins[idx], bins[upper] - bins[lower]
-    """
+    if approx:
+        # just return the max location and approximate fwhm,
+        # rather than actually fitting the data
+        idx = np.argmax(n)
+        thr = n < (n[idx]/2)
+        upper = np.argmax(thr[idx:]) + idx
+        lower = idx - np.argmax(thr[idx::-1])
+        return bins[idx], bins[upper] - bins[lower]
+
+    # fit the data with a gaussian and linear offset
 
     idx = np.argmax((bins*2) * n**2)
     ppeak_energy = round(bins[idx])
@@ -73,28 +75,37 @@ def get_doi(doi):
     thresholds = np.interp(doi_quantiles[:-1], n, bins)
     return thresholds.round(1)
 
-def summarize_crystal(data, crystal):
+def summarize_crystal(data, crystal, approx = False):
     e = data['E']
-    peak, fwhm, *_ = fit_photopeak(e)
+    peak, fwhm, *_ = fit_photopeak(e, approx = approx)
     fwhm = abs(fwhm)
 
-    g = data[((peak-fwhm) < e) & (e < (peak+fwhm))]
+    data_windowed = data[((peak-fwhm) < e) & (e < (peak+fwhm))]
+
     try:
-        thresholds = get_doi(g['DOI'])
+        thresholds = get_doi(data_windowed['DOI'])
     except IndexError:
         print(f'Error measuring DOI thresholds: {peak}, {fwhm}')
         thresholds = np.array([2200,2000,1800])
 
-    return np.concatenate([[crystal, peak,fwhm], thresholds])
+    return np.concatenate([[crystal, peak, fwhm], thresholds])
 
 def calculate_lut_statistics(lut, data):
-    idx = np.ravel_multi_index((data['Y'],data['X']), lut.shape)
-    value = lut.flat[idx]
-    order = np.argsort(value)
+    idx = np.ravel_multi_index((data['Y'],data['X']), lut.shape) # 1d event position
+    idx = lut.flat[idx] # crystal ID for each event, 0-361
 
-    data[:] = data[order]
-    value[:] = value[order]
-    locs, *_ = np.nonzero(np.diff(value, prepend = -1))
-    res = np.array([summarize_crystal(data[s:e],value[s])
-        for s,e in zip(locs[:-1], locs[1:])])
+    # sort data by crystal IDs
+    order = np.argsort(idx)
+    d_sort = data[order]
+    c_sort = idx[order]
+
+    # get the index corresponding to each crystal
+    # note that the last bin (361) corresponds to invalid events
+    crystals, locs = np.unique(c_sort, return_index = True)
+
+    # iterate over each subset of data for all but the last crystal ID
+    res = np.array([summarize_crystal(d_sort[s:e], x)
+        for x,s,e in zip(crystals, locs[:-1], locs[1:])])
+
+    # return a structured array with fitting results for each crystal
     return np.core.records.fromarrays(res.T, CrystalFitDtype)

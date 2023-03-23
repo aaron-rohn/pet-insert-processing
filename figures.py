@@ -402,4 +402,7 @@ class Plots(tk.Frame):
             json.dump(cfg, f)
 
         print('Done')
-        self.incr_block()
+        try:
+            self.incr_block()
+        except tk.TclError:
+            tk.messagebox.showinfo('Completed', 'Calibration complete for last block')

@@ -101,19 +101,12 @@ pylist_to_strings(PyObject *file_list)
     return cfile_list;
 }
 
-bool update_ui(
-        PyObject *terminate,
-        PyObject *status_queue,
-        double perc
-){
-    if (status_queue)
-        PyObject_CallMethod(status_queue, "put", "d", perc);
+bool term_is_set(PyObject *t)
+{ return t && (PyObject_CallMethod(t, "is_set", "") == Py_True); }
 
-    if (terminate)
-        return PyObject_CallMethod(terminate, "is_set", "") == Py_True;
-
-    return false;
-}
+template <typename... args>
+PyObject *queue_put(PyObject *q, const char *fmt, args... objs)
+{ return q ? PyObject_CallMethod(q, "put", fmt, objs...) : NULL; }
 
 void* Single::to_py_data(std::vector<Single> &events)
 {
@@ -194,18 +187,11 @@ petmr_singles(PyObject *self, PyObject *args)
 
         if (nevents % 100'000 == 0)
         {
-            double perc = ((double)nevents) / nevents_approx* 100.0;
+            double perc = ((double)nevents) / nevents_approx * 100.0;
 
             PyEval_RestoreThread(_save);
-            if (terminate)
-            {
-                PyObject *term = PyObject_CallMethod(terminate, "is_set", "");
-                stop |= (term == Py_True);
-            }
-
-            if (status_queue)
-                PyObject_CallMethod(status_queue, "put", "((dK))", perc, nevents);
-
+            stop |= term_is_set(terminate);
+            queue_put(status_queue, "((dK))", perc, nevents);
             _save = PyEval_SaveThread();
         }
     }
@@ -339,16 +325,8 @@ petmr_coincidences(PyObject *self, PyObject *args)
 
             // update the UI and interact with python
             PyEval_RestoreThread(_save);
-
-            if (terminate)
-            {
-                PyObject *term = PyObject_CallMethod(terminate, "is_set", "");
-                stop = stop || (term == Py_True);
-            }
-
-            if (status_queue)
-                PyObject_CallMethod(status_queue, "put", "((dK))", perc, ncoin);
-
+            stop = stop || term_is_set(terminate);
+            queue_put(status_queue, "((dK))", perc, ncoin);
             _save = PyEval_SaveThread();
         }
     }
@@ -389,6 +367,8 @@ petmr_save_listmode(PyObject *self, PyObject *args)
                 &lmfname, &fname, &energy_window,
                 &lut_array, &ppeak_array, &doi_array,
                 &startpos, &stoppos, &terminate, &status_queue)) return NULL;
+
+    if (term_is_set(terminate)) Py_RETURN_NONE;
 
     auto flags = startpos > 0 ?
         std::ios::binary | std::ios::app :
@@ -450,7 +430,8 @@ petmr_save_listmode(PyObject *self, PyObject *args)
             // update the python ui
             double perc = (double)processed / span * 100;
             PyEval_RestoreThread(thr);
-            stop = update_ui(terminate, status_queue, perc) || stop;
+            queue_put(status_queue, "d", perc);
+            stop |= term_is_set(terminate);
             thr = PyEval_SaveThread();
         }
     }
@@ -512,7 +493,8 @@ petmr_load_listmode(PyObject *self, PyObject *args)
 
             // update the python ui
             PyEval_RestoreThread(thr);
-            stop = update_ui(terminate, status_queue, perc) || stop;
+            queue_put(status_queue, "d", perc);
+            stop |= term_is_set(terminate);
             thr = PyEval_SaveThread();
         }
     }

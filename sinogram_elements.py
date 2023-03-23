@@ -37,7 +37,7 @@ class SinogramDisplay(tk.Frame):
         self.multiply_button = tk.Button(self.button_frame, text = "Multiply", command = lambda: self.operation(np.multiply))
         self.subtract_button = tk.Button(self.button_frame, text = "Subtract", command = lambda: self.operation(np.subtract))
 
-        self.energy_window_var = tk.DoubleVar(value = 0.315)
+        self.energy_window_var = tk.DoubleVar(value = 0.2)
         self.max_doi_var = tk.IntVar(value = petmr.ndoi)
         self.sort_prompts_var = tk.BooleanVar(value = True)
         self.sort_delays_var = tk.BooleanVar(value = False)
@@ -198,11 +198,13 @@ class SinogramDisplay(tk.Frame):
         ewindow = self.energy_window_var.get()
 
         if len(coin_fnames) > 1:
-            self.save_listmode_multi(coin_fnames, lm_fnames, ewindow, lut, ppeak, doi)
+            self.save_listmode_multi(coin_fnames, lm_fnames,
+                    ewindow, lut, ppeak, doi)
         else:
             SinogramLoaderPopup(
                     self, None, petmr.save_listmode,
-                    lm_fnames[0], coin_fnames[0], ewindow, lut, ppeak, doi)
+                    lm_fnames[0], coin_fnames[0],
+                    ewindow, lut, ppeak, doi, -1, -1)
 
     def load_listmode(self):
         lm_fnames = askopenfilenames(title = "Select 1+ listmode file",
@@ -226,6 +228,7 @@ class SinogramDisplay(tk.Frame):
                 self.sino_data = self.remap_sinogram(sinogram)
                 self.count_map_draw()
 
+            print(f'Load listmode file {lm_fnames[0]}')
             SinogramLoaderPopup(
                     self, callback, petmr.load_listmode,
                     lm_fnames[0], prompts, delays, max_doi)
@@ -258,6 +261,7 @@ class SinogramDisplay(tk.Frame):
                                 filetypes = [("Sinogram file", ".raw")])
 
         if fname:
+            print(f'Load sinogram file {fname}')
             self.sino_data = petmr.load_sinogram(fname)
             self.count_map_draw()
 
@@ -275,7 +279,8 @@ class SinogramDisplay(tk.Frame):
 
         nperiods = 5
         cf = CoincidenceFileHandle(coin_fname, nperiods = nperiods)
-        nev = cf.events_per_period(200e6)
+        nev = cf.events_per_period(500e6)
+        print(f'Creating scaled calibration with {nev} events and {nperiods} periods')
         ewindow = self.energy_window_var.get()
 
         pp = ProgressPopup(fmt = '{}')
@@ -283,8 +288,14 @@ class SinogramDisplay(tk.Frame):
         def launch():
             try:
                 for i, (start, end, data) in enumerate(cf):
+                    if pp.terminate.is_set(): break
+
                     pp.status.put((0, f'Scale calibration for period {i+1}/{nperiods}'))
-                    luts, ppeak, doi = calibration.create_scaled_calibration(data[:nev], cfgdir)
+
+                    sync = np.array([0]), threading.Lock(), pp.status
+                    luts, ppeak, doi = calibration.create_scaled_calibration(
+                            data[:nev], cfgdir, sync)
+
                     pp.status.put((0, f'Sort listmode data {start} to {end}'))
                     petmr.save_listmode(lm_fname, coin_fname,
                             ewindow, luts, ppeak, doi, start, end,

@@ -202,13 +202,13 @@ def remap(lut, x, y):
     return cv.remap(lut, x, y, cv.INTER_NEAREST,
             borderMode = cv.BORDER_CONSTANT, borderValue = int(lut.max()))
 
-def create_scaled_calibration(data, cfgdir):
+def create_scaled_calibration(data, cfgdir, sync = None):
     luts    = np.ones((petmr.nblocks, 512, 512), np.intc) * petmr.ncrystals_total
     ppeak   = np.ones((petmr.nblocks, petmr.ncrystals_total), np.double) * -1;
     doi     = np.ones((petmr.nblocks, petmr.ncrystals_total, petmr.ndoi), np.double) * -1;
 
     with concurrent.futures.ThreadPoolExecutor(8) as ex:
-        futs = [ex.submit(scale_single_block, data, blk, cfgdir)
+        futs = [ex.submit(scale_single_block, data, blk, cfgdir, sync)
                 for blk in range(petmr.nblocks)]
 
     for blk, f in enumerate(futs):
@@ -216,7 +216,7 @@ def create_scaled_calibration(data, cfgdir):
 
     return luts, ppeak, doi
 
-def scale_single_block(data, blk, cfgdir):
+def scale_single_block(data, blk, cfgdir, sync = None):
     blk_data = load_block_coincidence_data(data, blk)
     ppeak = np.ones(petmr.ncrystals_total, np.double) * -1
     doi = np.ones((petmr.ncrystals_total, petmr.ndoi), np.double) * -1
@@ -249,4 +249,11 @@ def scale_single_block(data, blk, cfgdir):
     ppeak[stats['crystal']] = stats['peak']
     doi[stats['crystal']] = rfn.structured_to_unstructured(
             stats[['5mm', '10mm', '15mm']])
+
+    if sync is not None:
+        block, lk, q = sync
+        with lk:
+            block += 1
+            q.put(block / petmr.nblocks * 100)
+
     return lut, ppeak, doi

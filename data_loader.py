@@ -78,7 +78,7 @@ class ProgressPopup(tk.Toplevel):
                 self.counts_label.config(text = self.fmt.format(val))
             else: perc = vals
             
-            self.progbar['value'] = perc
+            self.progbar['value'] = float(perc)
 
         if self.data.empty():
             self.after(interval, self.update)

@@ -83,7 +83,7 @@ def summarize_crystal(data, crystal, approx = False):
     data_windowed = data[((peak-fwhm) < e) & (e < (peak+fwhm))]
 
     try:
-        thresholds = get_doi(data_windowed['DOI'])
+        thresholds = get_doi(data_windowed['D'])
     except IndexError:
         print(f'Error measuring DOI thresholds: {peak}, {fwhm}')
         thresholds = np.array([2200,2000,1800])

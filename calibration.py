@@ -1,8 +1,9 @@
-import os, json, tempfile, concurrent, datetime
+import os, json, tempfile, datetime
 import numpy as np
 import cv2 as cv
 import tkinter as tk
 import tkinter.filedialog
+import concurrent.futures
 from scipy import ndimage
 from numpy.lib import recfunctions as rfn
 
@@ -10,6 +11,11 @@ import petmr, crystal, pyelastix
 
 n_doi_bins = 4096
 max_events = int(1e9)
+
+SingleDType = np.dtype([
+    ('block', np.uint16),
+    ('eF', np.uint16), ('eR', np.uint16),
+    ('x', np.uint16), ('y', np.uint16)])
 
 CoincidenceDType = np.dtype([
     ('blkb', np.uint8), ('blka', np.uint8),
@@ -21,7 +27,7 @@ CoincidenceDType = np.dtype([
     ('abstime', np.uint16)])
 
 VisualizationDType = np.dtype([
-    ('E', np.uint16), ('DOI', np.uint16),
+    ('E', np.uint16), ('D', np.uint16),
     ('X', np.uint16), ('Y', np.uint16)])
 
 class CoincidenceFileHandle:
@@ -68,61 +74,74 @@ class CoincidenceFileHandle:
         n = int(np.diff(self.idx).mean())
         return n if max_events is None else min(n, int(max_events))
 
+def load_all_blocks(data_in, start = 0, end = max_events):
+    data = np.memmap(data_in, np.uint16).reshape(-1,11)
+    subset = data[start:end]
+
+    order = np.argsort(subset[:,0]) # can be replaced with cython pargsort
+    d = subset[order]
+
+    uq, idx = np.unique(d[:,0], return_index = True)
+    idx = np.append(idx, [d.shape[0]-1])
+    ablks, bblks = uq >> 8, uq & 0xFF
+
+    def get_idx(b, blks, idx):
+        i = np.nonzero(blks == b)[0]
+        if len(i) == 0: return np.array([], int)
+        return np.concatenate([np.arange(s,e) for s,e in zip(idx[i], idx[i+1])])
+
+    def extract_data(din, dout, idx, out_row, in_col):
+        slc = slice(out_row, out_row + idx.size, None)
+        if idx.size > 0:
+            dout['E'][slc] = d[idx,in_col+0] + d[idx,in_col+1]
+            dout['X'][slc] = d[idx,in_col+4]
+            dout['Y'][slc] = d[idx,in_col+5]
+            with np.errstate(divide = 'ignore', invalid = 'ignore'):
+                dout['D'][slc] = d[idx,in_col].astype(float) * n_doi_bins / dout['E'][slc]
+    
+    def load(blk):
+        idxa = get_idx(blk, ablks, idx)
+        idxb = get_idx(blk, bblks, idx)
+        na, nb = idxa.size, idxb.size
+
+        tf = tempfile.NamedTemporaryFile()
+        arr = np.memmap(tf.name, VisualizationDType, mode = 'w+', shape = (na+nb,))
+
+        extract_data(d, arr, idxa, 0, 2)
+        extract_data(d, arr, idxb, na, 4)
+        return arr
+
+    with concurrent.futures.ThreadPoolExecutor(os.cpu_count()) as ex:
+        futs = [ex.submit(load, blk) for blk in range(petmr.nblocks)]
+
+    return {blk: f.result() for blk,f in enumerate(futs)}
+
+def copy_to_vis(din, dout, ab, offset):
+    subset = dout[offset:(offset + din.size)]
+    ef, er, x, y = f'e{ab}F', f'e{ab}R', f'x{ab}', f'y{ab}'
+    subset['E'] = din[ef] + din[er]
+    subset['X'] = din[x]
+    subset['Y'] = din[y]
+    with np.errstate(divide = 'ignore', invalid = 'ignore'):
+        subset['D'] = din[ef].astype(float) * n_doi_bins / subset['E']
+
 def load_block_coincidence_data(data, blk):
     idxa = np.nonzero(data['blka'] == blk)[0]
     idxb = np.nonzero(data['blkb'] == blk)[0]
-
-    rowa = data[idxa]
-    rowb = data[idxb]
-
     tf = tempfile.NamedTemporaryFile()
     arr = np.memmap(tf.name, VisualizationDType, mode = 'w+',
-            shape = (len(idxa) + len(idxb),))
-
-    arr['E'] = np.concatenate(
-            [rowa['eaF'] + rowa['eaR'],
-             rowb['ebF'] + rowb['ebR']])
-
-    tmp = np.concatenate([rowa['eaF'], rowb['ebF']]).astype(float)
-    with np.errstate(divide = 'ignore', invalid = 'ignore'):
-        arr['DOI'] = tmp * n_doi_bins / arr['E']
-
-    arr['X'] = np.concatenate([rowa['xa'], rowb['xb']])
-    arr['Y'] = np.concatenate([rowa['ya'], rowb['yb']])
-
+            shape = (idxa.size + idxb.size,))
+    copy_to_vis(data[idxa], arr, 'a', 0)
+    copy_to_vis(data[idxb], arr, 'b', idxa.size)
     return arr
 
 def load_block_singles_data(data, blk):
-    # data returned from the C library is not structured
-    # columns are block, e_front, e_rear, x, y
-
-    idx = np.nonzero(data[:,0] == blk)[0]
-    subset = data[idx]
-
+    idx = np.nonzero(data['block'] == blk)[0]
     tf = tempfile.NamedTemporaryFile()
     arr = np.memmap(tf.name, VisualizationDType,
-            mode = 'w+', shape = (len(idx),))
-
-    # Energy sum -> eF + eR
-    arr['E'] = subset[:,1] + subset[:,2]
-
-    # DOI -> eF / eSUM
-    tmp = subset[:,1].astype(float)
-    with np.errstate(divide = 'ignore', invalid = 'ignore'):
-        arr['DOI'] = tmp * n_doi_bins / arr['E']
-
-    arr['X'] = subset[:,3]
-    arr['Y'] = subset[:,4]
-
+            mode = 'w+', shape = (idx.size,))
+    copy_to_vis(data[idx], arr, '', 0)
     return arr
-
-def apply_energy_threshold(data, cfg, blk):
-    blk_ppeak = cfg[str(blk)]['photopeak']
-    blk_res = cfg[str(blk)]['FWHM']
-    lld, uld = blk_ppeak - blk_res, blk_ppeak + blk_res
-
-    es = data['E']
-    return np.where((lld < es) & (es < uld))[0]
 
 def flood_preprocess(fld):
     fld = fld.astype(float)
@@ -133,18 +152,6 @@ def flood_preprocess(fld):
         fld /= ndimage.gaussian_filter(fld, 20)
     np.nan_to_num(fld, False, 0, 0, 0)
     return fld
-
-def make_cfg_subdir(cfg_dir, subdir):
-    cfg = os.path.join(cfg_dir, str(subdir))
-    fld = os.path.join(cfg, 'flood')
-    lut = os.path.join(cfg, 'lut')
-
-    for d in [cfg, fld, lut]:
-        try:
-            os.mkdir(d)
-        except FileExistsError: pass
-
-    return cfg
 
 def create_cfg_vals(data, lut, blk, cfg, energy_hist = None):
     """
@@ -207,7 +214,7 @@ def create_scaled_calibration(data, cfgdir, sync = None):
     ppeak   = np.ones((petmr.nblocks, petmr.ncrystals_total), np.double) * -1;
     doi     = np.ones((petmr.nblocks, petmr.ncrystals_total, petmr.ndoi), np.double) * -1;
 
-    with concurrent.futures.ThreadPoolExecutor(8) as ex:
+    with concurrent.futures.ThreadPoolExecutor(16) as ex:
         futs = [ex.submit(scale_single_block, data, blk, cfgdir, sync)
                 for blk in range(petmr.nblocks)]
 
@@ -228,11 +235,11 @@ def scale_single_block(data, blk, cfgdir, sync = None):
     nbins = int(round((rng[1] - rng[0]) / 10))
     n, bins = np.histogram(es, bins = nbins, range = rng)
     peak, fwhm, *_ = crystal.fit_photopeak(n = n, bins = bins[:-1])
-    ppeak[:] = peak
+    ppeak[:] = peak # block photopeak is default
 
     # get the energy windowed flood
 
-    idx, *_ = np.nonzero(((peak-fwhm) < es) & (es < (peak+fwhm)))
+    idx = np.nonzero(((peak-fwhm) < es) & (es < (peak+fwhm)))[0]
     x, y = blk_data['X'][idx], blk_data['Y'][idx]
     fld, *_ = np.histogram2d(y, x, bins = 512, range = [[0,511],[0,511]])
 
@@ -254,6 +261,6 @@ def scale_single_block(data, blk, cfgdir, sync = None):
         block, lk, q = sync
         with lk:
             block += 1
-            q.put(block / petmr.nblocks * 100)
+            q.put(float(block / petmr.nblocks * 100))
 
     return lut, ppeak, doi

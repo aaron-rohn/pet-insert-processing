@@ -344,7 +344,7 @@ class Plots(tk.Frame):
         dth = self.doi.thresholds()
 
         es = self.d['E']
-        doi = self.d['DOI']
+        doi = self.d['D']
         idx = np.nonzero(
                 (eth[0] < es) & (es < eth[1]) &
                 (dth[0] < doi) & (doi < dth[1]))[0]
@@ -360,12 +360,12 @@ class Plots(tk.Frame):
         eth = self.energy.thresholds()
         es = self.d['E']
         idx = np.nonzero((eth[0] < es) & (es < eth[1]))[0]
-        self.doi.update(self.d['DOI'][idx], retain)
+        self.doi.update(self.d['D'][idx], retain)
 
     def energy_cb(self, retain = True):
         """ Update the energy according to the DOI thresholds """
         dth = self.doi.thresholds()
-        doi = self.d['DOI']
+        doi = self.d['D']
         idx = np.nonzero((dth[0] < doi) & (doi < dth[1]))[0]
         self.energy.update(self.d['E'][idx], retain)
 

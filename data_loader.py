@@ -7,11 +7,13 @@ from collections.abc import Iterable
 from tkinter.ttk import Progressbar
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure, SubplotParams
+from numpy.lib import recfunctions as rfn
 
 import petmr
 
 from calibration import (
         CoincidenceFileHandle,
+        SingleDType,
         CoincidenceDType,
         load_block_singles_data,
         load_block_coincidence_data,
@@ -108,8 +110,9 @@ class SinglesLoader(ProgressPopup):
             self.data.put(e)
             return
 
-        unique_blocks = np.unique(d[:,0])
-        with concurrent.futures.ThreadPoolExecutor(8) as ex:
+        d = rfn.unstructured_to_structured(d, SingleDType, copy = False)
+        unique_blocks = np.unique(d['block'])
+        with concurrent.futures.ThreadPoolExecutor(os.cpu_count()) as ex:
             fut = {ub: ex.submit(load_block_singles_data, d, ub) for ub in unique_blocks}
             self.data.put({ub: f.result() for ub, f in fut.items()})
 
@@ -271,7 +274,7 @@ class CoincidenceLoader(tk.Toplevel):
     def load(self):
         start, end, t0, t1 = self.subset()
         subset = self.data[start:end]
-        print(f'Load {t0}s to {t1}s: {round(subset.shape[0] / 1e6)}M events')
+        print(f'Load {t0}s to {t1}s: {round((end-start) / 1e6)}M events')
 
         lk = threading.Lock()
         n = 0

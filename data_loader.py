@@ -15,6 +15,7 @@ from calibration import (
         CoincidenceFileHandle,
         SingleDType,
         CoincidenceDType,
+        load_all_blocks,
         load_block_singles_data,
         load_block_coincidence_data,
         max_events)
@@ -283,8 +284,8 @@ class CoincidenceLoader(tk.Toplevel):
             nonlocal n
             d = load_block_coincidence_data(subset, ub)
             with lk:
-                self.pp.status.put(((n / petmr.nblocks * 100), n))
-                n = n + 1
+                self.pp.status.put((n / petmr.nblocks * 100, n))
+                n += 1
             return d
 
         with concurrent.futures.ThreadPoolExecutor(os.cpu_count()) as ex:

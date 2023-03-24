@@ -35,18 +35,26 @@ class CoincidenceFileHandle:
         self.data = np.memmap(data, CoincidenceDType)
         nev = self.data.shape[0]
 
+        # sample events at regular intervals (e.g. every 100e6 events)
         idx = np.linspace(0, nev-1, nperiods*naverage + 1, dtype = np.ulonglong)
+
+        # get the absolute time (in 0.1s intervals) at each sampled event
         times = self.data['abstime'][idx].astype(float)
 
+        # correct for instances where the 16 bit counter rolls over (every ~2hrs)
         rollover = np.diff(times)
-        rollover = np.where(rollover < 0)[0]
+        rollover = np.nonzero(rollover < 0)[0]
         for i in rollover:
             times[i+1:] += 2**16
 
+        # event rate is the number of events over the elapsed time between samples
         ev_rate = np.diff(idx) / np.diff(times)
 
+        # average consecutive samples to reduce noise
         self.event_rate = ev_rate.reshape(-1,naverage).mean(1)
         self.times = times[:-1].reshape(-1,naverage).mean(1)
+
+        # calculate file positions corresponding to each time point
         self.idx = idx[:nperiods*naverage:naverage]
         self.fpos = self.idx * CoincidenceDType.itemsize
 
@@ -75,40 +83,40 @@ class CoincidenceFileHandle:
         return n if max_events is None else min(n, int(max_events))
 
 def load_all_blocks(data_in, start = 0, end = max_events):
-    data = np.memmap(data_in, np.uint16).reshape(-1,11)
-    subset = data[start:end]
+    """ group the input data by block to hopefully accelerate data loading """
 
-    order = np.argsort(subset[:,0]) # can be replaced with cython pargsort
-    d = subset[order]
+    data = np.memmap(data_in, np.uint16).reshape(-1,11)[start:end]
 
-    uq, idx = np.unique(d[:,0], return_index = True)
-    idx = np.append(idx, [d.shape[0]-1])
+    # the first column represents the coincidence block pairs
+    # sort events according to the block pair where they occurred
+    order = np.argsort(data[:,0]) # can be replaced with cython pargsort
+
+    # get a view of the same data in a structured format, and sort
+    ds = np.memmap(data_in, CoincidenceDType)[start:end][order]
+    blocks = data[:,0][order]
+
+    # determine the indices corresponding to each unique block pair
+    uq, idx = np.unique(blocks, return_index = True)
+    idx = np.append(idx, [blocks.size-1])
     ablks, bblks = uq >> 8, uq & 0xFF
 
     def get_idx(b, blks, idx):
+        """ identify all indices corresponding to a particular block """
         i = np.nonzero(blks == b)[0]
         if len(i) == 0: return np.array([], int)
         return np.concatenate([np.arange(s,e) for s,e in zip(idx[i], idx[i+1])])
 
-    def extract_data(din, dout, idx, out_row, in_col):
-        slc = slice(out_row, out_row + idx.size, None)
-        if idx.size > 0:
-            dout['E'][slc] = d[idx,in_col+0] + d[idx,in_col+1]
-            dout['X'][slc] = d[idx,in_col+4]
-            dout['Y'][slc] = d[idx,in_col+5]
-            with np.errstate(divide = 'ignore', invalid = 'ignore'):
-                dout['D'][slc] = d[idx,in_col].astype(float) * n_doi_bins / dout['E'][slc]
-    
     def load(blk):
         idxa = get_idx(blk, ablks, idx)
         idxb = get_idx(blk, bblks, idx)
         na, nb = idxa.size, idxb.size
 
         tf = tempfile.NamedTemporaryFile()
-        arr = np.memmap(tf.name, VisualizationDType, mode = 'w+', shape = (na+nb,))
+        arr = np.memmap(tf.name, VisualizationDType,
+                mode = 'w+', shape = (na+nb,))
 
-        extract_data(d, arr, idxa, 0, 2)
-        extract_data(d, arr, idxb, na, 4)
+        copy_to_vis(ds[idxa], arr[:na], 'a')
+        copy_to_vis(ds[idxb], arr[na:], 'b')
         return arr
 
     with concurrent.futures.ThreadPoolExecutor(os.cpu_count()) as ex:
@@ -116,14 +124,14 @@ def load_all_blocks(data_in, start = 0, end = max_events):
 
     return {blk: f.result() for blk,f in enumerate(futs)}
 
-def copy_to_vis(din, dout, ab, offset):
-    subset = dout[offset:(offset + din.size)]
+def copy_to_vis(din, dout, ab = ''):
+    # copy data from CoincidenceDType/SingleDType to VisualizationDType
     ef, er, x, y = f'e{ab}F', f'e{ab}R', f'x{ab}', f'y{ab}'
-    subset['E'] = din[ef] + din[er]
-    subset['X'] = din[x]
-    subset['Y'] = din[y]
+    dout['E'] = din[ef] + din[er]
+    dout['X'] = din[x]
+    dout['Y'] = din[y]
     with np.errstate(divide = 'ignore', invalid = 'ignore'):
-        subset['D'] = din[ef].astype(float) * n_doi_bins / subset['E']
+        dout['D'] = din[ef].astype(float) * n_doi_bins / dout['E']
 
 def load_block_coincidence_data(data, blk):
     idxa = np.nonzero(data['blka'] == blk)[0]
@@ -131,8 +139,8 @@ def load_block_coincidence_data(data, blk):
     tf = tempfile.NamedTemporaryFile()
     arr = np.memmap(tf.name, VisualizationDType, mode = 'w+',
             shape = (idxa.size + idxb.size,))
-    copy_to_vis(data[idxa], arr, 'a', 0)
-    copy_to_vis(data[idxb], arr, 'b', idxa.size)
+    copy_to_vis(data[idxa], arr[:idxa.size], 'a')
+    copy_to_vis(data[idxb], arr[idxa.size:], 'b')
     return arr
 
 def load_block_singles_data(data, blk):
@@ -140,7 +148,7 @@ def load_block_singles_data(data, blk):
     tf = tempfile.NamedTemporaryFile()
     arr = np.memmap(tf.name, VisualizationDType,
             mode = 'w+', shape = (idx.size,))
-    copy_to_vis(data[idx], arr, '', 0)
+    copy_to_vis(data[idx], arr)
     return arr
 
 def flood_preprocess(fld):
@@ -214,7 +222,7 @@ def create_scaled_calibration(data, cfgdir, sync = None):
     ppeak   = np.ones((petmr.nblocks, petmr.ncrystals_total), np.double) * -1;
     doi     = np.ones((petmr.nblocks, petmr.ncrystals_total, petmr.ndoi), np.double) * -1;
 
-    with concurrent.futures.ThreadPoolExecutor(16) as ex:
+    with concurrent.futures.ThreadPoolExecutor(os.cpu_count()) as ex:
         futs = [ex.submit(scale_single_block, data, blk, cfgdir, sync)
                 for blk in range(petmr.nblocks)]
 

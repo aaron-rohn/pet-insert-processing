@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <filesystem>
 #include <numeric>
+#include <vector>
+#include <fstream>
 
 #include "singles.h"
 
@@ -27,7 +29,7 @@ struct CoincidenceData
     uint16_t data[vals_per_ev] = {0};
 
     CoincidenceData() {};
-    CoincidenceData(const Single&, const Single&, bool = true);
+    CoincidenceData(const SingleData&, const SingleData&, bool = true);
 
     static void write(std::ofstream &f, const Coincidences &cd)
     { f.write((char*)cd.data(), cd.size()*sizeof(CoincidenceData)); }
@@ -77,7 +79,7 @@ struct CoincidenceData
     inline std::tuple<uint16_t,uint16_t,uint16_t,uint16_t> pos() const
     { return std::make_tuple(x_a(),y_a(),x_b(),y_b()); }
 
-    static Coincidences sort(const std::vector<Single>&);
+    static Coincidences sort(const std::vector<SingleData>&);
     static SortedValues coincidence_sort_span(
             std::vector<std::string>,
             std::vector<std::streampos>,

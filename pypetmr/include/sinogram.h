@@ -175,4 +175,24 @@ class Michelogram
     Iterator end() { return Iterator(Geometry::nring, *this); };
 };
 
+class Reader: std::streambuf, public std::istream
+{
+    std::vector<char> buf;
+
+    public:
+
+    Reader(std::string fname, std::streampos start, std::streampos end):
+        std::istream(this), buf(end - start)
+    {
+        std::ifstream base(fname, std::ios::binary);
+        base.seekg(start);
+        base.read(buf.data(), buf.size());
+
+        if (base.gcount() != (std::streamsize)buf.size())
+            buf.resize(base.gcount());
+
+        setg(buf.data(), buf.data(), buf.data() + buf.size());
+    }
+};
+
 #endif

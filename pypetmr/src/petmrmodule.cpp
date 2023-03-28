@@ -1,4 +1,3 @@
-#include <ios>
 #define PY_SSIZE_T_CLEAN
 #define PY_ARRAY_UNIQUE_SYMBOL petmr_ARRAY_API
 
@@ -7,6 +6,8 @@
 #include "sinogram.h"
 
 #include <future>
+#include <queue>
+#include <deque>
 
 static PyObject *petmr_singles(PyObject*, PyObject*);
 static PyObject *petmr_coincidences(PyObject*, PyObject*);
@@ -108,22 +109,22 @@ template <typename... args>
 PyObject *queue_put(PyObject *q, const char *fmt, args... objs)
 { return q ? PyObject_CallMethod(q, "put", fmt, objs...) : NULL; }
 
-void* Single::to_py_data(std::vector<Single> &events)
+PyObject* single_to_py_data(struct SingleData *events, uint64_t nev)
 {
     // Move this function here so that singles and coincidences
     // dont have any references to python libraries
 
     // 'block', 'eF', 'eR', 'x', 'y'
     const int ncol = 5;
-    npy_intp dims[] = {(int)events.size(), ncol};
+    npy_intp dims[] = {(int)nev, ncol};
     PyObject *singles = PyArray_SimpleNew(2, dims, NPY_UINT16);
 
-    for (size_t i = 0; i < events.size(); i++)
+    for (size_t i = 0; i < nev; i++)
     {
-        const Single &s = events[i];
+        const SingleData &s = events[i];
         SingleData sd(s);
         uint16_t *row = (uint16_t*)PyArray_GETPTR2((PyArrayObject*)singles, i, 0);
-        row[0] = s.blk;
+        row[0] = s.block;
         row[1] = sd.eF;
         row[2] = sd.eR;
         row[3] = sd.x;
@@ -131,6 +132,36 @@ void* Single::to_py_data(std::vector<Single> &events)
     }
 
     return singles;
+}
+
+void find_tt_offset(
+        std::string fname,
+        std::mutex &l,
+        std::condition_variable_any &cv,
+        std::queue<std::tuple<uint64_t,std::streampos>> &q,
+        std::atomic_bool &stop
+) {
+    uint64_t tt = 0, incr = 1000;
+    FILE *f = fopen(fname.c_str(), "rb");
+
+    off_t pos;
+    while ((pos = go_to_tt(f, tt)) > 0)
+    {
+        {
+            std::lock_guard<std::mutex> lg(l);
+            q.push(std::make_tuple(tt,pos));
+        }
+
+        cv.notify_all();
+        tt += incr;
+    }
+
+    {
+        std::lock_guard<std::mutex> lg(l);
+        q.push(std::make_tuple(0,-1));
+    }
+
+    cv.notify_all();
 }
 
 /*
@@ -155,6 +186,18 @@ petmr_singles(PyObject *self, PyObject *args)
         return NULL;
     }
 
+    PyThreadState *_save = PyEval_SaveThread();
+
+    uint64_t nev = 0;
+    struct SingleData *s = read_singles(fname, 0, -1, &nev);
+    PyObject *ret = single_to_py_data(s, nev);
+    free(s);
+
+    PyEval_RestoreThread(_save);
+
+    return ret;
+
+    /*
     uint64_t nevents_approx = fsize(fname) / Record::event_size;
     if (max_events > 0) nevents_approx = std::min(nevents_approx, max_events);
 
@@ -198,6 +241,7 @@ petmr_singles(PyObject *self, PyObject *args)
 
     PyEval_RestoreThread(_save);
     return (PyObject*)Single::to_py_data(events);
+    */
 }
 
 /*
@@ -253,7 +297,7 @@ petmr_coincidences(PyObject *self, PyObject *args)
     // Create time-tag search threads - one per file
     for (size_t i = 0; i < n; i++)
     {
-        tt_scan.emplace_back(Record::find_tt_offset,
+        tt_scan.emplace_back(find_tt_offset,
                              file_list[i],
                              std::ref(all_lock[i]),
                              std::ref(all_cv[i]),
@@ -566,49 +610,17 @@ petmr_validate_singles_file(PyObject* self, PyObject* args)
     if (!PyArg_ParseTuple(args, "s", &singles_file))
         return NULL;
 
-    std::ifstream f (singles_file, std::ios::binary);
-    if (!f.good())
-    {
-        PyErr_SetFromErrno(PyExc_IOError);
-        return NULL;
-    }
-
-    const auto pred = [](bool v){ return v;};
-    const auto all = [=](std::vector<bool> v){
-        return std::all_of(v.begin(), v.end(), pred); };
-
-    const int nmodules = 4;
-
-    uint8_t data[Record::event_size];
-    std::vector<bool> has_tt (nmodules, false);
-    bool has_rst = false, valid = false;
+    uint8_t flags = 0;
 
     Py_BEGIN_ALLOW_THREADS
-
-    while (f.good())
-    {
-        Record::read(f, data);
-        Record::align(f, data);
-
-        auto mod = Record::get_module(data) % nmodules;
-
-        if (!Record::is_single(data))
-        {
-            has_rst = has_rst || (TimeTag(data).value == 0);
-            has_tt[mod] = true;
-            valid = has_rst && all(has_tt);
-
-            if (valid) break;
-        }
-    }
-
+    flags = validate(singles_file);
     Py_END_ALLOW_THREADS
 
-    if (valid) Py_RETURN_TRUE;
-    else
-    {
-        return Py_BuildValue("(iiiii)",
-                (int)has_rst, (int)has_tt[0], (int)has_tt[1],
-                (int)has_tt[2], (int)has_tt[3]);
-    }
+    if (flags == 0x1F) Py_RETURN_TRUE;
+    else return Py_BuildValue("(iiiii)",
+            (int)((flags >> 4) & 0x1),  // has rst
+            (int)((flags >> 0) & 0x1),  // mod 3 has tt
+            (int)((flags >> 1) & 0x1),  // mod 2 has tt
+            (int)((flags >> 2) & 0x1),  // mod 1 has tt
+            (int)((flags >> 3) & 0x1)); // mod 0 has tt
 }

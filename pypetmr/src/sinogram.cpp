@@ -4,6 +4,7 @@
 
 #include <sinogram.h>
 #include <cstdio>
+#include <cstring>
 
 int Michelogram::energy_window(size_t blk, size_t xtal, double e) const
 {

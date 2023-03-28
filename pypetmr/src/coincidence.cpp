@@ -1,32 +1,31 @@
 #include "coincidence.h"
+#include <cstring>
 
-CoincidenceData::CoincidenceData(const Single &a, const Single &b, bool isprompt)
+CoincidenceData::CoincidenceData(const SingleData &a, const SingleData &b, bool isprompt)
 {
     // Event a is earlier (lower abstime), b is later (greater abstime)
     // Event 1 has the lower block number, 2 has the higher
 
-    const auto &[ev1, ev2] = a.blk < b.blk ?
+    const auto &[ev1, ev2] = a.block < b.block ?
         std::tie(a, b) : std::tie(b, a);
 
-    SingleData sd1(ev1), sd2(ev2);
-
     // record absolute time in incr. of 100 ms
-    uint64_t t = a.abs_time;
-    t /= (TimeTag::clks_per_tt * 100);
+    uint64_t t = a.abstime;
+    t /= CLK_PER_TT*100;
     abstime(t);
 
-    int8_t dt = ev1.abs_time - ev2.abs_time;
+    int8_t dt = ev1.abstime - ev2.abstime;
     tdiff(isprompt, dt);
 
-    blk(ev1.blk, ev2.blk);
-    e_aF(sd1.eF);
-    e_aR(sd1.eR);
-    e_bF(sd2.eF);
-    e_bR(sd2.eR);
-    x_a(sd1.x);
-    y_a(sd1.y);
-    x_b(sd2.x);
-    y_b(sd2.y);
+    blk(ev1.block, ev2.block);
+    e_aF(ev1.eF);
+    e_aR(ev1.eR);
+    e_bF(ev2.eF);
+    e_bR(ev2.eR);
+    x_a(ev1.x);
+    y_a(ev1.y);
+    x_b(ev2.x);
+    y_b(ev2.y);
 }
 
 /*
@@ -40,39 +39,32 @@ SortedValues CoincidenceData::coincidence_sort_span(
         std::vector<std::streampos> end_pos
 ) {
     const auto n = fnames.size();
-    std::vector<std::streampos> fsizes;
-    for (size_t i = 0; i < n; i++)
-        fsizes.push_back(end_pos[i] - start_pos[i]);
+    std::vector<struct SingleData*> ptrs;
+    std::vector<uint64_t> counters;
+    uint64_t nev = 0, total = 0, current = 0;
 
-    auto to_proc = std::accumulate(fsizes.begin(), fsizes.end(), 0);
-    uint64_t approx_singles = to_proc / Record::event_size;
-
-    std::vector<Single> singles;
-    singles.reserve(approx_singles);
-
-    std::vector<TimeTag> last_tt (Geometry::nmodules);
-    uint8_t data[Record::event_size];
-
-    // Load all the singles from each file
     for (size_t i = 0; i < n; i++)
     {
-        Reader rdr (fnames[i], start_pos[i], end_pos[i]);
-        while(rdr)
-        {
-            Record::read(rdr, data);
-            Record::align(rdr, data);
+        struct SingleData *s = read_singles(
+                fnames[i].c_str(), (off_t)start_pos[i], (off_t)end_pos[i], &nev);
 
-            auto mod = Record::get_module(data);
+        total += nev;
+        ptrs.push_back(s);
+        counters.push_back(nev);
+    }
 
-            if (Record::is_single(data))
-                singles.emplace_back(data, last_tt[mod]);
-            else
-                last_tt[mod] = TimeTag(data);
-        }
+    std::vector<SingleData> singles(total);
+    for (size_t i = 0; i < n; i++)
+    {
+        std::memcpy(&singles[current], ptrs[i], counters[i]*sizeof(SingleData));
+        current += counters[i];
+        free(ptrs[i]);
     }
 
     // time-sort the singles to ascending order
-    std::sort(singles.begin(), singles.end());
+    std::sort(singles.begin(), singles.end(),
+            [](const SingleData &a, const SingleData &b)
+            { return a.abstime < b.abstime; });
 
     // generate prompts and delays
     auto coin = CoincidenceData::sort(singles);
@@ -80,7 +72,7 @@ SortedValues CoincidenceData::coincidence_sort_span(
 }
 
 Coincidences CoincidenceData::sort(
-        const std::vector<Single> &singles
+        const std::vector<SingleData> &singles
 ) {
     Coincidences coin;
 
@@ -90,12 +82,12 @@ Coincidences CoincidenceData::sort(
         // |*** prompts ***| ----------- |*** delays ***| ---->
         // |<--- width --->|
         // |<------------ delay -------->|
-        auto dend = a->abs_time + delay + width;
-        for (auto b = a + 1; b != e && b->abs_time < dend; ++b)
+        auto dend = a->abstime + delay + width;
+        for (auto b = a + 1; b != e && b->abstime < dend; ++b)
         {
-            auto dt = b->abs_time - a->abs_time;
+            auto dt = b->abstime - a->abstime;
             bool isprompt = dt < width, isdelay = dt >= delay;
-            if ((isprompt || isdelay) && a->valid_module(b->mod))
+            if ((isprompt || isdelay) && VALID_MODULE(MODULE(a->block), MODULE(b->block)))
                 coin.emplace_back(*a, *b, isprompt);
         }
     }

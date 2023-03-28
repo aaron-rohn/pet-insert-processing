@@ -286,6 +286,11 @@ class SinogramDisplay(tk.Frame):
         pp = ProgressPopup(fmt = '{}')
 
         def launch():
+            # histogram counts and bins for energy and DOI
+            # dims are: block, crystal, (e-counts,e-bins,d-counts,d-bins), histogram
+            hist = np.zeros((petmr.nblocks, petmr.ncrystals_total, 4, crystal.nbins + 1))
+            hist[:,:,[1,3],:] = -1
+
             try:
                 for i, (start, end, data) in enumerate(cf):
                     if pp.terminate.is_set(): break
@@ -294,7 +299,10 @@ class SinogramDisplay(tk.Frame):
 
                     sync = np.array([0]), threading.Lock(), pp.status
                     luts, ppeak, doi = calibration.create_scaled_calibration(
-                            data[:nev], cfgdir, sync)
+                            data[:nev], cfgdir, hist, sync)
+
+                    #ppeak.tofile(f'photopeaks_{i}.raw')
+                    #doi.tofile(f'doi_{i}.raw')
 
                     pp.status.put((0, f'Sort listmode data {start} to {end}'))
                     petmr.save_listmode(lm_fname, coin_fname,

@@ -345,12 +345,10 @@ class Plots(tk.Frame):
 
         es = self.d['E']
         doi = self.d['D']
-        idx = np.nonzero(
-                (eth[0] < es) & (es < eth[1]) &
-                (dth[0] < doi) & (doi < dth[1]))[0]
 
-        x, y = self.d['X'][idx], self.d['Y'][idx]
-        self.flood.update(x, y,
+        idx = (eth[0] < es) & (es < eth[1]) & (dth[0] < doi) & (doi < dth[1])
+        windowed = self.d[idx]
+        self.flood.update(windowed['X'], windowed['Y'],
                           warp = self.warp, overlay = lut,
                           draw_voronoi = self.show_voronoi.get(),
                           draw_points = self.show_points.get())
@@ -395,8 +393,7 @@ class Plots(tk.Frame):
         config_file = os.path.join(output_dir, 'config.json')
         cfg = try_open(config_file)
 
-        create_cfg_vals(self.d, lut, blk, cfg,
-                (self.energy.counts, self.energy.bins))
+        create_cfg_vals(self.d, lut, blk, cfg)
 
         with open(config_file, 'w') as f:
             json.dump(cfg, f)

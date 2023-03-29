@@ -1,12 +1,14 @@
 #ifndef COINCIDENCE_H
 #define COINCIDENCE_H
 
+#include <condition_variable>
 #include <iostream>
 #include <algorithm>
 #include <filesystem>
 #include <numeric>
 #include <vector>
 #include <fstream>
+#include <queue>
 
 #include "singles.h"
 
@@ -78,6 +80,13 @@ struct CoincidenceData
     
     inline std::tuple<uint16_t,uint16_t,uint16_t,uint16_t> pos() const
     { return std::make_tuple(x_a(),y_a(),x_b(),y_b()); }
+
+    static void find_tt_offset(
+            std::string,
+            std::mutex&,
+            std::condition_variable_any&,
+            std::queue<std::tuple<uint64_t,std::streampos>>&,
+            std::atomic_bool&);
 
     static Coincidences sort(const std::vector<SingleData>&);
     static SortedValues coincidence_sort_span(

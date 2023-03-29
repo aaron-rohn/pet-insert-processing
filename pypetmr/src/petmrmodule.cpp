@@ -109,61 +109,6 @@ template <typename... args>
 PyObject *queue_put(PyObject *q, const char *fmt, args... objs)
 { return q ? PyObject_CallMethod(q, "put", fmt, objs...) : NULL; }
 
-PyObject* single_to_py_data(struct SingleData *events, uint64_t nev)
-{
-    // Move this function here so that singles and coincidences
-    // dont have any references to python libraries
-
-    // 'block', 'eF', 'eR', 'x', 'y'
-    const int ncol = 5;
-    npy_intp dims[] = {(int)nev, ncol};
-    PyObject *singles = PyArray_SimpleNew(2, dims, NPY_UINT16);
-
-    for (size_t i = 0; i < nev; i++)
-    {
-        const SingleData &s = events[i];
-        SingleData sd(s);
-        uint16_t *row = (uint16_t*)PyArray_GETPTR2((PyArrayObject*)singles, i, 0);
-        row[0] = s.block;
-        row[1] = sd.eF;
-        row[2] = sd.eR;
-        row[3] = sd.x;
-        row[4] = sd.y;
-    }
-
-    return singles;
-}
-
-void find_tt_offset(
-        std::string fname,
-        std::mutex &l,
-        std::condition_variable_any &cv,
-        std::queue<std::tuple<uint64_t,std::streampos>> &q,
-        std::atomic_bool &stop
-) {
-    uint64_t tt = 0, incr = 1000;
-    FILE *f = fopen(fname.c_str(), "rb");
-
-    off_t pos;
-    while ((pos = go_to_tt(f, tt)) > 0)
-    {
-        {
-            std::lock_guard<std::mutex> lg(l);
-            q.push(std::make_tuple(tt,pos));
-        }
-
-        cv.notify_all();
-        tt += incr;
-    }
-
-    {
-        std::lock_guard<std::mutex> lg(l);
-        q.push(std::make_tuple(0,-1));
-    }
-
-    cv.notify_all();
-}
-
 /*
  * Load singles data from a single file
  */
@@ -179,69 +124,26 @@ petmr_singles(PyObject *self, PyObject *args)
                 &fname, &max_events,
                 &terminate, &status_queue)) return NULL;
 
-    std::ifstream f (fname, std::ios::binary);
-    if (!f.good()) 
-    {
-        PyErr_SetFromErrno(PyExc_IOError);
-        return NULL;
-    }
-
     PyThreadState *_save = PyEval_SaveThread();
 
-    uint64_t nev = 0;
+    uint64_t nev = max_events;
     struct SingleData *s = read_singles(fname, 0, -1, &nev);
-    PyObject *ret = single_to_py_data(s, nev);
-    free(s);
 
-    PyEval_RestoreThread(_save);
+    npy_intp dims[] = {(npy_intp)nev, 5};
+    PyArrayObject *singles = (PyArrayObject*)PyArray_SimpleNew(2, dims, NPY_UINT16);
 
-    return ret;
-
-    /*
-    uint64_t nevents_approx = fsize(fname) / Record::event_size;
-    if (max_events > 0) nevents_approx = std::min(nevents_approx, max_events);
-
-    bool stop = false;
-    uint64_t nevents = 0;
-    uint8_t data[Record::event_size];
-    std::vector<TimeTag> last_tt (Geometry::nmodules);
-    std::vector<Single> events;
-
-    PyThreadState *_save = PyEval_SaveThread();
-
-    events.reserve(nevents_approx);
-
-    while (f.good() && !stop)
+    for (size_t i = 0; i < nev; i++)
     {
-        nevents++;
-
-        if (max_events > 0 && nevents > max_events)
-            break;
-
-        Record::read(f, data);
-        Record::align(f, data);
-
-        auto mod = Record::get_module(data);
-
-        if (Record::is_single(data))
-            events.emplace_back(data, last_tt[mod]);
-        else
-            last_tt[mod] = TimeTag(data);
-
-        if (nevents % 100'000 == 0)
-        {
-            double perc = ((double)nevents) / nevents_approx * 100.0;
-
-            PyEval_RestoreThread(_save);
-            stop |= term_is_set(terminate);
-            queue_put(status_queue, "((dK))", perc, nevents);
-            _save = PyEval_SaveThread();
-        }
+        *(uint16_t*)PyArray_GETPTR2(singles, i, 0) = s[i].block;
+        *(uint16_t*)PyArray_GETPTR2(singles, i, 1) = s[i].eF;
+        *(uint16_t*)PyArray_GETPTR2(singles, i, 2) = s[i].eR;
+        *(uint16_t*)PyArray_GETPTR2(singles, i, 3) = s[i].x;
+        *(uint16_t*)PyArray_GETPTR2(singles, i, 4) = s[i].y;
     }
 
+    free(s);
     PyEval_RestoreThread(_save);
-    return (PyObject*)Single::to_py_data(events);
-    */
+    return (PyObject*)singles;
 }
 
 /*
@@ -290,14 +192,12 @@ petmr_coincidences(PyObject *self, PyObject *args)
     // calculate total size of all singles files
     std::streampos total_size = 0;
     for (auto &fname : file_list)
-    {
         total_size += fsize(fname.c_str());
-    }
 
     // Create time-tag search threads - one per file
     for (size_t i = 0; i < n; i++)
     {
-        tt_scan.emplace_back(find_tt_offset,
+        tt_scan.emplace_back(CoincidenceData::find_tt_offset,
                              file_list[i],
                              std::ref(all_lock[i]),
                              std::ref(all_cv[i]),

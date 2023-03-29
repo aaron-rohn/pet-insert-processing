@@ -9,13 +9,12 @@
 
 #define VALID_HEADER 0x1F
 #define FLOOD_COORD_SCALE 511
-#define MAX_BUF_SIZE (16ULL*1024*1024*1024)
 
 struct __attribute__((packed, scalar_storage_order("big-endian"))) Single
 {
-    uint8_t header      : 5;
-    uint8_t flag        : 1;
-    uint8_t block       : 6;
+    uint16_t header     : 5;
+    uint16_t flag       : 1;
+    uint16_t block      : 6;
     uint16_t d_rear     : 12;
     uint16_t c_rear     : 12;
     uint16_t b_rear     : 12;
@@ -29,77 +28,35 @@ struct __attribute__((packed, scalar_storage_order("big-endian"))) Single
 
 struct __attribute__((packed, scalar_storage_order("big-endian"))) TimeTag
 {
-    uint8_t header  : 5;
-    uint8_t flag    : 1;
-    uint8_t block   : 6;
-    uint8_t         : 4;
+    uint16_t header : 5;
+    uint16_t flag   : 1;
+    uint16_t block  : 6;
+    uint16_t        : 4;
     uint64_t        : 64;
     uint64_t coarse_time : 48;
 };
 
-union Record
+union Record_
 {
     struct Single sgl;
     struct TimeTag tt;
 };
 
-union Record *read_record(char **bstart, char *bend)
+struct Reader
 {
-    static const size_t incr = sizeof(union Record);
-    union Record *d = (union Record*)(*bstart);
-    while (d->sgl.header != VALID_HEADER && *bstart < bend)
-    {
-        (*bstart)++;
-        d = (union Record*)(*bstart);
-    }
+    FILE *f;
+    char buf[1024*1024];
+    char *start, *end;
+    off_t pos;
+};
 
-    if (*bstart + incr > bend)
-        return NULL;
-
-    (*bstart) += incr;
-    return d;
-}
-
-off_t go_to_tt(FILE *f, uint64_t value)
-{
-    union Record *d;
-    uint64_t last_tt_value = 0;
-    int synced = 0;
-
-    char buf[1024*8];
-    char *bstart = buf, *bend = buf;
-
-    while (1)
-    {
-        size_t occ = bend - bstart;
-        if (occ > 0) memmove(buf, bstart, occ);
-
-        bstart = buf;
-        bend = buf + occ;
-        bend += fread(bend, 1, sizeof(buf) - occ, f);
-
-        if (bstart == bend) break;
-
-        while ((d = read_record(&bstart, bend)) != NULL)
-        {
-            if (!d->sgl.flag)
-            {
-                synced = d->tt.coarse_time == (last_tt_value + 1);
-                last_tt_value = d->tt.coarse_time;
-
-                if ((value == 0 && d->tt.coarse_time == 0) ||
-                        (synced && value > 0 && d->tt.coarse_time >= value))
-                    return ftello(f) - (bend - bstart);
-            }
-        }
-    }
-
-    return 0;
-}
+typedef union Record_ Record;
 
 void to_single_data(struct Single *d, struct TimeTag *tt, struct SingleData *sd)
 {
     sd->block = d->block;
+    sd->abstime = tt->coarse_time * CLK_PER_TT + d->fine_time;
+
     sd->eR = d->a_rear + d->b_rear + d->c_rear + d->d_rear;
     sd->eF = d->a_front + d->b_front + d->c_front + d->d_front;
 
@@ -110,11 +67,85 @@ void to_single_data(struct Single *d, struct TimeTag *tt, struct SingleData *sd)
 
     sd->x = round(xR * FLOOD_COORD_SCALE);
     sd->y = round((yF + yR) / 2.0 * FLOOD_COORD_SCALE);
-    sd->abstime = tt->coarse_time * CLK_PER_TT + d->fine_time;
 }
 
-struct SingleData *read_singles(const char *fname, off_t start, off_t end, uint64_t *nev)
+Record *read_record(char **start, char *end)
 {
+    // rec and start both point to the cursor
+    Record **rec = (Record**)start;
+
+    // ensure byte-alignment of the single event
+    while (*start < end && (*rec)->sgl.header != VALID_HEADER)
+        (*start)++; // advance cursor by 1 byte until reaching header
+
+    // ensure that the buffer has enough data
+    // return the event under the cursor, then advance the cursor by 1 event
+    return (*start + sizeof(Record) > end) ? NULL : (*rec)++;
+}
+
+struct Reader new_reader(FILE *f)
+{
+    struct Reader rdr = {.f = f};
+    rdr.start = rdr.end = rdr.buf;
+    rdr.pos = ftello(rdr.f);
+    return rdr;
+}
+
+Record *reader_read(struct Reader *rdr)
+{
+    do
+    {
+        Record *d = read_record(&(rdr->start), rdr->end);
+        if (d) return d;
+
+        // insufficient data left in buffer
+
+        // move any 'tail' to the start of the buffer
+        size_t occ = rdr->end - rdr->start;
+        if (occ > 0) memmove(rdr->buf, rdr->start, occ);
+
+        // re-fill the buffer
+        rdr->start = rdr->buf;
+        rdr->end   = rdr->buf + occ;
+        rdr->end   += fread(rdr->end, 1, sizeof(rdr->buf) - occ, rdr->f);
+        rdr->pos   = ftello(rdr->f);
+    }
+    while (rdr->start != rdr->end); // end when no data left in file
+
+    return NULL;
+}
+
+off_t reader_pos(struct Reader *rdr)
+{
+    return rdr->pos - (rdr->end - rdr->start);
+}
+
+off_t go_to_tt(FILE *f, uint64_t value)
+{
+    Record *d;
+    uint64_t last_tt_value = 0;
+    int synced = 0;
+
+    struct Reader rdr = new_reader(f);
+    while ((d = reader_read(&rdr)))
+    {
+        if (d->sgl.flag) continue;
+
+        synced = d->tt.coarse_time == (last_tt_value + 1);
+        last_tt_value = d->tt.coarse_time;
+
+        if ((value == 0 && d->tt.coarse_time == 0) ||
+                (synced && value > 0 && d->tt.coarse_time >= value))
+            return reader_pos(&rdr);
+    }
+
+    return 0;
+}
+
+struct SingleData *read_singles(
+        const char *fname,
+        off_t start, off_t end, uint64_t *nev
+) {
     FILE *f = fopen(fname, "rb");
 
     if (start < 0) start = 0;
@@ -125,31 +156,27 @@ struct SingleData *read_singles(const char *fname, off_t start, off_t end, uint6
         end = ftello(f);
     }
 
-    off_t span = end - start;
-    if (span > MAX_BUF_SIZE)
-    {
-        fprintf(stderr, "Truncate singles buffer length to 16GiB\n");
-        span = MAX_BUF_SIZE;
-    }
-
     fseeko(f, start, SEEK_SET);
-    char *data = malloc(span);
-    span = fread(data, 1, span, f);
-    fclose(f);
 
-    struct TimeTag tt[NMODULES];
-    uint64_t nev_approx = span / sizeof(union Record);
-    struct SingleData* buf = calloc(nev_approx, sizeof(struct SingleData));
-    union Record *d;
+    // Get the lesser of the specified max events or the file size
+    // Note that file size includes timetags, so it's only an approximate
+    // estimate of the number of singles
+    uint64_t approx = (end - start) / sizeof(Record);
+    uint64_t len = *nev ?: approx; // input value of nev is the max events
+    len = len < approx ? len : approx;
+
+    struct SingleData *buf = calloc(len, sizeof(struct SingleData));
+
     *nev = 0;
+    Record *d;
+    struct TimeTag tt[NMODULES];
 
-    char *bstart = data, *bend = data + span;
-    while ((d = read_record(&bstart, bend)) != NULL)
+    struct Reader rdr = new_reader(f);
+    while ((d = reader_read(&rdr)) && (*nev < len) && (reader_pos(&rdr) < end))
     {
         if (d->sgl.flag)
         {
-            to_single_data(&d->sgl, &tt[MODULE(d->sgl.block)], &buf[*nev]);
-            (*nev)++;
+            to_single_data(&d->sgl, &tt[MODULE(d->sgl.block)], &buf[(*nev)++]);
         }
         else
         {
@@ -157,42 +184,32 @@ struct SingleData *read_singles(const char *fname, off_t start, off_t end, uint6
         }
     }
 
-    free(data);
+    fclose(f);
     return buf;
 }
 
 uint8_t validate(const char *fname)
 {
-    FILE *f = fopen(fname, "rb");
-    union Record *d;
+    Record *d;
 
-    char buf[1024*8];
-    char *bstart = buf, *bend = buf;
-
-    uint8_t flags = 0, flags_valid = 0x1F;
     const int nmod = 4;
+    const uint8_t all_valid = 0x1F;
+    uint8_t flags = 0;
 
-    while (1)
+    struct Reader rdr = {.f = fopen(fname, "rb")};
+    rdr.start = rdr.end = rdr.buf;
+
+    while ((d = reader_read(&rdr)) && (flags != all_valid))
     {
-        size_t occ = bend - bstart;
-        if (occ > 0) memmove(buf, bstart, occ);
+        if (d->sgl.flag) continue;
 
-        bstart = buf;
-        bend = buf + occ;
-        bend += fread(bend, 1, sizeof(buf) - occ, f);
+        if (d->tt.coarse_time == 0)
+            flags |= (1 << 4); // set reset bit
 
-        if (bstart == bend) break;
-
-        while ((d = read_record(&bstart, bend)) != NULL)
-        {
-            if (!d->sgl.flag)
-            {
-                if (d->tt.coarse_time == 0) flags |= (1 << 4);
-                flags |= (1 << (MODULE(d->tt.block) % nmod));
-                if (flags == flags_valid) return flags;
-            }
-        }
+        // set per-module 0-3 bit
+        flags |= (1 << (MODULE(d->tt.block) % nmod));
     }
 
+    fclose(rdr.f);
     return flags;
 }

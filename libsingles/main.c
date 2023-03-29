@@ -3,10 +3,10 @@
 int main()
 {
     /*
-    uint64_t nev;
+    uint64_t nev = 0;
     struct SingleData *buf = read_singles(
             "/mnt/acq/20230217/test/192.168.1.101.SGL",
-            0, 8ULL*1024*1024*1024, &nev);
+            0, -1, &nev);
 
     printf("actual events: %llu\n", (unsigned long long)nev);
     free(buf);

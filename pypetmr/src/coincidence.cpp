@@ -28,6 +28,36 @@ CoincidenceData::CoincidenceData(const SingleData &a, const SingleData &b, bool 
     y_b(ev2.y);
 }
 
+void CoincidenceData::find_tt_offset(
+        std::string fname,
+        std::mutex &l,
+        std::condition_variable_any &cv,
+        std::queue<std::tuple<uint64_t,std::streampos>> &q,
+        std::atomic_bool &stop
+) {
+    uint64_t tt = 0, incr = 1000;
+    FILE *f = fopen(fname.c_str(), "rb");
+
+    off_t pos;
+    while ((pos = go_to_tt(f, tt)) > 0)
+    {
+        {
+            std::lock_guard<std::mutex> lg(l);
+            q.push(std::make_tuple(tt,pos));
+        }
+
+        cv.notify_all();
+        tt += incr;
+    }
+
+    {
+        std::lock_guard<std::mutex> lg(l);
+        q.push(std::make_tuple(0,-1));
+    }
+
+    cv.notify_all();
+}
+
 /*
  * Sort coincidences between multiple singles data files
  * given a start and end position for each file
@@ -38,27 +68,24 @@ SortedValues CoincidenceData::coincidence_sort_span(
         std::vector<std::streampos> start_pos,
         std::vector<std::streampos> end_pos
 ) {
-    const auto n = fnames.size();
-    std::vector<struct SingleData*> ptrs;
-    std::vector<uint64_t> counters;
-    uint64_t nev = 0, total = 0, current = 0;
+    std::vector<std::tuple<struct SingleData*,uint64_t>> vals;
+    uint64_t nev = 0, total = 0;
 
-    for (size_t i = 0; i < n; i++)
+    for (size_t i = 0; i < fnames.size(); i++)
     {
-        struct SingleData *s = read_singles(
+        struct SingleData *sgl = read_singles(
                 fnames[i].c_str(), (off_t)start_pos[i], (off_t)end_pos[i], &nev);
-
         total += nev;
-        ptrs.push_back(s);
-        counters.push_back(nev);
+        vals.push_back(std::make_tuple(sgl,nev));
     }
 
+    uint64_t cur = 0;
     std::vector<SingleData> singles(total);
-    for (size_t i = 0; i < n; i++)
+    for (auto [sgl, len] : vals)
     {
-        std::memcpy(&singles[current], ptrs[i], counters[i]*sizeof(SingleData));
-        current += counters[i];
-        free(ptrs[i]);
+        std::memcpy(&singles[cur], sgl, len*sizeof(SingleData));
+        cur += len;
+        free(sgl);
     }
 
     // time-sort the singles to ascending order

@@ -7,16 +7,18 @@
 
 #define NMODULES 16
 #define CLK_PER_TT 800000UL
-#define MODULE(blk) (blk >> 2)
-#define MODULE_ABOVE(mod) ((mod + 1) % 16)
-#define MODULE_BELOW(mod) ((mod + 15) % 16)
+#define MODULE(blk) ((blk >> 2) & 0xF)
+#define MODULE_ABOVE(mod) ((mod + 1) % NMODULES)
+#define MODULE_BELOW(mod) ((mod + NMODULES - 1) % NMODULES)
 #define VALID_MODULE(a,b) ((a != b) && (a != MODULE_ABOVE(b)) && (a != MODULE_BELOW(b)))
 
-struct SingleData
+struct __attribute__((packed)) SingleData
 {
-    uint8_t block;
+    // pack to 16 bytes
+    uint32_t block  : 8;
+    uint32_t x      : 12;
+    uint32_t y      : 12;
     uint16_t eR, eF;
-    uint16_t x, y;
     uint64_t abstime;
 };
 

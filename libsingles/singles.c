@@ -1,14 +1,19 @@
+#define _LARGEFILE64_SOURCE
 #define _FILE_OFFSET_BITS 64
+#define _GNU_SOURCE
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 
 #include "singles.h"
 
 #define VALID_HEADER 0x1F
 #define FLOOD_COORD_SCALE 511
+
+// Internally used structures for directly reading singles data
 
 struct __attribute__((packed, scalar_storage_order("big-endian"))) Single
 {
@@ -42,20 +47,12 @@ union Record_
     struct TimeTag tt;
 };
 
-struct Reader
-{
-    FILE *f;
-    char buf[1024*1024];
-    char *start, *end;
-    off_t pos;
-};
-
 typedef union Record_ Record;
 
-void to_single_data(struct Single *d, struct TimeTag *tt, struct SingleData *sd)
+void to_single_data(struct Single *d, uint64_t tt, SingleData *sd)
 {
     sd->block = d->block;
-    sd->abstime = tt->coarse_time * CLK_PER_TT + d->fine_time;
+    sd->abstime = tt * CLK_PER_TT + d->fine_time;
 
     sd->eR = d->a_rear + d->b_rear + d->c_rear + d->d_rear;
     sd->eF = d->a_front + d->b_front + d->c_front + d->d_front;
@@ -83,16 +80,47 @@ Record *read_record(char **start, char *end)
     return (*start + sizeof(Record) > end) ? NULL : (*rec)++;
 }
 
-struct Reader new_reader(FILE *f)
+SinglesReader reader_new(int fd, int is_file)
 {
-    struct Reader rdr = {.f = f};
+    SinglesReader rdr = {.fd = fd, .is_file = is_file, .finished = 0};
     rdr.start = rdr.end = rdr.buf;
-    rdr.pos = ftello(rdr.f);
+    rdr.fpos = is_file ? lseek(fd, 0, SEEK_CUR) : 0;
     return rdr;
 }
 
-Record *reader_read(struct Reader *rdr)
+SinglesReader reader_new_from_file(const char *fname)
 {
+    return reader_new(open(fname, O_RDONLY), 1);
+}
+
+ssize_t reader_refill(SinglesReader *rdr)
+{
+    char *stop = rdr->buf + sizeof(rdr->buf);
+    size_t n = 0;
+
+    while (rdr->end != stop)
+    {
+        ssize_t recv = read(rdr->fd, rdr->end, stop - rdr->end);
+        if (recv < 1)
+        {
+            rdr->finished = 1;
+            break;
+        }
+
+        rdr->end += recv;
+        n += recv;
+    }
+
+    rdr->fpos = rdr->is_file ?
+        lseek(rdr->fd, 0, SEEK_CUR) : rdr->fpos + n;
+
+    return n;
+}
+
+Record *reader_read(SinglesReader *rdr)
+{
+    ssize_t recv = 0;
+
     do
     {
         Record *d = read_record(&(rdr->start), rdr->end);
@@ -107,27 +135,34 @@ Record *reader_read(struct Reader *rdr)
         // re-fill the buffer
         rdr->start = rdr->buf;
         rdr->end   = rdr->buf + occ;
-        rdr->end   += fread(rdr->end, 1, sizeof(rdr->buf) - occ, rdr->f);
-        rdr->pos   = ftello(rdr->f);
+        reader_refill(rdr);
     }
-    while (rdr->start != rdr->end); // end when no data left in file
+    while (rdr->start != rdr->end);
 
     return NULL;
 }
 
-off_t reader_pos(struct Reader *rdr)
+off_t reader_pos(SinglesReader *rdr)
 {
-    return rdr->pos - (rdr->end - rdr->start);
+    return rdr->fpos - (rdr->end - rdr->start);
 }
 
-off_t go_to_tt(FILE *f, uint64_t value)
+int reader_empty(SinglesReader *rdr)
+{
+    return rdr->start == rdr->end;
+}
+
+//
+// Basic singles interface from a file
+//
+
+off_t go_to_tt(SinglesReader *rdr, uint64_t value)
 {
     Record *d;
     uint64_t last_tt_value = 0;
     int synced = 0;
 
-    struct Reader rdr = new_reader(f);
-    while ((d = reader_read(&rdr)))
+    while ((d = reader_read(rdr)))
     {
         if (d->sgl.flag) continue;
 
@@ -136,27 +171,62 @@ off_t go_to_tt(FILE *f, uint64_t value)
 
         if ((value == 0 && d->tt.coarse_time == 0) ||
                 (synced && value > 0 && d->tt.coarse_time >= value))
-            return reader_pos(&rdr);
+            return reader_pos(rdr);
     }
 
     return 0;
 }
 
-struct SingleData *read_singles(
+SingleData *singles_to_tt(SinglesReader *rdr, uint64_t value, uint64_t *sz)
+{
+    uint64_t n = 0;
+    *sz = *sz < 1e6 ? 1e6 : *sz;
+    SingleData *singles = calloc(*sz, sizeof(SingleData));
+
+    Record *d;
+    uint64_t last_tt_value = 0;
+    uint64_t tt[NMODULES];
+    int synced = 0;
+
+    while ((d = reader_read(rdr)))
+    {
+        if (d->sgl.flag)
+        {
+            if (n == *sz)
+            {
+                *sz = *sz * 1.5;
+                singles = reallocarray(singles, *sz, sizeof(SingleData));
+            }
+
+            to_single_data(&(d->sgl), tt[MODULE(d->sgl.block)], &singles[n++]);
+        }
+        else
+        {
+            tt[MODULE(d->tt.block)] = d->tt.coarse_time;
+            synced = d->tt.coarse_time == (last_tt_value + 1);
+            last_tt_value = d->tt.coarse_time;
+
+            if ((value == 0 && d->tt.coarse_time == 0) ||
+                    (synced && value > 0 && d->tt.coarse_time >= value)) break;
+        }
+    }
+
+    *sz = n;
+    return singles;
+}
+
+SingleData *read_singles(
         const char *fname,
         off_t start, off_t end, uint64_t *nev
 ) {
-    FILE *f = fopen(fname, "rb");
+    int fd = open(fname, O_RDONLY | O_LARGEFILE);
 
     if (start < 0) start = 0;
 
     if (end <= start)
-    {
-        fseeko(f, 0, SEEK_END);
-        end = ftello(f);
-    }
+        end = lseek(fd, 0, SEEK_END);
 
-    fseeko(f, start, SEEK_SET);
+    lseek(fd, start, SEEK_SET);
 
     // Get the lesser of the specified max events or the file size
     // Note that file size includes timetags, so it's only an approximate
@@ -165,26 +235,26 @@ struct SingleData *read_singles(
     uint64_t len = *nev ?: approx; // input value of nev is the max events
     len = len < approx ? len : approx;
 
-    struct SingleData *buf = calloc(len, sizeof(struct SingleData));
+    SingleData *buf = calloc(len, sizeof(SingleData));
 
     *nev = 0;
     Record *d;
-    struct TimeTag tt[NMODULES];
+    uint64_t tt[NMODULES];
 
-    struct Reader rdr = new_reader(f);
+    SinglesReader rdr = reader_new(fd, 1);
     while ((d = reader_read(&rdr)) && (*nev < len) && (reader_pos(&rdr) < end))
     {
         if (d->sgl.flag)
         {
-            to_single_data(&d->sgl, &tt[MODULE(d->sgl.block)], &buf[(*nev)++]);
+            to_single_data(&d->sgl, tt[MODULE(d->sgl.block)], &buf[(*nev)++]);
         }
         else
         {
-            tt[MODULE(d->tt.block)] = d->tt;
+            tt[MODULE(d->tt.block)] = d->tt.coarse_time;
         }
     }
 
-    fclose(f);
+    close(fd);
     return buf;
 }
 
@@ -196,9 +266,7 @@ uint8_t validate(const char *fname)
     const uint8_t all_valid = 0x1F;
     uint8_t flags = 0;
 
-    struct Reader rdr = {.f = fopen(fname, "rb")};
-    rdr.start = rdr.end = rdr.buf;
-
+    SinglesReader rdr = reader_new(open(fname, O_RDONLY), 1);
     while ((d = reader_read(&rdr)) && (flags != all_valid))
     {
         if (d->sgl.flag) continue;
@@ -209,7 +277,6 @@ uint8_t validate(const char *fname)
         // set per-module 0-3 bit
         flags |= (1 << (MODULE(d->tt.block) % nmod));
     }
-
-    fclose(rdr.f);
+    close(rdr.fd);
     return flags;
 }

@@ -17,15 +17,6 @@ using SortedValues = std::tuple<std::vector<std::streampos>, Coincidences>;
 
 struct __attribute__((packed)) CoincidenceData
 {
-    // Columns in python data - block, eF, eR, x, y
-    static const long ncol = 5;
-    static const size_t vals_per_ev = 11;
-
-    // Fine-time LSB equals 1.389 ns (1 / (90e6 * 8) s)
-    // Time window of 10->14ns, 20->28ns
-    static const int16_t width = 10;
-    static const int16_t delay = 100;
-
     // data members -> 22 bytes
     uint8_t blkb;
     uint8_t blka;
@@ -37,7 +28,16 @@ struct __attribute__((packed)) CoincidenceData
     uint16_t x_b, y_b;
     uint16_t abstime;
 
-    CoincidenceData() {};
+    // Columns in python data - block, eF, eR, x, y
+    static const long ncol = 5;
+    static const size_t vals_per_ev = 11;
+
+    // Fine-time LSB equals 1.389 ns (1 / (90e6 * 8) s)
+    // Time window of 10->14ns, 20->28ns
+    static const int16_t width = 10;
+    static const int16_t delay = 100;
+
+    CoincidenceData() {}
     CoincidenceData(const SingleData &a, const SingleData &b):
         blkb(b.block), blka(a.block),
         tdiff(a.abstime - b.abstime),
@@ -64,13 +64,11 @@ struct __attribute__((packed)) CoincidenceData
     { return std::make_tuple(x_a,y_a,x_b,y_b); }
 
     static void find_tt_offset(
-            std::string,
-            std::mutex&,
-            std::condition_variable_any&,
+            std::string, std::mutex&, std::condition_variable_any&,
             std::queue<std::tuple<uint64_t,std::streampos>>&,
             std::atomic_bool&);
 
-    static Coincidences sort(const std::vector<struct SingleData>&);
+    static Coincidences sort(const std::vector<SingleData>&);
 
     static SortedValues coincidence_sort_span(
             std::vector<std::string>,

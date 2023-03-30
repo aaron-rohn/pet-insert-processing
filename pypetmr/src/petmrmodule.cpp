@@ -8,6 +8,7 @@
 #include <future>
 #include <queue>
 #include <deque>
+#include <numeric>
 
 static PyObject *petmr_singles(PyObject*, PyObject*);
 static PyObject *petmr_coincidences(PyObject*, PyObject*);
@@ -125,7 +126,7 @@ petmr_singles(PyObject *self, PyObject *args)
                 &terminate, &status_queue)) return NULL;
 
     uint64_t nev = max_events;
-    struct SingleData *s;
+    SingleData *s;
 
     Py_BEGIN_ALLOW_THREADS
     s = read_singles(fname, 0, -1, &nev);
@@ -144,7 +145,7 @@ petmr_singles(PyObject *self, PyObject *args)
         row[3] = s[i].x;
         row[4] = s[i].y;
     }
-    free(s);
+    std::free(s);
     Py_END_ALLOW_THREADS
 
     return (PyObject*)singles;

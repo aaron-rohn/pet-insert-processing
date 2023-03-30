@@ -8,10 +8,10 @@ void CoincidenceData::find_tt_offset(
         std::atomic_bool &stop
 ) {
     uint64_t tt = 0, incr = 1000;
-    FILE *f = fopen(fname.c_str(), "rb");
+    SinglesReader rdr = reader_new_from_file(fname.c_str());
 
     off_t pos;
-    while ((pos = go_to_tt(f, tt)) > 0)
+    while ((pos = go_to_tt(&rdr, tt)) > 0)
     {
         {
             std::lock_guard<std::mutex> lg(l);
@@ -44,7 +44,7 @@ SortedValues CoincidenceData::coincidence_sort_span(
     for (size_t i = 0; i < fnames.size(); i++)
     {
         uint64_t nev = 0;
-        struct SingleData *p = read_singles(
+        SingleData *p = read_singles(
                 fnames[i].c_str(), start_pos[i], end_pos[i], &nev);
 
         auto s = std::span(p, nev);
@@ -58,7 +58,7 @@ SortedValues CoincidenceData::coincidence_sort_span(
 }
 
 Coincidences CoincidenceData::sort(
-        const std::vector<struct SingleData>& singles
+        const std::vector<SingleData>& singles
 ) {
     Coincidences coin;
 

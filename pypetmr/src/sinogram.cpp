@@ -163,7 +163,6 @@ std::streampos Michelogram::add_to_sinogram(
     return end;
 }
 
-
 FILE *Michelogram::save_listmode (
         std::string fname, 
         std::streampos start,

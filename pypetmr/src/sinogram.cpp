@@ -61,9 +61,9 @@ Michelogram::event_to_coords(const CoincidenceData& c) const
         .energy_b = (uint16_t)scaled_eb,
         .energy_a = (uint16_t)scaled_ea,
         .doi_b = doib, .doi_a = doia,
-        .abstime = c.abstime(),
-        .tdiff = c.tdiff(),
-        .prompt = c.prompt()
+        .abstime = c.abstime,
+        .tdiff = c.tdiff,
+        .prompt = c.prompt
     };
 }
 

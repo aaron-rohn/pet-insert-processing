@@ -1,32 +1,4 @@
 #include "coincidence.h"
-#include <cstring>
-
-CoincidenceData::CoincidenceData(const SingleData &a, const SingleData &b, bool isprompt)
-{
-    // Event a is earlier (lower abstime), b is later (greater abstime)
-    // Event 1 has the lower block number, 2 has the higher
-
-    const auto &[ev1, ev2] = a.block < b.block ?
-        std::tie(a, b) : std::tie(b, a);
-
-    // record absolute time in incr. of 100 ms
-    uint64_t t = a.abstime;
-    t /= CLK_PER_TT*100;
-    abstime(t);
-
-    int8_t dt = ev1.abstime - ev2.abstime;
-    tdiff(isprompt, dt);
-
-    blk(ev1.block, ev2.block);
-    e_aF(ev1.eF);
-    e_aR(ev1.eR);
-    e_bF(ev2.eF);
-    e_bR(ev2.eR);
-    x_a(ev1.x);
-    y_a(ev1.y);
-    x_b(ev2.x);
-    y_b(ev2.y);
-}
 
 void CoincidenceData::find_tt_offset(
         std::string fname,
@@ -68,38 +40,25 @@ SortedValues CoincidenceData::coincidence_sort_span(
         std::vector<std::streampos> start_pos,
         std::vector<std::streampos> end_pos
 ) {
-    std::vector<std::tuple<struct SingleData*,uint64_t>> vals;
-    uint64_t nev = 0, total = 0;
-
+    std::vector<SingleData> singles;
     for (size_t i = 0; i < fnames.size(); i++)
     {
-        struct SingleData *sgl = read_singles(
-                fnames[i].c_str(), (off_t)start_pos[i], (off_t)end_pos[i], &nev);
-        total += nev;
-        vals.push_back(std::make_tuple(sgl,nev));
+        uint64_t nev = 0;
+        struct SingleData *p = read_singles(
+                fnames[i].c_str(), start_pos[i], end_pos[i], &nev);
+
+        auto s = std::span(p, nev);
+        singles.insert(singles.end(), s.begin(), s.end());
+        std::free(p);
     }
 
-    uint64_t cur = 0;
-    std::vector<SingleData> singles(total);
-    for (auto [sgl, len] : vals)
-    {
-        std::memcpy(&singles[cur], sgl, len*sizeof(SingleData));
-        cur += len;
-        free(sgl);
-    }
-
-    // time-sort the singles to ascending order
-    std::sort(singles.begin(), singles.end(),
-            [](const SingleData &a, const SingleData &b)
-            { return a.abstime < b.abstime; });
-
-    // generate prompts and delays
+    std::ranges::sort(singles, {}, &SingleData::abstime);
     auto coin = CoincidenceData::sort(singles);
     return std::make_tuple(end_pos, coin);
 }
 
 Coincidences CoincidenceData::sort(
-        const std::vector<SingleData> &singles
+        const std::vector<struct SingleData>& singles
 ) {
     Coincidences coin;
 
@@ -115,10 +74,14 @@ Coincidences CoincidenceData::sort(
             auto dt = b->abstime - a->abstime;
             bool isprompt = dt < width, isdelay = dt >= delay;
             if ((isprompt || isdelay) && VALID_MODULE(MODULE(a->block), MODULE(b->block)))
-                coin.emplace_back(*a, *b, isprompt);
+            {
+                const auto &[ev_a, ev_b] = a->block < b->block ?
+                    std::tie(a, b) : std::tie(b, a);
+
+                coin.emplace_back(*ev_a, *ev_b);
+            }
         }
     }
 
     return coin;
 }
-

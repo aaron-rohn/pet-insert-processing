@@ -19,7 +19,7 @@ SingleDType = np.dtype([
 
 CoincidenceDType = np.dtype([
     ('blkb', np.uint8), ('blka', np.uint8),
-    ('prompt', np.uint8), ('tdiff', np.int8),
+    ('tdiff', np.int8), ('prompt', np.uint8),
     ('eaF', np.uint16), ('eaR', np.uint16),
     ('ebF', np.uint16), ('ebR', np.uint16),
     ('xa', np.uint16), ('ya', np.uint16),

@@ -124,25 +124,29 @@ petmr_singles(PyObject *self, PyObject *args)
                 &fname, &max_events,
                 &terminate, &status_queue)) return NULL;
 
-    PyThreadState *_save = PyEval_SaveThread();
-
     uint64_t nev = max_events;
-    struct SingleData *s = read_singles(fname, 0, -1, &nev);
+    struct SingleData *s;
+
+    Py_BEGIN_ALLOW_THREADS
+    s = read_singles(fname, 0, -1, &nev);
+    Py_END_ALLOW_THREADS
 
     npy_intp dims[] = {(npy_intp)nev, 5};
     PyArrayObject *singles = (PyArrayObject*)PyArray_SimpleNew(2, dims, NPY_UINT16);
 
+    Py_BEGIN_ALLOW_THREADS
     for (size_t i = 0; i < nev; i++)
     {
-        *(uint16_t*)PyArray_GETPTR2(singles, i, 0) = s[i].block;
-        *(uint16_t*)PyArray_GETPTR2(singles, i, 1) = s[i].eF;
-        *(uint16_t*)PyArray_GETPTR2(singles, i, 2) = s[i].eR;
-        *(uint16_t*)PyArray_GETPTR2(singles, i, 3) = s[i].x;
-        *(uint16_t*)PyArray_GETPTR2(singles, i, 4) = s[i].y;
+        uint16_t *row = (uint16_t*)PyArray_GETPTR2(singles, i, 0);
+        row[0] = s[i].block;
+        row[1] = s[i].eF;
+        row[2] = s[i].eR;
+        row[3] = s[i].x;
+        row[4] = s[i].y;
     }
-
     free(s);
-    PyEval_RestoreThread(_save);
+    Py_END_ALLOW_THREADS
+
     return (PyObject*)singles;
 }
 

@@ -4,7 +4,7 @@ void CoincidenceData::find_tt_offset(
         std::string fname,
         std::mutex &l,
         std::condition_variable_any &cv,
-        std::queue<std::tuple<uint64_t,std::streampos>> &q,
+        std::queue<std::tuple<uint64_t,off_t>> &q,
         std::atomic_bool &stop
 ) {
     uint64_t tt = 0, incr = 1000;
@@ -37,19 +37,16 @@ void CoincidenceData::find_tt_offset(
 
 SortedValues CoincidenceData::coincidence_sort_span(
         std::vector<std::string> fnames,
-        std::vector<std::streampos> start_pos,
-        std::vector<std::streampos> end_pos
+        std::vector<off_t> start_pos,
+        std::vector<off_t> end_pos
 ) {
     std::vector<SingleData> singles;
     for (size_t i = 0; i < fnames.size(); i++)
     {
         uint64_t nev = 0;
-        SingleData *p = read_singles(
-                fnames[i].c_str(), start_pos[i], end_pos[i], &nev);
-
-        auto s = std::span(p, nev);
+        auto s = span_read_singles(
+                fnames[i].c_str(), start_pos[i], &end_pos[i], &nev);
         singles.insert(singles.end(), s.begin(), s.end());
-        std::free(p);
     }
 
     std::ranges::sort(singles, {}, &SingleData::abstime);
@@ -75,13 +72,25 @@ Coincidences CoincidenceData::sort(
             bool isprompt = dt < width, isdelay = dt >= delay;
             if ((isprompt || isdelay) && VALID_MODULE(MODULE(a->block), MODULE(b->block)))
             {
-                const auto &[ev_a, ev_b] = a->block < b->block ?
-                    std::tie(a, b) : std::tie(b, a);
-
-                coin.emplace_back(*ev_a, *ev_b);
+                if (a->block < b->block)
+                    coin.emplace_back(*a, *b);
+                else
+                    coin.emplace_back(*b, *a);
             }
         }
     }
 
     return coin;
+}
+
+cspan<SingleData> span_singles_to_tt(SinglesReader *rdr, uint64_t value, uint64_t *nev)
+{
+    SingleData *singles = singles_to_tt(rdr, value, nev);
+    return cspan(singles, *nev);
+}
+
+cspan<SingleData> span_read_singles(const char *fname, off_t start, off_t *end, uint64_t *nev)
+{
+    SingleData *singles = read_singles(fname, start, end, nev);
+    return cspan(singles, *nev);
 }

@@ -1,3 +1,5 @@
+#define _LARGEFILE64_SOURCE
+#define _FILE_OFFSET_BITS 64
 #define PY_SSIZE_T_CLEAN
 #define PY_ARRAY_UNIQUE_SYMBOL petmr_ARRAY_API
 
@@ -125,28 +127,43 @@ petmr_singles(PyObject *self, PyObject *args)
                 &fname, &max_events,
                 &terminate, &status_queue)) return NULL;
 
-    uint64_t nev = max_events;
-    SingleData *s;
+    off_t sz = fsize(fname), incr = sz / 50;
+    off_t start = 0, end = incr;
+    bool stop = false;
+    std::vector<SingleData> svec;
 
-    Py_BEGIN_ALLOW_THREADS
-    s = read_singles(fname, 0, -1, &nev);
-    Py_END_ALLOW_THREADS
+    PyThreadState *_save = PyEval_SaveThread();
 
-    npy_intp dims[] = {(npy_intp)nev, 5};
+    while((start < sz) && (max_events == 0 || max_events > svec.size()) && !stop)
+    {
+        uint64_t n = max_events > 0 ? (max_events - svec.size()) : 0;
+
+        cspan<SingleData> s = span_read_singles(fname, start, &end, &n);
+        svec.insert(svec.end(), s.begin(), s.end());
+
+        PyEval_RestoreThread(_save);
+        stop = stop || term_is_set(terminate);
+        queue_put(status_queue, "((dK))", (double)end / sz * 100, svec.size());
+        _save = PyEval_SaveThread();
+
+        start = end;
+        end += incr;
+    }
+
+    PyEval_RestoreThread(_save);
+
+    npy_intp dims[] = {(long)svec.size(), 5};
     PyArrayObject *singles = (PyArrayObject*)PyArray_SimpleNew(2, dims, NPY_UINT16);
 
-    Py_BEGIN_ALLOW_THREADS
-    for (size_t i = 0; i < nev; i++)
+    for (size_t i = 0; i < svec.size(); i++)
     {
         uint16_t *row = (uint16_t*)PyArray_GETPTR2(singles, i, 0);
-        row[0] = s[i].block;
-        row[1] = s[i].eF;
-        row[2] = s[i].eR;
-        row[3] = s[i].x;
-        row[4] = s[i].y;
+        row[0] = svec[i].block;
+        row[1] = svec[i].eF;
+        row[2] = svec[i].eR;
+        row[3] = svec[i].x;
+        row[4] = svec[i].y;
     }
-    std::free(s);
-    Py_END_ALLOW_THREADS
 
     return (PyObject*)singles;
 }
@@ -183,19 +200,19 @@ petmr_coincidences(PyObject *self, PyObject *args)
     std::vector<std::thread> tt_scan;
     std::vector<std::mutex> all_lock (n);
     std::vector<std::condition_variable_any> all_cv (n);
-    std::vector<std::queue<std::tuple<uint64_t,std::streampos>>> all_pos (n);
+    std::vector<std::queue<std::tuple<uint64_t,off_t>>> all_pos (n);
 
     // Items used for sorting coincidences within a file range
     uint64_t ncoin = 0;
     std::deque<std::future<SortedValues>> workers;
-    std::vector<std::streampos> start_pos(n), end_pos(n);
+    std::vector<off_t> start_pos(n), end_pos(n);
     std::vector<uint64_t> current_tt(n);
 
     // Begin multithreading
     PyThreadState *_save = PyEval_SaveThread();
 
     // calculate total size of all singles files
-    std::streampos total_size = 0;
+    off_t total_size = 0;
     for (auto &fname : file_list)
         total_size += fsize(fname.c_str());
 
@@ -222,7 +239,7 @@ petmr_coincidences(PyObject *self, PyObject *args)
 
     // verify that each file is readable and contained a reset
     if (std::any_of(start_pos.begin(), start_pos.end(),
-                [](std::streampos p){ return p == -1; }))
+                [](off_t p){ return p == -1; }))
     {
         stop = true;
         for (auto &th : tt_scan) th.join();
@@ -269,7 +286,7 @@ petmr_coincidences(PyObject *self, PyObject *args)
             // calculate data to update the UI
             ncoin += coin.size();
             stop = stop || (max_events > 0 && ncoin > max_events);
-            auto proc_size = std::accumulate(pos.begin(), pos.end(), std::streampos(0));
+            auto proc_size = std::accumulate(pos.begin(), pos.end(), off_t(0));
             double perc = ((double)proc_size) / total_size * 100.0;
 
             // update the UI and interact with python

@@ -34,52 +34,36 @@ struct SinglesReader_
     char buf[1024*1024];
     char *start, *end;
     off_t fpos;
+    uint64_t tt[NMODULES];
 };
 
 typedef struct SinglesReader_ SinglesReader;
 typedef struct SingleData_ SingleData;
 
+// Functions for working with singles reader objects
 SinglesReader reader_new(int fd, int is_file);
 SinglesReader reader_new_from_file(const char *fname);
 off_t reader_pos(SinglesReader *rdr);
 int reader_empty(SinglesReader *rdr);
 
+// Advance a reader object to a specified timetag value
 off_t go_to_tt(SinglesReader *rdr, uint64_t value);
+
+// Advance a reader object to a specified timetag value,
+// and return all single events encountered. Allow for a hint
+// at the expected number of singles, for pre-allocation
 SingleData *singles_to_tt(SinglesReader *rdr, uint64_t value, uint64_t *sz);
-SingleData *read_singles(const char *fname, off_t start, off_t end, uint64_t *nev);
+
+// Read singles from offset *start* to *end*. Note that parameter end
+// is an in/out-parameter, to allow seeking back to a location that
+// has proper byte-header alignment.
+SingleData *read_singles(const char *fname, off_t start, off_t *end, uint64_t *nev);
+
+// Validate that a singles file contains a reset and data from four modules
 uint8_t validate(const char *fname);
 
 #ifdef __cplusplus
 }
-
-#include <utility>
-#include <span>
-template <typename T>
-class span
-{
-    public:
-    T *data = nullptr;
-    const size_t size = 0;
-    span(T* data, size_t size): data(data), size(size) {}
-    ~span() { if (data) std::free(data); }
-    T *begin() const { return data; }
-    T *end() const { return data + size; }
-};
-
-span<SingleData> span_singles_to_tt(
-        SinglesReader *rdr, uint64_t value, uint64_t *sz)
-{ 
-    SingleData *sgls = singles_to_tt(rdr, value, sz);
-    return std::move(span<SingleData>(sgls, *sz));
-}
-
-span<SingleData> span_read_singles(
-        const char *fname, off_t start, off_t end, uint64_t *nev)
-{ 
-    SingleData *sgls = read_singles(fname, start, end, nev);
-    return std::move(span<SingleData>(sgls, *nev));
-}
-
 #endif
 
 #endif

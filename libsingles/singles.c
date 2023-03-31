@@ -82,7 +82,7 @@ Record *read_record(char **start, char *end)
 
 SinglesReader reader_new(int fd, int is_file)
 {
-    SinglesReader rdr = {.fd = fd, .is_file = is_file, .finished = 0};
+    SinglesReader rdr = {.fd = fd, .is_file = is_file, .finished = 0, .tt = {0}};
     rdr.start = rdr.end = rdr.buf;
     rdr.fpos = is_file ? lseek(fd, 0, SEEK_CUR) : 0;
     return rdr;
@@ -90,7 +90,7 @@ SinglesReader reader_new(int fd, int is_file)
 
 SinglesReader reader_new_from_file(const char *fname)
 {
-    return reader_new(open(fname, O_RDONLY), 1);
+    return reader_new(open(fname, O_RDONLY | O_LARGEFILE), 1);
 }
 
 ssize_t reader_refill(SinglesReader *rdr)
@@ -101,11 +101,7 @@ ssize_t reader_refill(SinglesReader *rdr)
     while (rdr->end != stop)
     {
         ssize_t recv = read(rdr->fd, rdr->end, stop - rdr->end);
-        if (recv < 1)
-        {
-            rdr->finished = 1;
-            break;
-        }
+        if (recv < 1) break;
 
         rdr->end += recv;
         n += recv;
@@ -119,8 +115,6 @@ ssize_t reader_refill(SinglesReader *rdr)
 
 Record *reader_read(SinglesReader *rdr)
 {
-    ssize_t recv = 0;
-
     do
     {
         Record *d = read_record(&(rdr->start), rdr->end);
@@ -139,6 +133,7 @@ Record *reader_read(SinglesReader *rdr)
     }
     while (rdr->start != rdr->end);
 
+    rdr->finished = 1;
     return NULL;
 }
 
@@ -146,15 +141,6 @@ off_t reader_pos(SinglesReader *rdr)
 {
     return rdr->fpos - (rdr->end - rdr->start);
 }
-
-int reader_empty(SinglesReader *rdr)
-{
-    return rdr->start == rdr->end;
-}
-
-//
-// Basic singles interface from a file
-//
 
 off_t go_to_tt(SinglesReader *rdr, uint64_t value)
 {
@@ -179,13 +165,13 @@ off_t go_to_tt(SinglesReader *rdr, uint64_t value)
 
 SingleData *singles_to_tt(SinglesReader *rdr, uint64_t value, uint64_t *sz)
 {
-    uint64_t n = 0;
+    uint64_t n = 0, sz_dummy = 0;
+    if (sz == NULL) sz = &sz_dummy;
     *sz = *sz < 1e6 ? 1e6 : *sz;
     SingleData *singles = calloc(*sz, sizeof(SingleData));
 
     Record *d;
     uint64_t last_tt_value = 0;
-    uint64_t tt[NMODULES];
     int synced = 0;
 
     while ((d = reader_read(rdr)))
@@ -198,11 +184,11 @@ SingleData *singles_to_tt(SinglesReader *rdr, uint64_t value, uint64_t *sz)
                 singles = reallocarray(singles, *sz, sizeof(SingleData));
             }
 
-            to_single_data(&(d->sgl), tt[MODULE(d->sgl.block)], &singles[n++]);
+            to_single_data(&(d->sgl), rdr->tt[MODULE(d->sgl.block)], &singles[n++]);
         }
         else
         {
-            tt[MODULE(d->tt.block)] = d->tt.coarse_time;
+            rdr->tt[MODULE(d->tt.block)] = d->tt.coarse_time;
             synced = d->tt.coarse_time == (last_tt_value + 1);
             last_tt_value = d->tt.coarse_time;
 
@@ -217,21 +203,27 @@ SingleData *singles_to_tt(SinglesReader *rdr, uint64_t value, uint64_t *sz)
 
 SingleData *read_singles(
         const char *fname,
-        off_t start, off_t end, uint64_t *nev
+        off_t start, off_t *end, uint64_t *nev
 ) {
+    uint64_t nev_dummy = 0;
+    off_t end_dummy = -1;
+    if (nev == NULL) nev = &nev_dummy;
+    if (end == NULL) end = &end_dummy;
+
     int fd = open(fname, O_RDONLY | O_LARGEFILE);
 
     if (start < 0) start = 0;
 
-    if (end <= start)
-        end = lseek(fd, 0, SEEK_END);
+    if (*end <= start)
+        *end = lseek(fd, 0, SEEK_END);
 
     lseek(fd, start, SEEK_SET);
 
     // Get the lesser of the specified max events or the file size
     // Note that file size includes timetags, so it's only an approximate
     // estimate of the number of singles
-    uint64_t approx = (end - start) / sizeof(Record);
+
+    uint64_t approx = (*end - start) / sizeof(Record);
     uint64_t len = *nev ?: approx; // input value of nev is the max events
     len = len < approx ? len : approx;
 
@@ -239,22 +231,22 @@ SingleData *read_singles(
 
     *nev = 0;
     Record *d;
-    uint64_t tt[NMODULES];
 
     SinglesReader rdr = reader_new(fd, 1);
-    while ((d = reader_read(&rdr)) && (*nev < len) && (reader_pos(&rdr) < end))
+    while ((d = reader_read(&rdr)) && (*nev < len) && (reader_pos(&rdr) < *end))
     {
         if (d->sgl.flag)
         {
-            to_single_data(&d->sgl, tt[MODULE(d->sgl.block)], &buf[(*nev)++]);
+            to_single_data(&d->sgl, rdr.tt[MODULE(d->sgl.block)], &buf[(*nev)++]);
         }
         else
         {
-            tt[MODULE(d->tt.block)] = d->tt.coarse_time;
+            rdr.tt[MODULE(d->tt.block)] = d->tt.coarse_time;
         }
     }
 
     close(fd);
+    *end = reader_pos(&rdr);
     return buf;
 }
 

@@ -13,7 +13,7 @@
 
 struct CoincidenceData;
 using Coincidences = std::vector<CoincidenceData>;
-using SortedValues = std::tuple<std::vector<std::streampos>, Coincidences>;
+using SortedValues = std::tuple<std::vector<off_t>, Coincidences>;
 
 struct __attribute__((packed)) CoincidenceData
 {
@@ -38,6 +38,8 @@ struct __attribute__((packed)) CoincidenceData
     static const int16_t delay = 100;
 
     CoincidenceData() {}
+
+    // block a should always have the lower block number
     CoincidenceData(const SingleData &a, const SingleData &b):
         blkb(b.block), blka(a.block),
         tdiff(a.abstime - b.abstime),
@@ -56,24 +58,23 @@ struct __attribute__((packed)) CoincidenceData
     { return std::make_tuple(e_aF+e_aR, e_bF+e_bR); }
 
     inline std::tuple<double,double> doi(double scale = 4096.0) const
-    { return std::make_tuple(
-            (double)e_aF / (e_aF + e_aR) * scale,
-            (double)e_bF / (e_bF + e_bR) * scale); }
+    { return std::make_tuple((double)e_aF / (e_aF + e_aR) * scale,
+                             (double)e_bF / (e_bF + e_bR) * scale); }
 
     inline std::tuple<uint16_t,uint16_t,uint16_t,uint16_t> pos() const
     { return std::make_tuple(x_a,y_a,x_b,y_b); }
 
     static void find_tt_offset(
             std::string, std::mutex&, std::condition_variable_any&,
-            std::queue<std::tuple<uint64_t,std::streampos>>&,
+            std::queue<std::tuple<uint64_t,off_t>>&,
             std::atomic_bool&);
 
     static Coincidences sort(const std::vector<SingleData>&);
 
     static SortedValues coincidence_sort_span(
             std::vector<std::string>,
-            std::vector<std::streampos>,
-            std::vector<std::streampos>);
+            std::vector<off_t>,
+            std::vector<off_t>);
 };
 
 struct ListmodeData {
@@ -103,5 +104,36 @@ struct ListmodeData {
 
     bool valid() const { return ring_a != invalid; }
 };
+
+// This class allows for taking ownership of a C array
+// returned from the singles library
+
+template <typename T>
+class cspan
+{
+    public:
+    T *data = nullptr;
+    size_t size = 0;
+
+    cspan() {};
+    cspan(T* data, size_t size): data(data), size(size) {}
+    cspan(cspan &&other) { *this = std::move(other); }
+
+    cspan& operator=(cspan &&other)
+    {
+        data = other.data;
+        size = other.size;
+        other.data = nullptr;
+        return *this;
+    }
+
+    ~cspan() { if (data) std::free(data); }
+    T *begin() const { return data; }
+    T *end() const { return data + size; }
+};
+
+// Wrappers for C library functions for better memory management
+cspan<SingleData> span_singles_to_tt(SinglesReader*, uint64_t, uint64_t*);
+cspan<SingleData> span_read_singles(const char*, off_t, off_t*, uint64_t*);
 
 #endif

@@ -17,12 +17,15 @@ def fmt(num):
     return f'{round(num / 10**(n*3), 1)}{suffix}'
 
 class FileSelector(tk.Frame):
+    FloodTypes = {'FRONT': 0, 'REAR': 1, 'BOTH': 2}
+
     def __init__(self, root, callback):
         super().__init__(root)
         self.callback = callback 
 
         self.load_sgls_button = tk.Button(self, text = "Load Singles",
-                command = lambda: self.loader(SinglesLoader))
+                command = lambda: self.loader(SinglesLoader,
+                    FileSelector.FloodTypes[self.flood_type.get()]))
 
         self.load_coin_button = tk.Button(self, text = "Load Coincidences",
                 command = lambda: self.loader(CoincidenceLoader))
@@ -32,12 +35,18 @@ class FileSelector(tk.Frame):
 
         self.validate_button = tk.Button(self, text = "Validate singles", command = validate_singles)
 
+        self.flood_type = tk.StringVar(self, 'BOTH')
+        self.flood_type_menu = ttk.Combobox(self, textvariable = self.flood_type, state = 'readonly')
+        self.flood_type_menu['values'] = list(FileSelector.FloodTypes.keys())
+
     def pack(self, **kwds):
         super().pack(**kwds)
         self.load_sgls_button.pack(**kwds)
         self.load_coin_button.pack(**kwds)
         self.sort_coin_button.pack(**kwds)
         self.validate_button.pack(**kwds)
+        tk.Label(self, text = 'Flood Type:').pack(**kwds)
+        self.flood_type_menu.pack(**kwds)
 
     def cfg_buttons(self, state):
         self.load_sgls_button.config(state = state) 
@@ -45,14 +54,14 @@ class FileSelector(tk.Frame):
         self.sort_coin_button.config(state = state) 
         self.validate_button.config(state = state)
 
-    def loader(self, ldr):
+    def loader(self, ldr, *args):
         self.cfg_buttons(tk.DISABLED)
 
-        def cb(*args):
+        def cb(*cbargs):
             self.cfg_buttons(tk.NORMAL)
-            self.callback(*args)
+            self.callback(*cbargs)
 
-        ldr(cb)
+        ldr(cb, *args)
 
 class BlockDisplay(tk.Frame):
     def __init__(self, root, title):
@@ -61,7 +70,7 @@ class BlockDisplay(tk.Frame):
         self.title = tk.Label(self, text = f'{self.title_text}:')
 
         self.active = tk.StringVar(root, "")
-        self.menu = ttk.Combobox(root, textvariable = self.active)
+        self.menu = ttk.Combobox(root, textvariable = self.active, state = 'readonly')
 
     def pack(self, **kwds):
         super().pack(**kwds)

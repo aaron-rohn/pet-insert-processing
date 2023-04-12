@@ -37,8 +37,16 @@ struct SinglesReader_
     uint64_t tt[NMODULES];
 };
 
+enum SinglesFloodType_
+{
+    FRONT = 0,
+    REAR  = 1,
+    BOTH  = 2
+};
+
 typedef struct SinglesReader_ SinglesReader;
 typedef struct SingleData_ SingleData;
+typedef enum SinglesFloodType_ SinglesFloodType;
 
 // Functions for working with singles reader objects
 SinglesReader reader_new(int fd, int is_file);
@@ -52,12 +60,12 @@ off_t go_to_tt(SinglesReader *rdr, uint64_t value);
 // Advance a reader object to a specified timetag value,
 // and return all single events encountered. Allow for a hint
 // at the expected number of singles, for pre-allocation
-SingleData *singles_to_tt(SinglesReader *rdr, uint64_t value, uint64_t *sz);
+SingleData *singles_to_tt(SinglesReader *rdr, uint64_t value, uint64_t *sz, const SinglesFloodType tp);
 
 // Read singles from offset *start* to *end*. Note that parameter end
 // is an in/out-parameter, to allow seeking back to a location that
 // has proper byte-header alignment.
-SingleData *read_singles(const char *fname, off_t start, off_t *end, uint64_t *nev);
+SingleData *read_singles(const char *fname, off_t start, off_t *end, uint64_t *nev, const SinglesFloodType tp);
 
 // Validate that a singles file contains a reset and data from four modules
 uint8_t validate(const char *fname);

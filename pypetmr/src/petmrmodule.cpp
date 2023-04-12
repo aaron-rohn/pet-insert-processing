@@ -1,4 +1,4 @@
-#define _LARGEFILE64_SOURCE
+#include <fstream>
 #define _FILE_OFFSET_BITS 64
 #define PY_SSIZE_T_CLEAN
 #define PY_ARRAY_UNIQUE_SYMBOL petmr_ARRAY_API
@@ -19,6 +19,7 @@ static PyObject *petmr_load_listmode(PyObject*, PyObject*);
 static PyObject *petmr_save_sinogram(PyObject*, PyObject*);
 static PyObject *petmr_load_sinogram(PyObject*, PyObject*);
 static PyObject *petmr_rebin_sinogram(PyObject*, PyObject*);
+static PyObject *petmr_listmode_to_arr(PyObject*, PyObject*);
 static PyObject *petmr_validate_singles_file(PyObject*, PyObject*);
 
 static PyMethodDef petmrMethods[] = {
@@ -42,6 +43,9 @@ static PyMethodDef petmrMethods[] = {
 
     {"rebin_sinogram", petmr_rebin_sinogram,
         METH_VARARGS, "Simple SSRB for a Michelogram"},
+
+    {"listmode_to_arr", petmr_listmode_to_arr,
+        METH_VARARGS, "Load listmode data as numpy array"},
 
     {"validate_singles_file", petmr_validate_singles_file,
         METH_VARARGS, "Indicate if a singles file contains a reset and timetags for each module"},
@@ -121,10 +125,11 @@ petmr_singles(PyObject *self, PyObject *args)
 {
     const char *fname;
     uint64_t max_events = 0;
+    int flood_type = int(BOTH);
     PyObject *status_queue = NULL, *terminate = NULL;
 
-    if (!PyArg_ParseTuple(args, "s|KOO",
-                &fname, &max_events,
+    if (!PyArg_ParseTuple(args, "s|iKOO",
+                &fname, &flood_type, &max_events,
                 &terminate, &status_queue)) return NULL;
 
     off_t sz = fsize(fname), incr = sz / 50;
@@ -138,7 +143,7 @@ petmr_singles(PyObject *self, PyObject *args)
     {
         uint64_t n = max_events > 0 ? (max_events - svec.size()) : 0;
 
-        cspan<SingleData> s = span_read_singles(fname, start, &end, &n);
+        cspan<SingleData> s = span_read_singles(fname, start, &end, &n, SinglesFloodType(flood_type));
         svec.insert(svec.end(), s.begin(), s.end());
 
         PyEval_RestoreThread(_save);
@@ -266,7 +271,7 @@ petmr_coincidences(PyObject *self, PyObject *args)
             std::tie(current_tt[i], end_pos[i]) = all_pos[i].front();
             all_pos[i].pop();
 
-            if (end_pos[i] == -1) stop = true;
+            if (end_pos[i] < 1) stop = true;
         }
 
         if (!stop)
@@ -523,6 +528,49 @@ petmr_rebin_sinogram(PyObject* self, PyObject* args)
     }
 
     return (PyObject*)rebinned;
+}
+
+static PyObject*
+petmr_listmode_to_arr(PyObject* self, PyObject* args)
+{
+    const char *fname;
+    int64_t start = 0, end = -1;
+    if (!PyArg_ParseTuple(args, "s|LL", &fname, &start, &end))
+        return NULL;
+
+    auto nev = fsize(fname) / sizeof(ListmodeData);
+    end = end < 1 ? nev : end;
+    start = start < 1 ? 0 : start;
+    nev = end - start;
+
+    std::vector<ListmodeData> ev(nev);
+
+    // ra, xa, rb, xb, eb, ea, db, da, t, td, p
+    npy_intp dims[] = {long(nev), 11};
+    PyArrayObject *lm = (PyArrayObject*)PyArray_SimpleNew(
+            2, dims, NPY_UINT16);
+
+    std::ifstream f(fname, std::ios::binary);
+    f.seekg(start * sizeof(ListmodeData));
+    f.read((char*)ev.data(), nev * sizeof(ListmodeData));
+
+    for (size_t i = 0; i < nev; i++)
+    {
+        uint16_t *row = (uint16_t*)PyArray_GETPTR2(lm, i, 0);
+        row[0]  = ev[i].ring_a;
+        row[1]  = ev[i].crystal_a;
+        row[2]  = ev[i].ring_b;
+        row[3]  = ev[i].crystal_b;
+        row[4]  = ev[i].energy_b;
+        row[5]  = ev[i].energy_a;
+        row[6]  = ev[i].doi_b;
+        row[7]  = ev[i].doi_a;
+        row[8]  = ev[i].abstime;
+        row[9]  = ev[i].tdiff;
+        row[10] = ev[i].prompt;
+    }
+
+    return (PyObject*)lm;
 }
 
 static PyObject*

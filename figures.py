@@ -1,4 +1,7 @@
-import os, glob, json, copy, matplotlib, threading, queue
+import os
+import json
+import copy
+import matplotlib
 import numpy as np
 import tkinter as tk
 
@@ -25,6 +28,12 @@ def lut_edges(lut: np.array) -> np.ma.array:
     overlay = np.logical_or(xd, yd)
     overlay = ndimage.binary_dilation(overlay, np.ones((3,3)))
     return np.ma.array(overlay, mask = (overlay == 0))
+
+def get_marker_size(widget):
+    min_window_size = min(widget.winfo_height(), widget.winfo_width())
+    return (1 if min_window_size < 300 else
+            2 if min_window_size < 500 else
+            3 if min_window_size < 600 else 4)
 
 class MPLFigure(FigureCanvasTkAgg):
     def __init__(self, root, show_axes = True, **args):
@@ -116,24 +125,19 @@ class FloodHist(MPLFigure):
         if self.overlay is not None:
             self.plot.imshow(self.overlay, aspect = 'auto', cmap = self.cmap)
 
-        if self.pts is not None:
+        if self.draw_voronoi:
+            vor = Voronoi(self.pts.reshape(-1,2))
+            voronoi_plot_2d(vor, ax = self.plot,
+                    show_vertices = False,
+                    show_points = False,
+                    line_colors = 'grey',
+                    line_alpha = 0.5)
+
+        if self.draw_points:
             active = self.pts[self.pts_active].T
             inactive = self.pts[~self.pts_active].T
-
-            if self.draw_voronoi:
-                vor = Voronoi(self.pts.reshape(-1,2))
-                voronoi_plot_2d(vor, ax = self.plot, 
-                        show_vertices = False, 
-                        show_points = False, 
-                        line_colors = 'grey',
-                        line_alpha = 0.5)
-
-            if self.draw_points:
-                min_window_size = min(self.widget.winfo_height(), self.widget.winfo_width())
-                marker_size = 1 if min_window_size < 300 else (
-                              2 if min_window_size < 500 else (
-                              3 if min_window_size < 600 else 4))
-                self.plot.plot(*active, '.b', *inactive, '.r', ms = marker_size)
+            ms = get_marker_size(self.widget)
+            self.plot.plot(*active, '.b', *inactive, '.r', ms = ms)
 
         # Invert Y axis to display A channel in Top right
         self.plot.invert_yaxis()
@@ -152,27 +156,29 @@ class FloodHist(MPLFigure):
             self.redraw()
 
     def update(self, x, y, warp = None, overlay = None,
-               draw_voronoi = False, draw_points = True):
+               draw_voronoi = False, draw_points = True,
+               preprocess = True):
+
+        self.draw_voronoi = draw_voronoi
+        self.draw_points = draw_points
+        self.overlay = overlay
 
         # First coord -> rows -> y
         # Second coord -> cols -> x
         self.img, *_ = np.histogram2d(y, x, bins = self.img_size,
                 range = [[0,self.img_size-1],[0,self.img_size-1]])
 
-        self.f = Flood(self.img, warp)
+        self.f = Flood(self.img, warp, preprocess)
 
-        try:
+        if draw_voronoi or draw_points:
             self.pts = self.f.estimate_peaks()
-            self.pts = self.pts.T.reshape(self.npts, self.npts, 2)
-        except RuntimeError as e:
-            # Failed to find sufficient peaks
-            print(e)
+        else:
             self.pts = None
 
+        if self.pts is not None:
+            self.pts = self.pts.T.reshape(self.npts, self.npts, 2)
+
         self.pts_active = np.zeros((self.npts, self.npts), dtype = bool)
-        self.draw_voronoi = draw_voronoi
-        self.draw_points = draw_points
-        self.overlay = overlay
         self.redraw()
 
 class ThresholdHist(MPLFigure):
@@ -270,23 +276,33 @@ class Plots(tk.Frame):
         self.transform_button = tk.Button(self.button_frame,
                 text = "Perspective Transform", command = self.perspective_transform)
 
-        self.show_points = tk.IntVar(value = 1)
+        self.preprocess_flood = tk.BooleanVar(value = True)
+        self.preprocess_flood_cb = tk.Checkbutton(self.button_frame,
+                text = "Preprocess Flood", variable = self.preprocess_flood,
+                command = self.flood_cb)
+
+        self.show_points = tk.BooleanVar(value = True)
         self.show_points_cb = tk.Checkbutton(self.button_frame,
-                text = "Overlay Points", variable = self.show_points)
+                text = "Overlay Points", variable = self.show_points,
+                command = self.flood_cb)
 
-        self.show_voronoi = tk.IntVar()
+        self.show_voronoi = tk.BooleanVar(value = False)
         self.show_voronoi_cb = tk.Checkbutton(self.button_frame,
-                text = "Overlay Voronoi", variable = self.show_voronoi)
+                text = "Overlay Voronoi", variable = self.show_voronoi,
+                command = self.flood_cb)
 
-        self.show_lut = tk.IntVar()
+        self.show_lut = tk.BooleanVar(value = False)
         self.show_lut_cb = tk.Checkbutton(self.button_frame,
-                text = "Overlay LUT", variable = self.show_lut)
+                text = "Overlay LUT", variable = self.show_lut,
+                command = self.flood_cb)
 
         self.button_frame.pack(pady = 10);
         self.select_dir_button.pack(side = tk.LEFT, padx = 5)
         self.store_lut_button.pack(side = tk.LEFT, padx = 5)
         self.register_button.pack(side = tk.LEFT, padx = 5)
         self.transform_button.pack(side = tk.LEFT, padx = 5)
+
+        self.preprocess_flood_cb.pack(side = tk.LEFT, padx = 5)
         self.show_points_cb.pack(side = tk.LEFT, padx = 5)
         self.show_voronoi_cb.pack(side = tk.LEFT, padx = 5)
         self.show_lut_cb.pack(side = tk.LEFT, padx = 5)
@@ -351,7 +367,8 @@ class Plots(tk.Frame):
         self.flood.update(windowed['X'], windowed['Y'],
                           warp = self.warp, overlay = lut,
                           draw_voronoi = self.show_voronoi.get(),
-                          draw_points = self.show_points.get())
+                          draw_points = self.show_points.get(),
+                          preprocess = self.preprocess_flood.get())
 
     def doi_cb(self, retain = True):
         """ Update the DOI according to the energy thresholds """

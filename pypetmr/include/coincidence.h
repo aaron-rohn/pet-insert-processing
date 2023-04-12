@@ -133,7 +133,7 @@ class cspan
 };
 
 // Wrappers for C library functions for better memory management
-cspan<SingleData> span_singles_to_tt(SinglesReader*, uint64_t, uint64_t*);
-cspan<SingleData> span_read_singles(const char*, off_t, off_t*, uint64_t*);
+cspan<SingleData> span_singles_to_tt(SinglesReader*, uint64_t, uint64_t*, const SinglesFloodType);
+cspan<SingleData> span_read_singles(const char*, off_t, off_t*, uint64_t*, const SinglesFloodType);
 
 #endif

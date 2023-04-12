@@ -29,17 +29,14 @@ class Flood:
                 flags = cv.WARP_INVERSE_MAP | cv.INTER_NEAREST,
                 borderMode = cv.BORDER_CONSTANT, borderValue = int(lut.max()))
 
-    def __init__(self, flood, warp = None):
-        self.fld = np.copy(flood).astype(np.float64)
+    def __init__(self, flood, warp = None, preprocess = True):
+        self.fld = flood.astype(float)
 
         if warp is not None:
             self.fld = cv.warpPerspective(self.fld, warp, self.fld.shape)
 
-        self.fld = flood_preprocess(self.fld)
-
-        self.pars = pyelastix.get_default_params()
-        self.pars.NumberOfResolution = 2
-        self.pars.MaximumNumberOfIterations = 200
+        if preprocess:
+            self.fld = flood_preprocess(self.fld)
 
     def register_peaks(self, pks):
         """ Register a starting set of peaks to the preprocessed flood. The registration
@@ -55,7 +52,11 @@ class Flood:
             pks_map[pk[1], pk[0]] = 1
         pks_blur = ndimage.gaussian_filter(pks_map, 1)
 
-        _, (xf, yf) = pyelastix.register(pks_blur, self.fld, self.pars, verbose = 0)
+        pars = pyelastix.get_default_params()
+        pars.NumberOfResolution = 2
+        pars.MaximumNumberOfIterations = 200
+
+        _, (xf, yf) = pyelastix.register(pks_blur, self.fld, pars, verbose = 0)
         pks_out = np.zeros(pks.shape)
 
         # Note that this is just an estimate
@@ -88,7 +89,8 @@ class Flood:
         while len(lpk) < n_side or len(rpk) < n_side:
             distance -= 1
 
-            if distance == 0: raise RuntimeError('Failed to find sufficient peaks')
+            # failed to find sufficient peaks
+            if distance == 0: return None
 
             # Find peaks satisfying the new min, distance, and remove original peaks
             other_pks,_ = signal.find_peaks(s, distance = distance)

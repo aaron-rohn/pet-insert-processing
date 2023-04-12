@@ -68,6 +68,7 @@ class Sinogram
     {
         int col = xtal % Geometry::ncrystals;
         int mod = blk >> 2;
+        col = Geometry::ncrystals - 1 - col;
         return col + (Geometry::ncrystals + Geometry::ncrystals_transverse_gap)*mod;
     }
 };

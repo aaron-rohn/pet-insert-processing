@@ -45,7 +45,7 @@ SortedValues CoincidenceData::coincidence_sort_span(
     {
         uint64_t nev = 0;
         auto s = span_read_singles(
-                fnames[i].c_str(), start_pos[i], &end_pos[i], &nev);
+                fnames[i].c_str(), start_pos[i], &end_pos[i], &nev, BOTH);
         singles.insert(singles.end(), s.begin(), s.end());
     }
 
@@ -83,14 +83,18 @@ Coincidences CoincidenceData::sort(
     return coin;
 }
 
-cspan<SingleData> span_singles_to_tt(SinglesReader *rdr, uint64_t value, uint64_t *nev)
+cspan<SingleData> span_singles_to_tt(SinglesReader *rdr,
+        uint64_t value, uint64_t *nev,
+        const SinglesFloodType tp)
 {
-    SingleData *singles = singles_to_tt(rdr, value, nev);
+    SingleData *singles = singles_to_tt(rdr, value, nev, tp);
     return cspan(singles, *nev);
 }
 
-cspan<SingleData> span_read_singles(const char *fname, off_t start, off_t *end, uint64_t *nev)
+cspan<SingleData> span_read_singles(const char *fname,
+        off_t start, off_t *end, uint64_t *nev,
+        const SinglesFloodType tp)
 {
-    SingleData *singles = read_singles(fname, start, end, nev);
+    SingleData *singles = read_singles(fname, start, end, nev, tp);
     return cspan(singles, *nev);
 }

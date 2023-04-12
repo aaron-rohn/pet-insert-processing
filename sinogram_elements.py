@@ -1,10 +1,13 @@
-import os, glob, re, json, threading, copy, matplotlib, queue
+import os
+import glob
+import re
+import json
+import threading
+import concurrent.futures
 import tkinter as tk
 import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure, SubplotParams
-import matplotlib.pyplot as plt
-import concurrent.futures
 
 import petmr, crystal, calibration, figures
 from calibration import CoincidenceFileHandle
@@ -21,6 +24,31 @@ from filedialog import (check_config_dir,
                         askopenfilenames,
                         asksaveasfilename,
                         askformatfilenames)
+
+def remap_sinogram(s: np.ndarray):
+    nr, _, nt, npos = s.shape
+    nt2 = int(nt/2)
+
+    sout = np.zeros((nr,nr,nt2,npos), s.dtype)
+
+    for i,j in zip(*np.triu_indices(nr)):
+        tmp = np.roll(s[i,j], nt2, 0) + np.fliplr(s[j,i])
+        sout[i,j] = tmp[:nt2]
+        sout[j,i] = tmp[nt2:,::-1]
+
+    return sout
+
+def lmdata_to_sinogram(lmdata):
+    ra, rb = lmdata['ra'], lmdata['rb']
+    t = lmdata['xb'] + lmdata['xa']
+    r = lmdata['xb'] - lmdata['xa'] # block b has greater crystal ID
+
+    ring_bins = np.arange(petmr.nring+1)
+    theta_bins = np.arange(petmr.dim_theta_full+1)
+    r_bins = np.arange(petmr.ncrystals, petmr.dim_r+petmr.ncrystals+1)
+
+    return np.histogramdd((ra, rb, t/2, r),
+            (ring_bins, ring_bins, theta_bins, r_bins))[0]
 
 class SinogramDisplay(tk.Frame):
     def __init__(self, root):
@@ -44,8 +72,8 @@ class SinogramDisplay(tk.Frame):
 
         self.cb_frame = tk.Frame(self)
         self.energy_window_menu = tk.OptionMenu(self.cb_frame, self.energy_window_var,
-                #0.315, 0.510, -1.0) # 350-672, 250-772, all
-                0.2, 0.4, 0.6, 0.8, 1.0, -1.0)
+                0.315, 0.510, -1.0) # 350-672, 250-772, all
+                #0.2, 0.4, 0.6, 0.8, 1.0, -1.0)
         self.max_doi_menu = tk.OptionMenu(self.cb_frame, self.max_doi_var, *np.arange(0,petmr.ndoi+1))
         self.sort_prompts_cb = tk.Checkbutton(self.cb_frame, text = "Prompts", variable = self.sort_prompts_var)
         self.sort_delays_cb = tk.Checkbutton(self.cb_frame, text = "Delays", variable = self.sort_delays_var)
@@ -122,28 +150,6 @@ class SinogramDisplay(tk.Frame):
                                      vmin = 0, vmax = np.quantile(d, 0.999))
             self.sinogram_plt.invert_yaxis()
             self.sinogram_canvas.draw()
-
-    @staticmethod
-    def remap_sinogram(s: np.ndarray):
-        nr = s.shape[0]
-        nt = s.shape[2]
-        nt2 = int(nt/2)
-        npos = s.shape[3]
-
-        s0 = np.copy(s)
-        sout = np.zeros((nr,nr,nt2,npos), s.dtype)
-
-        for i in range(nr):
-            for j in range(nr):
-                if i <= j:
-                    s[i,j] = np.roll(s[i,j], nt2, 0)
-                    s[i,j] += np.fliplr(s0[j,i])
-
-                    sout[i,j]  = s[i,j,0:nt2]
-                    if i != j:
-                        sout[j,i] += np.fliplr(s[i,j,nt2:nt])
-
-        return sout
 
     def load_luts(self, calib_dir):
         lut_dim = [512,512]
@@ -225,7 +231,7 @@ class SinogramDisplay(tk.Frame):
 
         else:
             def callback(sinogram):
-                self.sino_data = self.remap_sinogram(sinogram)
+                self.sino_data = remap_sinogram(sinogram)
                 self.count_map_draw()
 
             print(f'Load listmode file {lm_fnames[0]}')
@@ -244,7 +250,7 @@ class SinogramDisplay(tk.Frame):
 
     def load_listmode_multi(self, lm_fnames, sino_fnames, *args):
         def remap_and_save(fname, fut):
-            s = self.remap_sinogram(fut.result())
+            s = remap_sinogram(fut.result())
             petmr.save_sinogram(fname, s)
 
         def launch():
@@ -277,7 +283,7 @@ class SinogramDisplay(tk.Frame):
                 filetypes = listmode_filetypes)
         if not lm_fname: return
 
-        nperiods = 5
+        nperiods = 10
         cf = CoincidenceFileHandle(coin_fname, nperiods = nperiods)
         nev = cf.events_per_period(500e6)
         print(f'Creating scaled calibration with {nev} events and {nperiods} periods')

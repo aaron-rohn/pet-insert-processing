@@ -49,7 +49,11 @@ union Record_
 
 typedef union Record_ Record;
 
-void to_single_data(struct Single *d, uint64_t tt, SingleData *sd)
+/*
+ * Function to create the externally-used singles data
+ * from the internally-used representation
+ */
+void to_single_data(struct Single *d, uint64_t tt, SingleData *sd, const SinglesFloodType type)
 {
     sd->block = d->block;
     sd->abstime = tt * CLK_PER_TT + d->fine_time;
@@ -61,24 +65,53 @@ void to_single_data(struct Single *d, uint64_t tt, SingleData *sd)
     double yF = ((double)(d->a_front + d->d_front)) / sd->eF;
     double xR = ((double)(d->a_rear + d->b_rear)) / sd->eR;
     double yR = ((double)(d->a_rear + d->d_rear)) / sd->eR;
+    double x,y;
 
-    sd->x = round(xR * FLOOD_COORD_SCALE);
-    sd->y = round((yF + yR) / 2.0 * FLOOD_COORD_SCALE);
+    switch(type)
+    {
+        case FRONT:
+            x = xF;
+            y = yF;
+            break;
+
+        case REAR:
+            x = xR;
+            y = yR;
+            break;
+
+        case BOTH:
+            x = xR;
+            y = (yF + yR) / 2.0;
+            break;
+    }
+
+    sd->x = round(x * FLOOD_COORD_SCALE);
+    sd->y = round(y * FLOOD_COORD_SCALE);
 }
 
+/*
+ * Advance the read pointer to the next single or timetag
+ * with valid alignment. Return null if insufficient data
+ * in buffer.
+ */
 Record *read_record(char **start, char *end)
 {
     // rec and start both point to the cursor
     Record **rec = (Record**)start;
 
     // ensure byte-alignment of the single event
-    while (*start < end && (*rec)->sgl.header != VALID_HEADER)
+    while ((*rec)->sgl.header != VALID_HEADER && *start < end)
         (*start)++; // advance cursor by 1 byte until reaching header
 
     // ensure that the buffer has enough data
     // return the event under the cursor, then advance the cursor by 1 event
     return (*start + sizeof(Record) > end) ? NULL : (*rec)++;
 }
+
+/*
+ * Functions for creating singles readers from either
+ * a file descriptor or filename
+ */
 
 SinglesReader reader_new(int fd, int is_file)
 {
@@ -93,26 +126,30 @@ SinglesReader reader_new_from_file(const char *fname)
     return reader_new(open(fname, O_RDONLY | O_LARGEFILE), 1);
 }
 
-ssize_t reader_refill(SinglesReader *rdr)
+/*
+ * Refill the buffer from either a file or socket, and
+ * update the total number of bytes read
+ */
+void reader_refill(SinglesReader *rdr)
 {
-    char *stop = rdr->buf + sizeof(rdr->buf);
-    size_t n = 0;
+    char *stop = rdr->buf + sizeof(rdr->buf), *beg = rdr->end;
 
     while (rdr->end != stop)
     {
         ssize_t recv = read(rdr->fd, rdr->end, stop - rdr->end);
         if (recv < 1) break;
-
         rdr->end += recv;
-        n += recv;
     }
 
     rdr->fpos = rdr->is_file ?
-        lseek(rdr->fd, 0, SEEK_CUR) : rdr->fpos + n;
-
-    return n;
+        lseek(rdr->fd, 0, SEEK_CUR) : rdr->fpos + (rdr->end - beg);
 }
 
+/*
+ * Produce either one single or timetag from the
+ * singles data stream, refilling the buffer as 
+ * needed. Returns null at stream termination.
+ */
 Record *reader_read(SinglesReader *rdr)
 {
     do
@@ -137,11 +174,19 @@ Record *reader_read(SinglesReader *rdr)
     return NULL;
 }
 
+/*
+ * Give the current file position, accounting for the
+ * data still in the buffer.
+ */
 off_t reader_pos(SinglesReader *rdr)
 {
     return rdr->fpos - (rdr->end - rdr->start);
 }
 
+/*
+ * Advance the file singles reader to the first instance of a
+ * specified timetag, without storing any singles data
+ */
 off_t go_to_tt(SinglesReader *rdr, uint64_t value)
 {
     Record *d;
@@ -163,7 +208,12 @@ off_t go_to_tt(SinglesReader *rdr, uint64_t value)
     return 0;
 }
 
-SingleData *singles_to_tt(SinglesReader *rdr, uint64_t value, uint64_t *sz)
+/*
+ * Advance the file singles reader to the first instance of a
+ * specified timetag, and return all encountered singles
+ */
+SingleData *singles_to_tt(SinglesReader *rdr,
+        uint64_t value, uint64_t *sz, const SinglesFloodType tp)
 {
     uint64_t n = 0, sz_dummy = 0;
     if (sz == NULL) sz = &sz_dummy;
@@ -184,7 +234,7 @@ SingleData *singles_to_tt(SinglesReader *rdr, uint64_t value, uint64_t *sz)
                 singles = reallocarray(singles, *sz, sizeof(SingleData));
             }
 
-            to_single_data(&(d->sgl), rdr->tt[MODULE(d->sgl.block)], &singles[n++]);
+            to_single_data(&(d->sgl), rdr->tt[MODULE(d->sgl.block)], &singles[n++], tp);
         }
         else
         {
@@ -201,9 +251,14 @@ SingleData *singles_to_tt(SinglesReader *rdr, uint64_t value, uint64_t *sz)
     return singles;
 }
 
+/*
+ * Create a new singles reader and read singles between
+ * a specified range of file offsets
+ */
 SingleData *read_singles(
         const char *fname,
-        off_t start, off_t *end, uint64_t *nev
+        off_t start, off_t *end, uint64_t *nev,
+        const SinglesFloodType tp
 ) {
     uint64_t nev_dummy = 0;
     off_t end_dummy = -1;
@@ -237,7 +292,7 @@ SingleData *read_singles(
     {
         if (d->sgl.flag)
         {
-            to_single_data(&d->sgl, rdr.tt[MODULE(d->sgl.block)], &buf[(*nev)++]);
+            to_single_data(&d->sgl, rdr.tt[MODULE(d->sgl.block)], &buf[(*nev)++], tp);
         }
         else
         {
@@ -250,6 +305,11 @@ SingleData *read_singles(
     return buf;
 }
 
+/*
+ * Validate that a singles file contains a reset and
+ * timetags for four consecutive modules. Returns the
+ * result as a bitfield.
+ */
 uint8_t validate(const char *fname)
 {
     Record *d;

@@ -91,7 +91,8 @@ class ProgressPopup(tk.Toplevel):
                 self.callback(self.data.get())
 
 class SinglesLoader(ProgressPopup):
-    def __init__(self, callback):
+    def __init__(self, callback, flood_type):
+        self.flood_type = flood_type
         self.callback = callback
         self.input_file = askopenfilename(
                 title = "Load singles listmode data",
@@ -105,7 +106,7 @@ class SinglesLoader(ProgressPopup):
 
     def load_singles(self):
         try:
-            d = petmr.singles(self.input_file, max_events,
+            d = petmr.singles(self.input_file, self.flood_type, max_events,
                     self.terminate, self.status)
         except Exception as e:
             self.data.put(e)

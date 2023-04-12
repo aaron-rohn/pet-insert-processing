@@ -30,6 +30,44 @@ VisualizationDType = np.dtype([
     ('E', np.uint16), ('D', np.uint16),
     ('X', np.uint16), ('Y', np.uint16)])
 
+ListmodeDType = np.dtype([
+    ('ra', np.uint8), ('xa', np.uint16),
+    ('rb', np.uint8), ('xb', np.uint16),
+    ('eb', np.uint8), ('ea', np.uint8),
+    ('db', np.uint8), ('da', np.uint8),
+    ('t',  np.uint16), ('td', np.int8),
+    ('prompt', bool)])
+
+class ListmodeLoader:
+    bytes_per_ev = 8
+    def __init__(self, fname, periods = None, counts = None):
+        self.nev = os.path.getsize(fname) / ListmodeLoader.bytes_per_ev
+        if counts is None:
+            if periods is None:
+                raise ValueError('Counts or periods must be specified')
+            counts = int(self.nev / periods)
+
+        self.fname = fname
+        self.counts = counts
+
+    def __len__(self):
+        return int(self.nev / self.counts)
+
+    def __iter__(self):
+        self.ctr = int(0)
+        return self
+
+    def __next__(self):
+        if self.ctr >= self.nev:
+            raise StopIteration
+
+        end = int(min(self.nev, self.ctr + self.counts))
+        d = petmr.listmode_to_arr(self.fname, self.ctr, end)
+        self.ctr = end
+
+        return rfn.unstructured_to_structured(
+                d, ListmodeDType)
+
 class CoincidenceFileHandle:
     def __init__(self, data, nperiods = 10, naverage = 10):
         self.data = np.memmap(data, CoincidenceDType)
@@ -93,7 +131,7 @@ def load_all_blocks(data_in, start = 0, end = max_events):
 
     # get a view of the same data in a structured format, and sort
     ds = np.memmap(data_in, CoincidenceDType)[start:end][order]
-    blocks = data[:,0][order]
+    blocks = data[order,0]
 
     # determine the indices corresponding to each unique block pair
     uq, idx = np.unique(blocks, return_index = True)

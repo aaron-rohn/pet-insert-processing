@@ -9,6 +9,8 @@ from numpy.lib import recfunctions as rfn
 
 import petmr, crystal, pyelastix
 
+import matplotlib.pyplot as plt
+
 n_doi_bins = 4096
 max_events = int(1e9)
 
@@ -191,6 +193,14 @@ def load_block_singles_data(data, blk):
 
 def flood_preprocess(fld):
     fld = fld.astype(float)
+
+    # remove the bright spot observed in the center of some floods
+    width,middle = int(15/2),int(fld.shape[0]/2)
+    window = slice(middle-width,middle+width)
+    center = fld[window,window]
+    thr,val = np.quantile(center, [0.96, 0.8])
+    center[center > thr] = val
+
     fld = ndimage.gaussian_laplace(fld, 1.5)
     fld /= fld.min()
     fld[fld < 0] = 0
@@ -198,6 +208,13 @@ def flood_preprocess(fld):
         fld /= ndimage.gaussian_filter(fld, 20)
     np.nan_to_num(fld, False, 0, 0, 0)
     return fld
+
+def lut_edges(lut: np.array) -> np.ma.array:
+    yd = np.diff(lut, axis = 0, prepend = lut.max()) != 0
+    xd = np.diff(lut, axis = 1, prepend = lut.max()) != 0
+    overlay = np.logical_or(xd, yd)
+    overlay = ndimage.binary_dilation(overlay, np.ones((3,3)))
+    return np.ma.array(overlay, mask = (overlay == 0))
 
 def create_cfg_vals(data, lut, blk, cfg, energy_hist = None):
     """
@@ -278,8 +295,12 @@ def scale_single_block(data, blk, cfgdir, hist, sync = None):
     ref_fld = np.fromfile(f'{cfgdir}/flood/block{blk}.raw', np.intc).reshape(512,512)
     ref_lut = np.fromfile(f'{cfgdir}/lut/block{blk}.lut', np.intc).reshape(512,512)
 
+    fld = flood_preprocess(fld)
+    ref_fld = flood_preprocess(ref_fld)
+
     xf, yf = register(ref_fld, fld, nres = 2, niter = 250, type = 'AFFINE')
     lut = remap(ref_lut, xf, yf)
+    edges = lut_edges(lut)
 
     # get energy and DOI calibration values
 
@@ -289,9 +310,10 @@ def scale_single_block(data, blk, cfgdir, hist, sync = None):
             stats[['5mm', '10mm', '15mm']])
 
     if sync is not None:
-        block, lk, q = sync
+        block, lk, status_queue, floods_queue = sync
         with lk:
             block += 1
-            q.put(float(block / petmr.nblocks * 100))
+            status_queue.put(float(block / petmr.nblocks * 100))
+            floods_queue.put((fld,edges))
 
     return lut, ppeak, doi

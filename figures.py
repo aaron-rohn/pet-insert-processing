@@ -2,6 +2,7 @@ import os
 import json
 import copy
 import matplotlib
+import threading
 import numpy as np
 import tkinter as tk
 
@@ -13,21 +14,14 @@ from matplotlib.figure import Figure, SubplotParams
 from flood import Flood, PerspectiveTransformDialog
 from data_loader import ProgressPopup, coincidence_filetypes
 import crystal
-from calibration import create_cfg_vals
-from filedialog import check_config_dir
+from calibration import create_cfg_vals, lut_edges
+from filedialog import check_config_dir, asksaveasfilename
 
 def try_open(fname: str) -> dict:
     try:
         with open(fname, 'r') as f:
             return json.load(f)
     except (FileNotFoundError, json.decoder.JSONDecodeError): return {}
-
-def lut_edges(lut: np.array) -> np.ma.array:
-    yd = np.diff(lut, axis = 0, prepend = lut.max()) != 0
-    xd = np.diff(lut, axis = 1, prepend = lut.max()) != 0
-    overlay = np.logical_or(xd, yd)
-    overlay = ndimage.binary_dilation(overlay, np.ones((3,3)))
-    return np.ma.array(overlay, mask = (overlay == 0))
 
 def get_marker_size(widget):
     min_window_size = min(widget.winfo_height(), widget.winfo_width())
@@ -47,6 +41,9 @@ class MPLFigure(FigureCanvasTkAgg):
         self.widget.grid(**args)
         self.draw()
 
+        self.cmap = copy.copy(matplotlib.colormaps['Pastel1'])
+        self.cmap.set_bad(alpha = 0)
+
 class FloodHist(MPLFigure):
     def __init__(self, root, **args):
         self.img_size = 512
@@ -62,8 +59,6 @@ class FloodHist(MPLFigure):
 
         super().__init__(root, show_axes = False, **args)
         self.mpl_connect('button_press_event', self.click)
-        self.cmap = copy.copy(matplotlib.colormaps['Pastel1'])
-        self.cmap.set_bad(alpha = 0)
 
     def click(self, ev):
         if self.pts is None: return
@@ -276,6 +271,9 @@ class Plots(tk.Frame):
         self.transform_button = tk.Button(self.button_frame,
                 text = "Perspective Transform", command = self.perspective_transform)
 
+        self.save_flood_button = tk.Button(self.button_frame,
+                text = "Save Flood", command = self.save_flood)
+
         self.preprocess_flood = tk.BooleanVar(value = True)
         self.preprocess_flood_cb = tk.Checkbutton(self.button_frame,
                 text = "Preprocess Flood", variable = self.preprocess_flood,
@@ -301,6 +299,7 @@ class Plots(tk.Frame):
         self.store_lut_button.pack(side = tk.LEFT, padx = 5)
         self.register_button.pack(side = tk.LEFT, padx = 5)
         self.transform_button.pack(side = tk.LEFT, padx = 5)
+        self.save_flood_button.pack(side = tk.LEFT, padx = 5)
 
         self.preprocess_flood_cb.pack(side = tk.LEFT, padx = 5)
         self.show_points_cb.pack(side = tk.LEFT, padx = 5)
@@ -327,6 +326,15 @@ class Plots(tk.Frame):
         self.doi.callback.append(self.flood_cb)
         self.doi.callback.append(self.energy_cb)
 
+    def save_flood(self):
+        fname = asksaveasfilename(
+                title = "Save flood to file",
+                filetypes = [("Raw image", ".raw")])
+
+        if self.flood.f is not None and fname is not None:
+            # image is 512x512 float64
+            self.flood.f.fld.tofile(fname)
+
     def perspective_transform(self):
         def callback(mat):
             self.warp = mat
@@ -345,8 +353,12 @@ class Plots(tk.Frame):
     def create_lut_borders(self, cfg_dir):
         blk = self.get_block()
         lut_fname = os.path.join(cfg_dir, 'lut', f'block{blk}.lut')
-        lut = np.fromfile(lut_fname, np.intc).reshape((512,512))
-        return lut_edges(lut)
+
+        if os.path.isfile(lut_fname):
+            lut = np.fromfile(lut_fname, np.intc).reshape((512,512))
+            return lut_edges(lut)
+        else:
+            return None
 
     def flood_cb(self):
         """ Update the flood according to energy and DOI thresholds """
@@ -389,7 +401,6 @@ class Plots(tk.Frame):
             return
 
         blk = self.get_block()
-        print(f'Store calibration data for block {blk}...', end = ' ', flush = True)
 
         # calculate the LUT based on the peak positions
         peak_pos = self.flood.pts.reshape(-1,2)
@@ -410,13 +421,23 @@ class Plots(tk.Frame):
         config_file = os.path.join(output_dir, 'config.json')
         cfg = try_open(config_file)
 
-        create_cfg_vals(self.d, lut, blk, cfg)
+        self.store_lut_button.config(state = tk.DISABLED)
+        t = threading.Thread(target = create_cfg_vals,
+                args = [self.d, lut, blk, cfg])
+        t.start()
 
-        with open(config_file, 'w') as f:
-            json.dump(cfg, f)
+        def finish():
+            self.store_lut_button.config(state = tk.NORMAL)
 
-        print('Done')
-        try:
-            self.incr_block()
-        except tk.TclError:
-            tk.messagebox.showinfo('Completed', 'Calibration complete for last block')
+            with open(config_file, 'w') as f:
+                json.dump(cfg, f)
+
+            try:
+                self.incr_block()
+            except tk.TclError:
+                tk.messagebox.showinfo('Completed', 'Calibration complete for last block')
+
+        def check():
+            self.after(100, check) if t.is_alive() else finish()
+
+        check()

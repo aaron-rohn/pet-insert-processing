@@ -3,6 +3,7 @@ import glob
 import re
 import json
 import threading
+import queue
 import concurrent.futures
 import tkinter as tk
 import numpy as np
@@ -12,6 +13,7 @@ from matplotlib.figure import Figure, SubplotParams
 import petmr, crystal, calibration, figures
 from calibration import CoincidenceFileHandle
 from sinogram_loader import SinogramLoaderPopup
+from figures import MPLFigure
 
 from data_loader import (
         ProgressPopup,
@@ -289,6 +291,30 @@ class SinogramDisplay(tk.Frame):
         print(f'Creating scaled calibration with {nev} events and {nperiods} periods')
         ewindow = self.energy_window_var.get()
 
+        # create a window to display the flood and warped LUT as they are processed
+
+        flood_queue = queue.Queue()
+        display = tk.Toplevel(self)
+        display.title('Flood display')
+        p = MPLFigure(display, show_axes = False)
+
+        def check():
+            while not flood_queue.empty():
+                vals = flood_queue.get()
+                if vals is None:
+                    display.destroy()
+                    return
+
+                fld, edges = vals
+                p.plot.clear()
+                p.plot.imshow(fld, aspect = 'auto')
+                p.plot.imshow(edges, aspect = 'auto', cmap = p.cmap)
+                p.draw()
+
+            self.after(100, check)
+
+        # launch the thread to manage the creating of the scaled cfg and listmode sorting
+
         pp = ProgressPopup(fmt = '{}')
 
         def launch():
@@ -303,20 +329,21 @@ class SinogramDisplay(tk.Frame):
 
                     pp.status.put((0, f'Scale calibration for period {i+1}/{nperiods}'))
 
-                    sync = np.array([0]), threading.Lock(), pp.status
+                    sync = np.array([0]), threading.Lock(), pp.status, flood_queue 
                     luts, ppeak, doi = calibration.create_scaled_calibration(
                             data[:nev], cfgdir, hist, sync)
-
-                    #ppeak.tofile(f'photopeaks_{i}.raw')
-                    #doi.tofile(f'doi_{i}.raw')
 
                     pp.status.put((0, f'Sort listmode data {start} to {end}'))
                     petmr.save_listmode(lm_fname, coin_fname,
                             ewindow, luts, ppeak, doi, start, end,
                             pp.terminate, pp.status)
             finally:
+                # signal to close progress windows
+                flood_queue.put(None)
                 pp.data.put(None)
 
+        # start the workers
+        check()
         threading.Thread(target = launch).start()
 
     def save_sinogram(self):

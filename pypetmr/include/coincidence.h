@@ -92,10 +92,10 @@ struct ListmodeData {
     unsigned int crystal_b  : 9;
 
     // short 2
-    unsigned int energy_b   : 6;
-    unsigned int energy_a   : 6;
-    unsigned int doi_b      : 2;
-    unsigned int doi_a      : 2;
+    unsigned int energy_b   : 5;
+    unsigned int energy_a   : 5;
+    unsigned int doi_b      : 3;
+    unsigned int doi_a      : 3;
 
     // short 3
     unsigned int abstime    : 10;

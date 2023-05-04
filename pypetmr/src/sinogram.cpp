@@ -6,9 +6,11 @@
 #include <cstdio>
 #include <cstring>
 
-int Michelogram::energy_window(size_t blk, size_t xtal, double e) const
+int Michelogram::energy_window(size_t blk, size_t xtal, size_t doi_bin, double e) const
 {
-    double th = *(double*)PyArray_GETPTR2(photopeaks, blk, xtal);
+    if (doi_bin >= Geometry::ndoi) return -1;
+
+    double th = *(double*)PyArray_GETPTR3(photopeaks, blk, xtal, doi_bin);
 
     if (th < 0 || energy_window_width < 0) return 0;
 
@@ -23,8 +25,8 @@ int Michelogram::doi_window(size_t blk, size_t xtal, double val) const
 {
     for (size_t i = 0; i < Geometry::ndoi; i++)
     {
-        double th = *(double*)PyArray_GETPTR3(doi, blk, xtal, i);
-        if (val >  th) return i;
+        double th = *(double*)PyArray_GETPTR3(doi_thresholds, blk, xtal, i);
+        if (val > th) return i;
     }
     return Geometry::ndoi;
 }
@@ -41,16 +43,17 @@ Michelogram::event_to_coords(const CoincidenceData& c) const
     if (xa >= Geometry::ncrystals_total || xb >= Geometry::ncrystals_total)
         return ListmodeData();
 
-    // Apply energy thresholds
-    auto [ea, eb] = c.e_sum();
-    int scaled_ea = energy_window(ba, xa, ea);
-    int scaled_eb = energy_window(bb, xb, eb);
-    if (scaled_ea < 0 || scaled_eb < 0)
-        return ListmodeData();
-
+    // identify DOI bin
     auto [doia_val, doib_val] = c.doi();
     unsigned int doia = doi_window(ba, xa, doia_val);
     unsigned int doib = doi_window(bb, xb, doib_val);
+
+    // Apply energy thresholds
+    auto [ea, eb] = c.e_sum();
+    int scaled_ea = energy_window(ba, xa, doia, ea);
+    int scaled_eb = energy_window(bb, xb, doib, eb);
+    if (scaled_ea < 0 || scaled_eb < 0)
+        return ListmodeData();
 
     unsigned int ra = Sinogram::ring(ba, xa), rb = Sinogram::ring(bb, xb);
     unsigned int idxa = Sinogram::idx(ba, xa), idxb = Sinogram::idx(bb, xb);
@@ -82,7 +85,7 @@ void Michelogram::read_from(std::string fname)
 }
 
 Michelogram::Michelogram(PyObject *arr):
-    photopeaks(NULL), doi(NULL), lut(NULL)
+    photopeaks(NULL), doi_thresholds(NULL), lut(NULL)
 {
     if (PyArray_TYPE((PyArrayObject*)arr) != npy_type)
     {
@@ -152,7 +155,7 @@ std::streampos Michelogram::add_to_sinogram(
         rdr.read((char*)&lm, sizeof(lm));
         if ((prompt && lm.prompt) || (delay && !lm.prompt))
         {
-            if (lm.doi_a <= max_doi && lm.doi_b <= max_doi)
+            if (lm.doi_a < max_doi && lm.doi_b < max_doi)
             {
                 (*this)(lm.ring_a, lm.ring_b).add_event(
                         lm.crystal_a, lm.crystal_b);

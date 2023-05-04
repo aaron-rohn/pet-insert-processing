@@ -23,7 +23,7 @@ namespace Geometry
     static const int dim_r = ncrystals_per_ring - (2*ncrystals);
 
     // number of DOI thresholds
-    static const int ndoi = 3;
+    static const int ndoi = 8;
 
     // 0.2 -> 408-613 keV
     // 0.4 -> 307-715 keV

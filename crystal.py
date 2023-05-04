@@ -4,15 +4,13 @@ from scipy import optimize
 from collections import defaultdict
 import matplotlib.pyplot as plt
 
+import petmr
+
 nbins = 100
 
-doi_bins = np.array([5,10,15,20])
+doi_bins = np.linspace(0, 20, petmr.ndoi+1)
 lyso_attn_length = 12
 doi_quantiles = 1 - np.exp(-doi_bins / lyso_attn_length)
-
-CrystalFitDtype = np.dtype([
-    ('crystal', int), ('peak',float), ('FWHM',float),
-    ('5mm',float), ('10mm',float), ('15mm',float)])
 
 def photopeak(x, peak, fwhm, amp, slope, intercept):
     # model the photopeak as a FWHM-parametrized gaussian plus a linear offset
@@ -40,14 +38,14 @@ def hist_and_update(values, q0 = 0, q1 = 0.97, n = None, bins = None):
     return n, bins
 
 def fit_photopeak(energy, **hist):
-    n, bins = hist_and_update(energy, 0, 0.97, **hist)
+    n, bins = hist_and_update(energy, 0.01, 0.97, **hist)
 
     # fit the data with a gaussian and linear offset
 
     b = bins[:-1]
-    ppeak_idx = np.argmax((b*2) * n**2)
+    ppeak_idx = np.argmax(b**2 * n)
     ppeak_energy = round(b[ppeak_idx])
-    subset = b > (ppeak_energy * 0.7)
+    subset = b > (ppeak_energy * 0.5)
 
     xl, xh = ppeak_energy*0.8, ppeak_energy*1.2
     xl, xh = np.searchsorted(b, [xl,xh])
@@ -77,27 +75,33 @@ def fit_photopeak(energy, **hist):
     return popt
 
 def get_doi(doi, **hist):
-    try:
-        n, bins = hist_and_update(doi, 0, 0.97, **hist)
-    except IndexError:
-        # no energy windowed counts were present for this crystal
-        return np.array([2200, 2000, 1800])
+    n, bins = hist_and_update(doi, 0, 1, **hist)
 
     pdf = np.cumsum(n[::-1]).astype(float)
     pdf = pdf / pdf[-1] * doi_quantiles[-1]
-    return np.interp(doi_quantiles[:-1], pdf, bins[-2::-1])
+
+    return np.interp(doi_quantiles, pdf, bins[-2::-1])
 
 def summarize_crystal(data, crystal, hist = None):
-    if hist is None:
-        ehist = dhist = {}
-    else:
-        ehist = {'n': hist[0,:-1], 'bins': hist[1]}
-        dhist = {'n': hist[2,:-1], 'bins': hist[3]}
+    # get DOI thresholds based on non-masked data
+    thresholds = get_doi(data['D'])
+    thresholds = np.round(thresholds)
 
-    peak, fwhm, *_ = fit_photopeak(data['E'], **ehist)
-    mask = ((peak - fwhm/2) < data['E']) & (data['E'] < (peak + fwhm/2))
-    thresholds = get_doi(data[mask]['D'], **dhist)
-    return np.concatenate([[crystal, peak, fwhm], thresholds])
+    ppeaks = []
+    fwhms  = []
+
+    # fit photopeak for each DOI bin
+    for h,l in zip(thresholds[:-1], thresholds[1:]):
+        mask = (l < data['D']) & (data['D'] < h)
+        if len(mask) > 0:
+            peak, fwhm, *_ = fit_photopeak(data[mask]['E'])
+        else:
+            peak, fwhm = -1, -1
+
+        ppeaks.append(round(peak))
+        fwhms.append(round(fwhm))
+
+    return crystal, thresholds[1:], ppeaks, fwhms
 
 def calculate_lut_statistics(lut, data, hist = None):
     if hist is None: hist = defaultdict(lambda: None)
@@ -114,9 +118,5 @@ def calculate_lut_statistics(lut, data, hist = None):
     # note that the last bin (361) corresponds to invalid events
     crystals, locs = np.unique(c_sort, return_index = True)
 
-    # iterate over each subset of data for all but the last crystal ID
-    res = np.array([summarize_crystal(d_sort[s:e], x, hist[x])
-        for x,s,e in zip(crystals, locs[:-1], locs[1:])])
-
-    # return a structured array with fitting results for each crystal
-    return np.core.records.fromarrays(res.T, CrystalFitDtype)
+    return [summarize_crystal(d_sort[s:e], x)
+            for x,s,e in zip(crystals, locs[:-1], locs[1:])]

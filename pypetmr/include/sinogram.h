@@ -76,12 +76,15 @@ class Sinogram
 class Michelogram
 {
     std::vector<Sinogram> m;
-    PyArrayObject *photopeaks, *doi, *lut;
+    PyArrayObject *photopeaks, *doi_thresholds, *lut;
+
+    // photopeaks: 3D -> block, crystal, DOI
+    // doi_thresholds: 3D -> block, crystal, DOI-1
 
     public:
 
     const size_t max_doi = Geometry::ndoi;
-    const double energy_scale = 63.0;
+    const double energy_scale = 31.0; // 5 bits for energy in listmode format
     const double energy_window_width = Geometry::energy_window;
 
     inline int lut_lookup(int blk, int y, int x) const
@@ -90,7 +93,7 @@ class Michelogram
     // first arg is horiz. index, second arg is vert. index
     inline Sinogram& operator() (int h, int v){ return m[v*Geometry::nring + h]; };
 
-    int energy_window(size_t, size_t, double) const;
+    int energy_window(size_t, size_t, size_t, double) const;
     int doi_window(size_t, size_t, double) const;
     void write_to(std::string);
     void read_from(std::string);
@@ -107,9 +110,9 @@ class Michelogram
             double energy_window_value = Geometry::energy_window,
             PyArrayObject *lut = NULL,
             PyArrayObject *photopeaks = NULL,
-            PyArrayObject *doi = NULL):
+            PyArrayObject *doi_thresholds = NULL):
         m(std::vector<Sinogram> (Geometry::nring*Geometry::nring, Sinogram(dt))),
-        photopeaks(photopeaks), doi(doi), lut(lut),
+        photopeaks(photopeaks), doi_thresholds(doi_thresholds), lut(lut),
         max_doi(max_doi),
         energy_window_width(energy_window_value) {};
 

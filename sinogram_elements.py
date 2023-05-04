@@ -167,9 +167,9 @@ class SinogramDisplay(tk.Frame):
         return np.ascontiguousarray(lut_arr)
 
     def load_json_cfg(self, cfgdir):
-        dims = (petmr.nblocks, petmr.ncrystals_total)
+        dims = (petmr.nblocks, petmr.ncrystals_total, petmr.ndoi)
         ppeak = np.ones(dims, np.double) * -1;
-        doi = np.ones(dims + (petmr.ndoi,), np.double) * -1;
+        doi = np.ones(dims, np.double) * -1;
 
         cfg_file = os.path.join(cfgdir,'config.json')
         with open(cfg_file, 'r') as f:
@@ -177,15 +177,15 @@ class SinogramDisplay(tk.Frame):
 
         for blk, bval in cfg.items():
             # use block photopeak as the default value
-            ppeak[int(blk),:] = bval['photopeak']
+            ppeak[int(blk)] = bval['photopeak']
 
             for xtal, xval in bval['crystal'].items():
                 if int(xtal) >= petmr.ncrystals_total:
                     continue
 
                 # apply crystal specific thresholds where available
-                ppeak[int(blk), int(xtal)] = xval['energy']['photopeak']
-                doi[int(blk), int(xtal),:] = xval['DOI']
+                ppeak[int(blk), int(xtal)] = xval['photopeak']
+                doi[int(blk), int(xtal)] = xval['DOI']
 
         return ppeak, doi
 
@@ -204,6 +204,10 @@ class SinogramDisplay(tk.Frame):
         lut = self.load_luts(cfgdir)
         ppeak, doi = self.load_json_cfg(cfgdir)
         ewindow = self.energy_window_var.get()
+
+        print(ppeak)
+        print(doi)
+        return
 
         if len(coin_fnames) > 1:
             self.save_listmode_multi(coin_fnames, lm_fnames,

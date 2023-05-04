@@ -196,7 +196,7 @@ class ThresholdHist(MPLFigure):
     def update(self, data, retain = False):
         last_rng = self.thresholds()
         self.plot.clear()
-        rng = np.quantile(data, [0.01, 0.99])
+        rng = np.quantile(data, [0, 0.97 if self.is_energy else 1])
         nbins = int(round((rng[1] - rng[0]) / 10))
         n,bins,_ = self.plot.hist(data, bins = nbins, range = rng)
 

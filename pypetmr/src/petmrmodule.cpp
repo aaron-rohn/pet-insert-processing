@@ -325,8 +325,8 @@ petmr_save_listmode(PyObject *self, PyObject *args)
      * 2. Coincidence filename (input)
      * 3. Energy window
      * 4. Numpy array with LUT
-     * 5. Numpy array with photopeaks
-     * 6. Numpy array with DOI
+     * 5. Numpy array with photopeaks (blk * xtal * doi)
+     * 6. Numpy array with DOI (blk * xtal * doi)
      *
      * starting byte position in input file or -1
      * ending byte position in input file or -1

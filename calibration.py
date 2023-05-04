@@ -224,11 +224,9 @@ def create_cfg_vals(data, lut, blk, cfg, energy_hist = None):
         - photopeak
         - FWHM
         - crystal
-            - energy
-                - photopeak
-                - FWHM 
+            - photopeak
+            - FWHM
             - DOI
-                - thresholds
     """
 
     blk_vals = cfg[blk] = {}
@@ -238,10 +236,12 @@ def create_cfg_vals(data, lut, blk, cfg, energy_hist = None):
     blk_vals['FWHM'] = fwhm 
 
     pks = crystal.calculate_lut_statistics(lut, data)
-    for row in pks:
-        this_xtal = xtal_vals[int(row['crystal'])] = {}
-        this_xtal['energy'] = {'photopeak': row['peak'], 'FWHM': row['FWHM']}
-        this_xtal['DOI'] = row[['5mm','10mm','15mm']].tolist()
+
+    for xtal, doi_thr, ppeaks, fwhms in pks:
+        this_xtal = xtal_vals[int(xtal)] = {}
+        this_xtal['photopeak'] = list(ppeaks)
+        this_xtal['FWHM'] = list(fwhms)
+        this_xtal['DOI'] = list(doi_thr)
 
 def register(src, dst, nres = 4, niter = 500, spacing = 32, type = 'BSPLINE'):
     pars = pyelastix.get_default_params(type = type)
@@ -283,7 +283,11 @@ def scale_single_block(data, blk, cfgdir, hist, sync = None):
 
     # get the energy histogram, photopeak, and energy windowed flood
 
-    peak, fwhm, *_ = crystal.fit_photopeak(d['E'])
+    #peak, fwhm, *_ = crystal.fit_photopeak(d['E'])
+    
+    peak = crystal.fit_photopeak(d['E'])[0]
+    fwhm = peak * 0.2
+
     windowed = d[((peak-fwhm) < d['E']) & (d['E'] < (peak+fwhm))]
     fld, *_ = np.histogram2d(windowed['Y'], windowed['X'],
             bins = 512, range = [[0,511],[0,511]])
@@ -298,13 +302,19 @@ def scale_single_block(data, blk, cfgdir, hist, sync = None):
     fld = flood_preprocess(fld)
     ref_fld = flood_preprocess(ref_fld)
 
-    xf, yf = register(ref_fld, fld, nres = 2, niter = 250, type = 'AFFINE')
-    lut = remap(ref_lut, xf, yf)
+    try:
+        xf, yf = register(ref_fld, fld, nres = 2, niter = 250, type = 'AFFINE')
+        lut = remap(ref_lut, xf, yf)
+    except RuntimeError as e:
+        print(f'block {blk}: error registering flood to reference ({e})')
+        lut = ref_lut
+
     edges = lut_edges(lut)
 
     # get energy and DOI calibration values
 
     stats = crystal.calculate_lut_statistics(lut, d, hist)
+    # TODO modify this to use the different calibration format
     ppeak[stats['crystal']] = stats['peak']
     doi[stats['crystal']] = rfn.structured_to_unstructured(
             stats[['5mm', '10mm', '15mm']])

@@ -7,7 +7,11 @@ last_dir = '/mnt/acq'
 
 def dialog(fn, *args, **kwds):
     global last_dir
-    result = fn(*args, **kwds, initialdir = last_dir)
+
+    if 'initialdir' not in kwds:
+        kwds['initialdir'] = last_dir
+
+    result = fn(*args, **kwds)
 
     if not result:
         return None

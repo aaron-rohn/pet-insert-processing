@@ -6,6 +6,7 @@ import tkinter.filedialog
 import concurrent.futures
 from scipy import ndimage
 from numpy.lib import recfunctions as rfn
+import parallel_sort as psort
 
 import petmr, crystal, pyelastix
 
@@ -122,48 +123,6 @@ class CoincidenceFileHandle:
         n = int(np.diff(self.idx).mean())
         return n if max_events is None else min(n, int(max_events))
 
-def load_all_blocks(data_in, start = 0, end = max_events):
-    """ group the input data by block to hopefully accelerate data loading """
-
-    data = np.memmap(data_in, np.uint16).reshape(-1,11)[start:end]
-
-    # the first column represents the coincidence block pairs
-    # sort events according to the block pair where they occurred
-    order = np.argsort(data[:,0]) # can be replaced with cython pargsort
-
-    # get a view of the same data in a structured format, and sort
-    ds = np.memmap(data_in, CoincidenceDType)[start:end][order]
-    blocks = data[order,0]
-
-    # determine the indices corresponding to each unique block pair
-    uq, idx = np.unique(blocks, return_index = True)
-    idx = np.append(idx, [blocks.size-1])
-    ablks, bblks = uq >> 8, uq & 0xFF
-
-    def get_idx(b, blks, idx):
-        """ identify all indices corresponding to a particular block """
-        i = np.nonzero(blks == b)[0]
-        if len(i) == 0: return np.array([], int)
-        return np.concatenate([np.arange(s,e) for s,e in zip(idx[i], idx[i+1])])
-
-    def load(blk):
-        idxa = get_idx(blk, ablks, idx)
-        idxb = get_idx(blk, bblks, idx)
-        na, nb = idxa.size, idxb.size
-
-        tf = tempfile.NamedTemporaryFile()
-        arr = np.memmap(tf.name, VisualizationDType,
-                mode = 'w+', shape = (na+nb,))
-
-        copy_to_vis(ds[idxa], arr[:na], 'a')
-        copy_to_vis(ds[idxb], arr[na:], 'b')
-        return arr
-
-    with concurrent.futures.ThreadPoolExecutor(os.cpu_count()) as ex:
-        futs = [ex.submit(load, blk) for blk in range(petmr.nblocks)]
-
-    return {blk: f.result() for blk,f in enumerate(futs)}
-
 def copy_to_vis(din, dout, ab = ''):
     # copy data from CoincidenceDType/SingleDType to VisualizationDType
     ef, er, x, y = f'e{ab}F', f'e{ab}R', f'x{ab}', f'y{ab}'
@@ -262,37 +221,37 @@ def remap(lut, x, y):
     return cv.remap(lut, x, y, cv.INTER_NEAREST,
             borderMode = cv.BORDER_CONSTANT, borderValue = int(lut.max()))
 
-def create_scaled_calibration(data, cfgdir, hist, sync = None):
+def create_scaled_calibration(data, cfgdir, sync = None):
     luts    = np.ones((petmr.nblocks, 512, 512), np.intc) * petmr.ncrystals_total
-    ppeak   = np.ones((petmr.nblocks, petmr.ncrystals_total), np.double) * -1;
+    ppeak   = np.ones((petmr.nblocks, petmr.ncrystals_total, petmr.ndoi), np.double) * -1;
     doi     = np.ones((petmr.nblocks, petmr.ncrystals_total, petmr.ndoi), np.double) * -1;
 
-    with concurrent.futures.ThreadPoolExecutor(os.cpu_count()) as ex:
+    with concurrent.futures.ThreadPoolExecutor(4) as ex:
         futs = [ex.submit(scale_single_block,
-            data, blk, cfgdir, hist[blk], sync) for blk in range(petmr.nblocks)]
+            data, blk, cfgdir, sync) for blk in range(petmr.nblocks)]
 
     for blk, f in enumerate(futs):
         luts[blk], ppeak[blk], doi[blk] = f.result()
 
     return luts, ppeak, doi
 
-def scale_single_block(data, blk, cfgdir, hist, sync = None):
+def scale_single_block(data, blk, cfgdir, sync = None):
     d = load_block_coincidence_data(data, blk)
-    ppeak = np.ones(petmr.ncrystals_total, np.double) * -1
-    doi = np.ones((petmr.ncrystals_total, petmr.ndoi), np.double) * -1
+
+    ppeak = np.ones((petmr.ncrystals_total, petmr.ndoi), np.double) * -1
+    doi   = np.ones((petmr.ncrystals_total, petmr.ndoi), np.double) * -1
 
     # get the energy histogram, photopeak, and energy windowed flood
 
-    #peak, fwhm, *_ = crystal.fit_photopeak(d['E'])
-    
-    peak = crystal.fit_photopeak(d['E'])[0]
-    fwhm = peak * 0.2
+    peak, fwhm, *_ = crystal.fit_photopeak(d['E']) # block photopeak
+    ppeak[:] = peak # block photopeak is default
 
-    windowed = d[((peak-fwhm) < d['E']) & (d['E'] < (peak+fwhm))]
+    lld, uld = peak-fwhm, peak+fwhm
+    mask = (lld < d['E']) & (d['E'] < uld)
+    windowed = d[mask]
+
     fld, *_ = np.histogram2d(windowed['Y'], windowed['X'],
             bins = 512, range = [[0,511],[0,511]])
-
-    ppeak[:] = peak # block photopeak is default
 
     # load the reference flood and LUT, and generate the warped LUT
 
@@ -313,11 +272,11 @@ def scale_single_block(data, blk, cfgdir, hist, sync = None):
 
     # get energy and DOI calibration values
 
-    stats = crystal.calculate_lut_statistics(lut, d, hist)
-    # TODO modify this to use the different calibration format
-    ppeak[stats['crystal']] = stats['peak']
-    doi[stats['crystal']] = rfn.structured_to_unstructured(
-            stats[['5mm', '10mm', '15mm']])
+    pks = crystal.calculate_lut_statistics(lut, d, workers = 4)
+
+    for xtal, doi_thr, ppeaks, fwhms in pks:
+        ppeak[xtal] = ppeaks
+        doi[xtal] = doi_thr
 
     if sync is not None:
         block, lk, status_queue, floods_queue = sync

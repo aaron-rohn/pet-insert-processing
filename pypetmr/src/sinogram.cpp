@@ -23,12 +23,13 @@ int Michelogram::energy_window(size_t blk, size_t xtal, size_t doi_bin, double e
 
 int Michelogram::doi_window(size_t blk, size_t xtal, double val) const
 {
-    for (size_t i = 0; i < Geometry::ndoi; i++)
-    {
-        double th = *(double*)PyArray_GETPTR3(doi_thresholds, blk, xtal, i);
-        if (val > th) return i;
-    }
-    return Geometry::ndoi;
+    int i;
+    double *th = (double*)PyArray_GETPTR3(doi_thresholds, blk, xtal, 0);
+
+    for (i = 0; i < Geometry::ndoi && val < th[i]; i++)
+        ;
+
+    return i;
 }
 
 ListmodeData
@@ -47,6 +48,8 @@ Michelogram::event_to_coords(const CoincidenceData& c) const
     auto [doia_val, doib_val] = c.doi();
     unsigned int doia = doi_window(ba, xa, doia_val);
     unsigned int doib = doi_window(bb, xb, doib_val);
+    if (doia >= Geometry::ndoi || doib >= Geometry::ndoi)
+        return ListmodeData();
 
     // Apply energy thresholds
     auto [ea, eb] = c.e_sum();

@@ -15,7 +15,6 @@ from calibration import (
         CoincidenceFileHandle,
         SingleDType,
         CoincidenceDType,
-        load_all_blocks,
         load_block_singles_data,
         load_block_coincidence_data,
         max_events)

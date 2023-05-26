@@ -198,16 +198,14 @@ class SinogramDisplay(tk.Frame):
         if not cfgdir: return
 
         lm_fnames = askformatfilenames(coin_fnames,
-                filetypes = listmode_filetypes)
+                filetypes = listmode_filetypes,
+                initialdir = os.path.dirname(coin_fnames[0]),
+                initialfile = '{f}.lm')
         if not lm_fnames: return
 
         lut = self.load_luts(cfgdir)
         ppeak, doi = self.load_json_cfg(cfgdir)
         ewindow = self.energy_window_var.get()
-
-        print(ppeak)
-        print(doi)
-        return
 
         if len(coin_fnames) > 1:
             self.save_listmode_multi(coin_fnames, lm_fnames,
@@ -285,13 +283,16 @@ class SinogramDisplay(tk.Frame):
         cfgdir = check_config_dir()
         if not cfgdir: return
 
+        fname_base, _ = os.path.splitext(os.path.basename(coin_fname))
         lm_fname = asksaveasfilename(title = "New listmode file",
-                filetypes = listmode_filetypes)
+                filetypes = listmode_filetypes,
+                initialdir = os.path.dirname(coin_fname),
+                initialfile = f'{fname_base}.lm')
         if not lm_fname: return
 
         nperiods = 10
         cf = CoincidenceFileHandle(coin_fname, nperiods = nperiods)
-        nev = cf.events_per_period(500e6)
+        nev = cf.events_per_period(1e9)
         print(f'Creating scaled calibration with {nev} events and {nperiods} periods')
         ewindow = self.energy_window_var.get()
 
@@ -322,11 +323,6 @@ class SinogramDisplay(tk.Frame):
         pp = ProgressPopup(fmt = '{}')
 
         def launch():
-            # histogram counts and bins for energy and DOI
-            # dims are: block, crystal, (e-counts,e-bins,d-counts,d-bins), histogram
-            hist = np.zeros((petmr.nblocks, petmr.ncrystals_total, 4, crystal.nbins + 1))
-            hist[:,:,[1,3],:] = -1
-
             try:
                 for i, (start, end, data) in enumerate(cf):
                     if pp.terminate.is_set(): break
@@ -335,7 +331,12 @@ class SinogramDisplay(tk.Frame):
 
                     sync = np.array([0]), threading.Lock(), pp.status, flood_queue 
                     luts, ppeak, doi = calibration.create_scaled_calibration(
-                            data[:nev], cfgdir, hist, sync)
+                            data[:nev], cfgdir, sync)
+
+                    print('photopeak')
+                    print(ppeak)
+                    print('doi')
+                    print(doi)
 
                     pp.status.put((0, f'Sort listmode data {start} to {end}'))
                     petmr.save_listmode(lm_fname, coin_fname,

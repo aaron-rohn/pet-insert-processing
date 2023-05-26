@@ -11,6 +11,7 @@
 #include <queue>
 #include <deque>
 #include <numeric>
+#include <cmath>
 
 static PyObject *petmr_singles(PyObject*, PyObject*);
 static PyObject *petmr_coincidences(PyObject*, PyObject*);

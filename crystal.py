@@ -108,7 +108,7 @@ def summarize_crystal(data, crystal, hist = None):
         # get DOI thresholds based on non-masked data
         thresholds = get_doi(data['D'])
     except IndexError:
-        invalid = np.full(petmr.ndoi-1, -1)
+        invalid = np.full(petmr.ndoi, -1)
         return crystal, invalid, invalid, invalid
 
     # thresholds are in decreasing order

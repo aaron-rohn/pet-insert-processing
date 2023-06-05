@@ -14,8 +14,8 @@ from matplotlib.figure import Figure, SubplotParams
 from flood import Flood, PerspectiveTransformDialog
 from data_loader import ProgressPopup, coincidence_filetypes
 import crystal
-from calibration import create_cfg_vals, lut_edges
-from filedialog import check_config_dir, asksaveasfilename
+from calibration import create_cfg_vals, lut_edges, img_encode
+from filedialog import check_config, asksaveasfilename
 
 def try_open(fname: str) -> dict:
     try:
@@ -260,8 +260,8 @@ class Plots(tk.Frame):
 
         self.button_frame = tk.Frame(self)
 
-        self.select_dir_button = tk.Button(self.button_frame,
-                text = "Select Directory", command = lambda: check_config_dir(True))
+        self.select_cfg_button = tk.Button(self.button_frame,
+                text = "Select Config File", command = lambda: check_config(True))
 
         self.store_lut_button = tk.Button(self.button_frame,
                 text = "Store Configuration", command = self.store_lut_cb)
@@ -295,7 +295,7 @@ class Plots(tk.Frame):
                 command = self.flood_cb)
 
         self.button_frame.pack(pady = 10);
-        self.select_dir_button.pack(side = tk.LEFT, padx = 5)
+        self.select_cfg_button.pack(side = tk.LEFT, padx = 5)
         self.store_lut_button.pack(side = tk.LEFT, padx = 5)
         self.register_button.pack(side = tk.LEFT, padx = 5)
         self.transform_button.pack(side = tk.LEFT, padx = 5)
@@ -350,12 +350,12 @@ class Plots(tk.Frame):
         self.doi_cb(retain = False)
         self.flood_cb()
 
-    def create_lut_borders(self, cfg_dir):
-        blk = self.get_block()
-        lut_fname = os.path.join(cfg_dir, 'lut', f'block{blk}.lut')
+    def create_lut_borders(self, cfg_file):
+        with open(cfg_file, 'r') as fd:
+            cfg = json.load(fd)
 
-        if os.path.isfile(lut_fname):
-            lut = np.fromfile(lut_fname, np.intc).reshape((512,512))
+        if (blk := str(self.get_block())) in cfg:
+            lut = img_encode(cfg[blk]['LUT'], False)
             return lut_edges(lut)
         else:
             return None
@@ -365,8 +365,8 @@ class Plots(tk.Frame):
         if self.d is None: return
 
         lut = None
-        if self.show_lut.get() and (cfg_dir := check_config_dir()):
-            lut = self.create_lut_borders(cfg_dir)
+        if self.show_lut.get() and (cfg_file := check_config()):
+            lut = self.create_lut_borders(cfg_file)
 
         eth = self.energy.thresholds()
         dth = self.doi.thresholds()
@@ -397,10 +397,8 @@ class Plots(tk.Frame):
         self.energy.update(self.d['E'][idx], retain)
 
     def store_lut_cb(self):
-        if (output_dir := check_config_dir()) is None or self.flood.f is None:
+        if (config_file := check_config()) is None or self.flood.f is None:
             return
-
-        blk = self.get_block()
 
         # calculate the LUT based on the peak positions
         peak_pos = self.flood.pts.reshape(-1,2)
@@ -411,17 +409,15 @@ class Plots(tk.Frame):
             lut = Flood.warp_lut(lut, self.warp)
             self.warp = None
 
-        # save the LUT and flood images
-        lut_fname = os.path.join(output_dir, 'lut', f'block{blk}.lut')
-        lut.astype(np.intc).tofile(lut_fname)
-        flood_fname = os.path.join(output_dir, 'flood', f'block{blk}.raw')
-        self.flood.img.astype(np.intc).tofile(flood_fname)
+        self.store_lut_button.config(state = tk.DISABLED)
 
         # create energy and DOI calibrations
-        config_file = os.path.join(output_dir, 'config.json')
         cfg = try_open(config_file)
+        blk = self.get_block()
+        blk_vals = cfg[blk] = {}
+        blk_vals['LUT'] = img_encode(lut.astype(np.intc))
+        blk_vals['FLD'] = img_encode(self.flood.f.fld, jpeg = True)
 
-        self.store_lut_button.config(state = tk.DISABLED)
         t = threading.Thread(target = create_cfg_vals,
                 args = [self.d, lut, blk, cfg])
         t.start()

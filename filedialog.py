@@ -1,8 +1,9 @@
 import os
+import pathlib
 import tkinter as tk
 import tkinter.filedialog
 
-cfg_dir = None
+cfg = None
 last_dir = '/mnt/acq'
 
 def dialog(fn, *args, **kwds):
@@ -48,24 +49,18 @@ def askformatfilenames(files, **kwds):
         print(f'Error formatting file names: {e}')
         return None
 
-def check_config_dir(reset = False):
-    global cfg_dir
-    if reset: cfg_dir = None
+def check_config(reset = False):
+    global cfg
+    if reset: cfg = None
 
-    if cfg_dir is None:
-        new_dir = askdirectory(title = "Configuration data directory")
+    if cfg is None:
+        new = asksaveasfilename(title = "Select JSON configuration file",
+                filetypes = [('JSON files', '.json')])
 
-        if not new_dir:
+        if not new:
             return None
 
-        cfg_dir = new_dir
+        cfg = new
 
-    lut_dir = os.path.join(cfg_dir, 'lut')
-    fld_dir = os.path.join(cfg_dir, 'flood')
-
-    for d in [cfg_dir, lut_dir, fld_dir]:
-        try:
-            os.mkdir(d)
-        except FileExistsError: pass
-
-    return cfg_dir
+    pathlib.Path(cfg).touch()
+    return cfg

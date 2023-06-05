@@ -11,7 +11,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure, SubplotParams
 
 import petmr, crystal, calibration, figures
-from calibration import CoincidenceFileHandle
+from calibration import CoincidenceFileHandle, img_encode
 from sinogram_loader import SinogramLoaderPopup
 from figures import MPLFigure
 
@@ -21,7 +21,7 @@ from data_loader import (
         listmode_filetypes,
         sinogram_filetypes)
 
-from filedialog import (check_config_dir,
+from filedialog import (check_config,
                         askopenfilename,
                         askopenfilenames,
                         asksaveasfilename,
@@ -153,25 +153,23 @@ class SinogramDisplay(tk.Frame):
             self.sinogram_plt.invert_yaxis()
             self.sinogram_canvas.draw()
 
-    def load_luts(self, calib_dir):
+    def load_luts(self, cfg_file):
         lut_dim = [512,512]
         lut_arr = np.ones([petmr.nblocks] + lut_dim, dtype = np.intc) * petmr.ncrystals_total
-        luts = glob.glob(os.path.join(calib_dir, 'lut', '*'))
 
-        for fname in luts:
-            # Lut fils are named .../blockXX.lut
-            lut_idx = re.findall(r'\d+', os.path.basename(fname))
-            lut_idx = int(lut_idx[0])
-            lut_arr[lut_idx] = np.fromfile(fname, np.intc).reshape(lut_dim)
+        with open(cfg_file, 'r') as f:
+            cfg = json.load(f)
+
+        for blk, bval in cfg.items():
+            lut_arr[int(blk)] = img_encode(bval['LUT'], False)
 
         return np.ascontiguousarray(lut_arr)
 
-    def load_json_cfg(self, cfgdir):
+    def load_json_cfg(self, cfg_file):
         dims = (petmr.nblocks, petmr.ncrystals_total, petmr.ndoi)
         ppeak = np.ones(dims, np.double) * -1;
         doi = np.ones(dims, np.double) * -1;
 
-        cfg_file = os.path.join(cfgdir,'config.json')
         with open(cfg_file, 'r') as f:
             cfg = json.load(f)
 
@@ -194,8 +192,8 @@ class SinogramDisplay(tk.Frame):
                                       filetypes = coincidence_filetypes)
         if not coin_fnames: return
 
-        cfgdir = check_config_dir()
-        if not cfgdir: return
+        cfg_file = check_config()
+        if not cfg_file: return
 
         lm_fnames = askformatfilenames(coin_fnames,
                 filetypes = listmode_filetypes,
@@ -203,8 +201,8 @@ class SinogramDisplay(tk.Frame):
                 initialfile = '{f}.lm')
         if not lm_fnames: return
 
-        lut = self.load_luts(cfgdir)
-        ppeak, doi = self.load_json_cfg(cfgdir)
+        lut = self.load_luts(cfg_file)
+        ppeak, doi = self.load_json_cfg(cfg_file)
         ewindow = self.energy_window_var.get()
 
         if len(coin_fnames) > 1:
@@ -280,8 +278,8 @@ class SinogramDisplay(tk.Frame):
                 filetypes = coincidence_filetypes)
         if not coin_fname: return
 
-        cfgdir = check_config_dir()
-        if not cfgdir: return
+        cfg_file = check_config()
+        if not cfg_file: return
 
         fname_base, _ = os.path.splitext(os.path.basename(coin_fname))
         lm_fname = asksaveasfilename(title = "New listmode file",
@@ -321,6 +319,8 @@ class SinogramDisplay(tk.Frame):
         # launch the thread to manage the creating of the scaled cfg and listmode sorting
 
         pp = ProgressPopup(fmt = '{}')
+        with open(cfg_file, 'r') as f:
+            cfg = json.load(f)
 
         def launch():
             try:
@@ -331,12 +331,7 @@ class SinogramDisplay(tk.Frame):
 
                     sync = np.array([0]), threading.Lock(), pp.status, flood_queue 
                     luts, ppeak, doi = calibration.create_scaled_calibration(
-                            data[:nev], cfgdir, sync)
-
-                    print('photopeak')
-                    print(ppeak)
-                    print('doi')
-                    print(doi)
+                            data[:nev], cfg, sync)
 
                     pp.status.put((0, f'Sort listmode data {start} to {end}'))
                     petmr.save_listmode(lm_fname, coin_fname,

@@ -68,6 +68,8 @@ class Sinogram
     {
         int col = xtal % Geometry::ncrystals;
         int mod = blk >> 2;
+        // this line should be commented out for pre-rebuild data
+        // since the ordering of the modules changed
         col = Geometry::ncrystals - 1 - col;
         return col + (Geometry::ncrystals + Geometry::ncrystals_transverse_gap)*mod;
     }

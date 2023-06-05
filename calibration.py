@@ -1,9 +1,13 @@
 import os, json, tempfile, datetime
+import base64
+import zlib
+import io
 import numpy as np
 import cv2 as cv
 import tkinter as tk
 import tkinter.filedialog
 import concurrent.futures
+from PIL import Image
 from scipy import ndimage
 from numpy.lib import recfunctions as rfn
 import parallel_sort as psort
@@ -150,6 +154,58 @@ def load_block_singles_data(data, blk):
     copy_to_vis(data[idx], arr)
     return arr
 
+def img_encode(img, encode = True, jpeg = False):
+    """ encode and decode LUT and flood images into strings
+    for insertion into the configuration json file. Apply
+    jpeg compression for floods and zlib compression for LUTs
+    """
+
+    if encode:
+        # encode -> produce ascii string from image
+        if jpeg:
+            # for floods, apply jpeg compression
+            buf = io.BytesIO()
+            img = img / img.max() * 255.0
+            Image.fromarray(img).convert('RGB').save(
+                    buf, format = 'JPEG', quality = 10)
+            i = buf.getvalue()
+        else:
+            # for luts, apply lossless zlib compression
+            i = zlib.compress(img)
+
+        # make base64 encoded string
+        i = base64.b64encode(i)
+        return i.decode('ascii')
+
+    else:
+        # decode -> produce image from ascii string
+
+        # get bytes from base64 string
+        i = bytes(img, 'ascii')
+        i = base64.b64decode(i)
+
+        if jpeg:
+            # decode jpeg bytes to image
+            return np.asarray(
+                    Image.open(io.BytesIO(i)).convert('L'))
+        else:
+            # decompress and create numpy array
+            i = zlib.decompress(i)
+            return np.frombuffer(i, np.intc).reshape(512,512)
+
+def cfg_img_display(cfg_file, block):
+    with open(cfg_file, 'r') as fd:
+        cfg = json.load(fd)
+
+    lut = img_encode(cfg[str(block)]['LUT'], encode = False)
+    fld = img_encode(cfg[str(block)]['FLD'], encode = False, jpeg = True)
+
+    plt.imshow(lut)
+    plt.show()
+
+    plt.imshow(fld)
+    plt.show()
+
 def flood_preprocess(fld):
     fld = fld.astype(float)
 
@@ -188,8 +244,9 @@ def create_cfg_vals(data, lut, blk, cfg, energy_hist = None):
             - DOI
     """
 
-    blk_vals = cfg[blk] = {}
+    blk_vals = cfg[blk]
     xtal_vals = blk_vals['crystal'] = {}
+
     peak, fwhm, *_ = crystal.fit_photopeak(data['E'])
     blk_vals['photopeak'] = peak
     blk_vals['FWHM'] = fwhm 
@@ -221,21 +278,21 @@ def remap(lut, x, y):
     return cv.remap(lut, x, y, cv.INTER_NEAREST,
             borderMode = cv.BORDER_CONSTANT, borderValue = int(lut.max()))
 
-def create_scaled_calibration(data, cfgdir, sync = None):
+def create_scaled_calibration(data, cfg, sync = None):
     luts    = np.ones((petmr.nblocks, 512, 512), np.intc) * petmr.ncrystals_total
     ppeak   = np.ones((petmr.nblocks, petmr.ncrystals_total, petmr.ndoi), np.double) * -1;
     doi     = np.ones((petmr.nblocks, petmr.ncrystals_total, petmr.ndoi), np.double) * -1;
 
     with concurrent.futures.ThreadPoolExecutor(4) as ex:
         futs = [ex.submit(scale_single_block,
-            data, blk, cfgdir, sync) for blk in range(petmr.nblocks)]
+            data, blk, cfg, sync) for blk in range(petmr.nblocks)]
 
     for blk, f in enumerate(futs):
         luts[blk], ppeak[blk], doi[blk] = f.result()
 
     return luts, ppeak, doi
 
-def scale_single_block(data, blk, cfgdir, sync = None):
+def scale_single_block(data, blk, cfg, sync = None):
     d = load_block_coincidence_data(data, blk)
 
     ppeak = np.ones((petmr.ncrystals_total, petmr.ndoi), np.double) * -1
@@ -252,14 +309,16 @@ def scale_single_block(data, blk, cfgdir, sync = None):
 
     fld, *_ = np.histogram2d(windowed['Y'], windowed['X'],
             bins = 512, range = [[0,511],[0,511]])
+    fld = flood_preprocess(fld)
 
     # load the reference flood and LUT, and generate the warped LUT
 
-    ref_fld = np.fromfile(f'{cfgdir}/flood/block{blk}.raw', np.intc).reshape(512,512)
-    ref_lut = np.fromfile(f'{cfgdir}/lut/block{blk}.lut', np.intc).reshape(512,512)
+    ref_fld = img_encode(cfg[str(blk)]['FLD'], encode = False, jpeg = True)
+    ref_lut = img_encode(cfg[str(blk)]['LUT'], encode = False)
 
-    fld = flood_preprocess(fld)
-    ref_fld = flood_preprocess(ref_fld)
+    # reference flood is already preprocessed and scaled to 255.0
+    ref_fld = ref_fld.astype(float) / ref_fld.max() * fld.max()
+    ref_fld = ref_fld.astype(fld.dtype)
 
     try:
         xf, yf = register(ref_fld, fld, nres = 2, niter = 250, type = 'AFFINE')

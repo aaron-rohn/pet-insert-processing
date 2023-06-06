@@ -415,7 +415,7 @@ class Plots(tk.Frame):
         cfg = try_open(config_file)
         blk = self.get_block()
         blk_vals = cfg[blk] = {}
-        blk_vals['LUT'] = img_encode(lut.astype(np.intc))
+        blk_vals['LUT'] = img_encode(lut)
         blk_vals['FLD'] = img_encode(self.flood.f.fld, jpeg = True)
 
         t = threading.Thread(target = create_cfg_vals,

@@ -158,6 +158,10 @@ def img_encode(img, encode = True, jpeg = False):
     """ encode and decode LUT and flood images into strings
     for insertion into the configuration json file. Apply
     jpeg compression for floods and zlib compression for LUTs
+
+    account for some variation in the json files, like zlib
+    compression of the flood images and uint16 vs int32 encoding
+    of the LUTs
     """
 
     if encode:
@@ -165,33 +169,29 @@ def img_encode(img, encode = True, jpeg = False):
         if jpeg:
             # for floods, apply jpeg compression
             buf = io.BytesIO()
-            img = img / img.max() * 255.0
-            Image.fromarray(img).convert('RGB').save(
-                    buf, format = 'JPEG', quality = 10)
-            i = buf.getvalue()
+            img = (img / img.max() * 255.0).astype(np.uint8)
+            Image.fromarray(img).save(buf, 'JPEG', quality = 10)
+            img = buf.getvalue()
         else:
-            # for luts, apply lossless zlib compression
-            i = zlib.compress(img)
+            img = img.astype(np.uint16)
 
-        # make base64 encoded string
-        i = base64.b64encode(i)
-        return i.decode('ascii')
+        img = zlib.compress(img, level = zlib.Z_BEST_COMPRESSION)
+        return base64.b64encode(img).decode('ascii')
 
     else:
         # decode -> produce image from ascii string
-
-        # get bytes from base64 string
-        i = bytes(img, 'ascii')
-        i = base64.b64decode(i)
+        i = base64.b64decode(bytes(img, 'ascii'))
+        try:
+            i = zlib.decompress(i)
+        except zlib.error: # data was not compressed
+            pass
 
         if jpeg:
             # decode jpeg bytes to image
-            return np.asarray(
-                    Image.open(io.BytesIO(i)).convert('L'))
+            return np.asarray(Image.open(io.BytesIO(i)).convert('L')).astype(np.intc)
         else:
-            # decompress and create numpy array
-            i = zlib.decompress(i)
-            return np.frombuffer(i, np.intc).reshape(512,512)
+            dt = np.intc if len(i) > (512*512*2) else np.uint16 # handle different LUT types
+            return np.frombuffer(i, dt).astype(np.intc).reshape(512,512)
 
 def cfg_img_display(cfg_file, block):
     with open(cfg_file, 'r') as fd:

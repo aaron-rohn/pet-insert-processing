@@ -108,8 +108,8 @@ def summarize_crystal(data, crystal, hist = None):
         # get DOI thresholds based on non-masked data
         thresholds = get_doi(data['D'])
     except IndexError:
-        invalid = np.full(petmr.ndoi, -1)
-        return crystal, invalid, invalid, invalid
+        invalid = [-1] * petmr.ndoi
+        return int(crystal), invalid, invalid, invalid
 
     # thresholds are in decreasing order
     thresholds = np.round(thresholds)
@@ -119,7 +119,7 @@ def summarize_crystal(data, crystal, hist = None):
     ppeaks, fwhms = zip(*fits)
 
     # The first threshold corresponds to the front of the crystal
-    return crystal, thresholds[1:], ppeaks, fwhms
+    return int(crystal), thresholds[1:].tolist(), ppeaks, fwhms
 
 def calculate_lut_statistics(lut, data, workers = None):
     idx = np.ravel_multi_index((data['Y'],data['X']), lut.shape) # 1d event position

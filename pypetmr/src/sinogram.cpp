@@ -158,7 +158,7 @@ std::streampos Michelogram::add_to_sinogram(
         rdr.read((char*)&lm, sizeof(lm));
         if ((prompt && lm.prompt) || (delay && !lm.prompt))
         {
-            if (lm.doi_a < max_doi && lm.doi_b < max_doi)
+            if (lm.doi_a <= max_doi && lm.doi_b <= max_doi)
             {
                 (*this)(lm.ring_a, lm.ring_b).add_event(
                         lm.crystal_a, lm.crystal_b);

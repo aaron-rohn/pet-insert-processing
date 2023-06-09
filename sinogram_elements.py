@@ -68,7 +68,7 @@ class SinogramDisplay(tk.Frame):
         self.subtract_button = tk.Button(self.button_frame, text = "Subtract", command = lambda: self.operation(np.subtract))
 
         self.energy_window_var = tk.DoubleVar(value = 0.2)
-        self.max_doi_var = tk.IntVar(value = petmr.ndoi)
+        self.max_doi_var = tk.IntVar(value = petmr.ndoi-1)
         self.sort_prompts_var = tk.BooleanVar(value = True)
         self.sort_delays_var = tk.BooleanVar(value = False)
 
@@ -76,7 +76,7 @@ class SinogramDisplay(tk.Frame):
         self.energy_window_menu = tk.OptionMenu(self.cb_frame, self.energy_window_var,
                 0.315, 0.510, -1.0) # 350-672, 250-772, all
                 #0.2, 0.4, 0.6, 0.8, 1.0, -1.0)
-        self.max_doi_menu = tk.OptionMenu(self.cb_frame, self.max_doi_var, *np.arange(0,petmr.ndoi+1))
+        self.max_doi_menu = tk.OptionMenu(self.cb_frame, self.max_doi_var, *np.arange(petmr.ndoi))
         self.sort_prompts_cb = tk.Checkbutton(self.cb_frame, text = "Prompts", variable = self.sort_prompts_var)
         self.sort_delays_cb = tk.Checkbutton(self.cb_frame, text = "Delays", variable = self.sort_delays_var)
 
@@ -234,6 +234,7 @@ class SinogramDisplay(tk.Frame):
         else:
             def callback(sinogram):
                 self.sino_data = remap_sinogram(sinogram)
+                print(f'Sinogram has {np.sum(self.sino_data)} counts')
                 self.count_map_draw()
 
             print(f'Load listmode file {lm_fnames[0]}')

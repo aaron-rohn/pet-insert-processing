@@ -203,13 +203,15 @@ class CoincidenceLoader(tk.Toplevel):
     def draw_hist(self):
         cf = CoincidenceFileHandle(self.f, 500, 1)
         self.ev_rate = cf.event_rate
-        self.times = cf.times
+        self.times = cf.times / 10
         self.idx = cf.idx
 
         self.lims = (self.times[0], self.times[-1])
         self.init_lines(self.lims)
 
         self.plt.plot(self.times, self.ev_rate)
+        self.plt.set_xlabel('Time (seconds)')
+        self.plt.set_ylabel('Coincidence Rate (CPS)')
         self.plt.grid()
         self.canvas.draw()
 
@@ -262,7 +264,7 @@ class CoincidenceLoader(tk.Toplevel):
 
     def subset(self, nev = max_events):
         start_end = np.sort([l.get_xdata()[0] for l in self.lines])
-        times = np.round(start_end / 10)
+        times = np.round(start_end)
 
         start_end = np.searchsorted(self.times, start_end)
         start, end = self.idx[start_end]

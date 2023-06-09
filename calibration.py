@@ -255,9 +255,9 @@ def create_cfg_vals(data, lut, blk, cfg, energy_hist = None):
 
     for xtal, doi_thr, ppeaks, fwhms in pks:
         this_xtal = xtal_vals[int(xtal)] = {}
-        this_xtal['photopeak'] = list(ppeaks)
-        this_xtal['FWHM'] = list(fwhms)
-        this_xtal['DOI'] = list(doi_thr)
+        this_xtal['photopeak'] = ppeaks
+        this_xtal['FWHM'] = fwhms
+        this_xtal['DOI'] = doi_thr
 
 def register(src, dst, nres = 4, niter = 500, spacing = 32, type = 'BSPLINE'):
     pars = pyelastix.get_default_params(type = type)
